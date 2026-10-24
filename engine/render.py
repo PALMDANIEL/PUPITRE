@@ -3,7 +3,9 @@ Moteur de rendu : MusicXML -> une piste audio par voix.
 Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72] [--timbre choeur|piano]
 """
 import argparse, copy, json, os, pathlib, re, shutil, statistics, subprocess, sys, zipfile
+from fractions import Fraction
 from music21 import converter, chord, clef, harmony, instrument, key, meter, note, stream, tempo as m21tempo
+from music21.common.numberTools import opFrac
 
 SF2 = os.environ.get("SOUNDFONT", "/usr/share/sounds/sf2/FluidR3_GM.sf2")
 LABELS = {
@@ -30,9 +32,12 @@ def mean_pitch(obj):
 
 
 def needs_split(part):
-    has_voices = any(len(m.voices) >= 2 for m in part.getElementsByClass(stream.Measure))
+    """Portée qui porte deux voix (S+A, T+B) : deux voix dans une bonne part des mesures, ou beaucoup d'accords.
+    Une seule mesure à deux voix est presque toujours une erreur de lecture, pas une voix de plus."""
+    sung = [m for m in part.getElementsByClass(stream.Measure) if m.recurse().notes]
+    doubled = sum(1 for m in sung if sum(1 for v in m.voices if v.notes) >= 2)
     n = len(part.recurse().notes)
-    return has_voices or (n and len(real_chords(part)) > n * 0.3)
+    return (sung and doubled >= 0.3 * len(sung)) or (n and len(real_chords(part)) > n * 0.3)
 
 
 def keep_highest_or_lowest(line, pick):
@@ -120,7 +125,122 @@ def fold_solos(voices):
     return kept
 
 
+# Centre de la tessiture de chaque pupitre (MIDI) : La4, Mi4, La3, Ré3.
+CENTERS = {4: [69, 64, 57, 50]}
+
+
+def pitches_of(obj):
+    return [p.ps for n in obj.recurse().notes for p in n.pitches]
+
+
+def shift_octaves(obj, octaves):
+    if octaves:
+        for n in obj.recurse().notes:
+            for p in n.pitches:
+                p.octave = (p.octave if p.octave is not None else 4) + octaves
+
+
+def fix_octaves(voice, center=None):
+    """Erreurs d'octave de la lecture optique, corrigées comme le ferait un chef de chœur :
+    - toute la voix hors de sa tessiture (clé de sol du ténor lue sans le « 8 ») -> ramenée d'une octave ;
+    - une mesure isolée à plus d'une sixte du reste de la voix (fausse indication 8va, clé mal lue) -> idem."""
+    ps = pitches_of(voice)
+    if not ps:
+        return 0
+    moved = 0
+    if center is not None:
+        med = statistics.median(ps)
+        whole = -round((med - center) / 12) if abs(med - center) > 7 else 0
+        shift_octaves(voice, whole)
+        moved += abs(whole) * len(ps)
+    ref = statistics.median(pitches_of(voice))
+    for m in voice.getElementsByClass(stream.Measure):
+        mp = pitches_of(m)
+        if not mp:
+            continue
+        gap = statistics.median(mp) - ref
+        if abs(gap) > 9:
+            k = -round(gap / 12) or (-1 if gap > 0 else 1)
+            shift_octaves(m, k)
+            moved += len(mp)
+    return moved
+
+
+def lift_melody(voices):
+    """Couplet écrit sur une seule portée en clé de sol, qu'Audiveris rattache parfois à la portée du bas :
+    si seuls ténor et basse « chantent » une mesure, dans le registre aigu, c'est la mélodie des voix hautes."""
+    rows = [list(v.getElementsByClass(stream.Measure)) for v in voices]
+    for k in range(min(len(r) for r in rows)):
+        s, a, t, b = (r[k] for r in rows)
+        low = pitches_of(t) + pitches_of(b)
+        if s.notes or a.notes or not low or statistics.median(low) < 64:
+            continue
+        for src, dst in ((t, s), (b, a)):
+            for el in list(dst.notesAndRests):
+                dst.remove(el)
+            for el in list(src.notesAndRests):
+                src.remove(el)
+                dst.insert(el.offset, el)
+
+
+def content_length(m):
+    return max((el.offset + el.quarterLength for el in m.notesAndRests), default=0.0)
+
+
+def align_measures(voices):
+    """Même durée pour chaque mesure dans toutes les voix, sinon les pistes se décalent à l'écoute.
+    Mesure trop courte (silence oublié) : complétée par un silence ; trop longue (point ou crochet mal lu) :
+    ramenée à la bonne durée en resserrant proportionnellement ses notes."""
+    measures = [list(v.getElementsByClass(stream.Measure)) for v in voices]
+    count = max((len(ms) for ms in measures), default=0)
+    bar = 4.0
+    rebuilt = [stream.Part() for _ in voices]
+    for k in range(count):
+        row = [ms[k] if k < len(ms) else None for ms in measures]
+        for m in row:
+            ts = m.timeSignature if m is not None else None
+            if ts is not None:
+                bar = ts.barDuration.quarterLength
+        # seules les voix qui chantent comptent : une voix qui se tait pendant le couplet d'un soliste n'a que des silences
+        lengths = [round(content_length(m), 3) for m in row if m is not None and m.notes]
+        target = bar
+        if lengths:
+            common = statistics.mode(lengths)
+            if lengths.count(common) * 2 > len(lengths):
+                target = common          # la majorité a raison (levée, mesure libre d'un récitatif…)
+            elif len(set(lengths)) == len(lengths):
+                target = max(lengths)    # aucune majorité (un seul chanteur, ou tous différents) : on ne coupe rien
+        for i, m in enumerate(row):
+            if m is None:
+                m = stream.Measure(number=k + 1)
+            if not m.notes:
+                for el in list(m.notesAndRests):
+                    m.remove(el)
+            length = content_length(m)
+            if length > target + 1e-6:
+                ratio = target / length
+                for el in sorted(m.notesAndRests, key=lambda e: e.offset):
+                    off = opFrac(Fraction(el.offset * ratio).limit_denominator(48))
+                    m.remove(el)
+                    el.quarterLength = opFrac(max(Fraction(el.quarterLength * ratio).limit_denominator(48), Fraction(1, 48)))
+                    m.insert(off, el)
+                last = max(m.notesAndRests, key=lambda e: e.offset + e.quarterLength)
+                over = content_length(m) - target
+                if over > 1e-6:
+                    last.quarterLength = opFrac(max(last.quarterLength - over, Fraction(1, 48)))
+            length = content_length(m)
+            if length < target - 1e-6:
+                m.insert(opFrac(length), note.Rest(quarterLength=opFrac(target - length)))
+            rebuilt[i].append(m)
+    for v, r in zip(voices, rebuilt):
+        r.partName = v.partName
+    return rebuilt
+
+
 def extract_voices(score, trust_names=True):
+    """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
+    c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
+    Pour un fichier MusicXML ou MIDI (hauteurs exactes, ordre des pistes parfois quelconque), on trie par hauteur."""
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
@@ -129,8 +249,15 @@ def extract_voices(score, trust_names=True):
         lines = split_staff(part) if needs_split(part) else [flatten_voices(part)]
         voices.extend(l for l in lines if l.recurse().notes)
     voices = fold_solos(voices)
-    voices.sort(key=lambda v: mean_pitch(v) or 0, reverse=True)
-    return voices
+    if len(voices) == 4 and not trust_names:
+        lift_melody(voices)
+    if trust_names:
+        voices.sort(key=lambda v: mean_pitch(v) or 0, reverse=True)
+    else:
+        centers = CENTERS.get(len(voices))
+        for i, v in enumerate(voices):
+            fix_octaves(v, centers[i] if centers else None)
+    return align_measures(voices)
 
 
 def detect_tempo(score):

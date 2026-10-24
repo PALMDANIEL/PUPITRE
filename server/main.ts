@@ -49,6 +49,8 @@ app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
   if (named.length > 1 && named.some((n) => KINDS[n.ext] !== 'image' && KINDS[n.ext] !== 'pdf')) {
     fail(415, 'Plusieurs fichiers à la fois : seulement des photos ou des PDF, qui deviennent les pages d’une même partition.');
   }
+  // Les pages, dans l'ordre naturel des noms (page2 avant page10) ; la première donne le titre.
+  named.sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
   const originalName = named[0].name;
   const id = randomUUID();
   await fs.mkdir(dirOf(id), { recursive: true });
@@ -57,12 +59,10 @@ app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
   if (named.length === 1) {
     await fs.writeFile(path.join(dirOf(id), sourceFile), named[0].f.buffer);
   } else {
-    // Les pages, dans l'ordre naturel des noms (page2 avant page10), dans un dossier « source ».
     source = 'image';
     sourceFile = 'source';
     await fs.mkdir(path.join(dirOf(id), sourceFile));
-    const sorted = [...named].sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
-    for (const [i, n] of sorted.entries()) {
+    for (const [i, n] of named.entries()) {
       await fs.writeFile(path.join(dirOf(id), sourceFile, `${String(i + 1).padStart(2, '0')}${n.ext}`), n.f.buffer);
     }
   }

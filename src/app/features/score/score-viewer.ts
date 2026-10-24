@@ -68,7 +68,9 @@ export class ScoreViewer {
       const res = await fetch(fileUrl(s, 'audio', 'score.musicxml'));
       if (!res.ok) throw new Error('score');
       const xml = await res.text();
-      const { OpenSheetMusicDisplay } = await import('opensheetmusicdisplay');
+      // OSMD est publié en module CommonJS : selon l'outil de compilation, la classe est sur l'export nommé ou sur « default ».
+      const mod: any = await import('opensheetmusicdisplay');
+      const OpenSheetMusicDisplay = mod.OpenSheetMusicDisplay ?? mod.default?.OpenSheetMusicDisplay ?? mod.default;
       this.osmd ??= new OpenSheetMusicDisplay(this.host().nativeElement, {
         autoResize: true, backend: 'svg', drawTitle: false, drawComposer: false, drawCredits: false,
         followCursor: true,
@@ -77,7 +79,8 @@ export class ScoreViewer {
       await this.osmd.load(xml);
       this.osmd.render();
       this.collectStamps();
-    } catch {
+    } catch (err) {
+      console.error('Affichage de la partition impossible', err);
       this.failed.set('La partition lue ne peut pas être affichée, mais l’audio reste disponible.');
     }
   }

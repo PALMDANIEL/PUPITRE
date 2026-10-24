@@ -19,6 +19,22 @@ def movements(folder: pathlib.Path):
     return sorted(folder.rglob("*.mxl"), key=order)
 
 
+def systems(folder: pathlib.Path):
+    """Nombre de portées de chaque système, page par page, d'après le journal d'Audiveris
+    (« Systems: #1[1, 2] #2[3] #3[4] » : le 2e système de deux portées a été coupé en deux)."""
+    sheets = []
+    for log in folder.glob("*.log"):
+        for line in log.read_text(errors="replace").splitlines():
+            if "Systems:" in line:
+                sheets.append([len(g.split(",")) for g in re.findall(r"\[([^\]]*)\]", line.split("Systems:")[1])])
+    return sheets
+
+
+def broken(sheets):
+    """Systèmes plus courts que le plus grand de leur page : soit un couplet en solo, soit des portées mal regroupées."""
+    return sum(1 for sheet in sheets for n in sheet if n < max(sheet))
+
+
 def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int):
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -53,12 +69,19 @@ def main(src, work):
         shutil.copy(p, pages_dir / p.name)
     print(f"pages:{len(pages)}", flush=True)
 
-    found = []
-    for variant in ("clean.pdf", "alt.pdf"):
-        found = audiveris(pre / variant, work / "omr", len(pages))
-        if found:
-            break
-        print(f"Aucune portée lue avec {variant}, essai suivant", file=sys.stderr)
+    omr, alt = work / "omr", work / "omr-alt"
+    found = audiveris(pre / "clean.pdf", omr, len(pages))
+    first = systems(omr)
+    if not found or broken(first):
+        # Seconde lecture avec l'autre version de l'image ; on garde celle qui regroupe le mieux les portées
+        # (un vrai couplet en solo donne le même découpage dans les deux cas : on garde alors la première).
+        print("Seconde lecture avec l’autre version de l’image", file=sys.stderr)
+        other = audiveris(pre / "alt.pdf", alt, len(pages))
+        if other and (not found or broken(systems(alt)) < broken(first)):
+            shutil.rmtree(omr, ignore_errors=True)
+            alt.rename(omr)
+            found = movements(omr)
+        shutil.rmtree(alt, ignore_errors=True)
     if not found:
         sys.exit("Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.")
 
