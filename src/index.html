@@ -5,11 +5,17 @@
   <title>Pupitre</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Écoutez chaque voix de votre chant de chorale séparément.">
+  <script>
+    try { var t = localStorage.getItem('pupitre-theme'); if (t) document.documentElement.dataset.theme = t;
+          else if (matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.dataset.theme = 'light'; } catch (e) {}
+  </script>
+  <meta name="description" content="Pupitre : écoutez chaque voix de votre chant de chorale séparément. Conçu et développé par AIT (Artificial Intelligence &amp; Technology), Ouagadougou, Burkina Faso.">
+  <meta name="author" content="PALM Romeo Daratagnan, AIT – Artificial Intelligence &amp; Technology">
+  <meta name="theme-color" content="#050918">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,500;7..72,600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
   <app-root></app-root>

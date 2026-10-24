@@ -1,43 +1,125 @@
+/* Thème Pupitre × AIT : nuit profonde, bleu électrique et cyan du logo AIT, verre dépoli, fils de portée lumineux.
+   Sombre par défaut ; clair avec <html data-theme="light"> (bouton dans l'en-tête) ou selon le système. */
 :root {
-  --paper: #EEF0EA;
-  --surface: #F8F9F5;
+  --paper: #050918;
+  --paper-2: #0A1230;
+  --surface: rgba(17, 27, 64, .58);
+  --surface-solid: #0E1736;
+  --raised: rgba(30, 46, 102, .45);
   --sheet: #FFFFFF;
-  --ink: #1B1F3B;
-  --ink-soft: #565B76;
-  --rule: #C9CDD8;
-  --hair: rgba(27, 31, 59, .12);
-  --soprano: #C98A12;
-  --alto: #A8325F;
-  --tenor: #237060;
-  --basse: #34479A;
-  --danger: #A3261E;
-  --serif: 'Literata', Georgia, 'Times New Roman', serif;
+  --ink: #EAF0FF;
+  --ink-soft: #97A4C9;
+  --rule: rgba(132, 166, 255, .26);
+  --hair: rgba(132, 166, 255, .14);
+  --accent: #2F7BFF;
+  --accent-2: #27CBFF;
+  --accent-ink: #FFFFFF;
+  --glow: 0 0 0 1px rgba(47, 123, 255, .35), 0 10px 40px -10px rgba(39, 140, 255, .55);
+  --grid: rgba(90, 140, 255, .07);
+  --soprano: #F4B740;
+  --alto: #F2679F;
+  --tenor: #35D9A8;
+  --basse: #7F96FF;
+  --danger: #FF7B73;
+  --ok: #35D9A8;
+  --serif: 'Sora', 'Manrope', system-ui, sans-serif;
   --sans: 'Manrope', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --radius: 20px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --paper: #EEF3FC;
+  --paper-2: #E2EAFA;
+  --surface: rgba(255, 255, 255, .72);
+  --surface-solid: #FFFFFF;
+  --raised: rgba(255, 255, 255, .9);
+  --ink: #0A1433;
+  --ink-soft: #4C5A80;
+  --rule: rgba(22, 52, 140, .2);
+  --hair: rgba(22, 52, 140, .11);
+  --accent: #1F5FE6;
+  --accent-2: #0698D6;
+  --glow: 0 0 0 1px rgba(31, 95, 230, .25), 0 12px 36px -14px rgba(31, 95, 230, .45);
+  --grid: rgba(31, 95, 230, .06);
+  --soprano: #B57805;
+  --alto: #B32D69;
+  --tenor: #0F8A63;
+  --basse: #3446C2;
+  --danger: #B3261E;
+  --ok: #0F8A63;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #121528; --surface: #1A1E35; --sheet: #FBFBF8; --ink: #E8E9F1; --ink-soft: #A3A7BF;
-    --rule: #3A3F5E; --hair: rgba(232, 233, 241, .12);
-    --soprano: #EDB03C; --alto: #E46A9B; --tenor: #4FB89A; --basse: #8D9DF2; --danger: #F2867E;
-    color-scheme: dark;
-  }
-}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body { background: var(--paper); color: var(--ink); font: 400 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
-h1, h2, h3 { font-family: var(--serif); font-weight: 500; line-height: 1.15; margin: 0; }
+body {
+  min-height: 100vh;
+  color: var(--ink);
+  font: 400 16px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(1100px 600px at 85% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    radial-gradient(900px 500px at -10% 30%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 70%),
+    linear-gradient(var(--paper), var(--paper-2));
+  background-attachment: fixed;
+}
+/* fine grille de circuit, estompée vers le bas */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 75%);
+}
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; margin: 0; letter-spacing: -.02em; }
 p { margin: 0; }
 button, input, select { font: inherit; color: inherit; }
 a { color: inherit; }
-:focus-visible { outline: 2px solid var(--basse); outline-offset: 3px; border-radius: 4px; }
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
-  padding: .6rem 1.15rem; border-radius: 999px; border: 1px solid var(--ink);
-  background: var(--ink); color: var(--paper); font-weight: 600; cursor: pointer; text-decoration: none;
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; border-radius: 6px; }
+::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+
+/* panneau de verre */
+.glass {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 20px 50px -30px rgba(0, 0, 0, .6);
 }
-.btn.quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+/* petit sur-titre espacé, comme « ARTIFICIAL INTELLIGENCE » du logo */
+.eyebrow {
+  font: 600 .74rem/1.6 var(--sans); letter-spacing: .24em; text-transform: uppercase;
+  color: var(--accent-2);
+}
+.gradient-text {
+  background: linear-gradient(100deg, var(--ink) 20%, var(--accent-2) 60%, var(--accent) 95%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
+  padding: .7rem 1.3rem; border-radius: 999px; border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink);
+  font-weight: 700; letter-spacing: .01em; cursor: pointer; text-decoration: none;
+  box-shadow: var(--glow); transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
+.btn:active:not(:disabled) { transform: translateY(0); }
+.btn.quiet { background: transparent; color: var(--ink); border-color: var(--rule); box-shadow: none; }
+.btn.quiet:hover:not(:disabled) { border-color: var(--accent-2); color: var(--accent-2); }
+.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: .45rem; padding: .28rem .7rem; border-radius: 999px;
+  font-size: .8rem; font-weight: 600; color: var(--ink-soft); background: var(--raised); border: 1px solid var(--hair);
+}
+.pill.busy { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 40%, transparent); }
+.pill.busy::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.4s ease-in-out infinite; }
+.pill.ok { color: var(--ok); }
+.pill.failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+@keyframes pulse { 50% { opacity: .25; transform: scale(.7); } }
+
+input[type="range"] { accent-color: var(--accent); }
 .error { color: var(--danger); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {

@@ -25,13 +25,13 @@ import { ScoreMeta, fileUrl } from '../../core/api';
   `,
   styles: [`
     :host { display: block; min-width: 0; }
-    .tabs { display: flex; gap: .25rem; margin-bottom: .75rem; }
-    .tabs button { border: 0; background: none; padding: .4rem .8rem; border-radius: 999px; cursor: pointer; color: var(--ink-soft); font-weight: 600; }
-    .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--hair); }
-    .sheet { background: var(--sheet); color: #1B1F3B; border-radius: 4px; padding: clamp(.5rem, 2vw, 1.5rem);
-             box-shadow: 0 1px 0 rgba(27,31,59,.06), 0 12px 32px -18px rgba(27,31,59,.35); overflow-x: auto; }
+    .tabs { display: inline-flex; gap: .2rem; margin-bottom: .85rem; padding: 3px; border-radius: 999px; background: var(--raised); border: 1px solid var(--hair); }
+    .tabs button { border: 0; background: none; padding: .42rem .95rem; border-radius: 999px; cursor: pointer; color: var(--ink-soft); font-weight: 700; font-size: .9rem; }
+    .tabs button[aria-selected="true"] { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+    .sheet { background: var(--sheet); color: #1B1F3B; border-radius: 14px; padding: clamp(.5rem, 2vw, 1.5rem); overflow-x: auto;
+             box-shadow: 0 0 0 1px var(--hair), 0 30px 70px -35px rgba(0, 0, 0, .75), 0 0 60px -30px color-mix(in srgb, var(--accent-2) 60%, transparent); }
     .note { padding: 1rem; color: #565B76; }
-    .scan img { display: block; width: 100%; height: auto; }
+    .scan img { display: block; width: 100%; height: auto; border-radius: 6px; }
     .scan img + img { margin-top: 1.5rem; }
   `],
 })

@@ -49,7 +49,8 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - `core/api.ts`, `core/library.store.ts`, `core/score.store.ts` (polling 1,5 s pendant un traitement), `core/audio-engine.ts`
 - `features/library/library.ts` : zone de dépôt en forme de portée, dont les lignes prennent les couleurs des voix au survol ; liste des partitions.
 - `features/score/score-page.ts`, `score-viewer.ts` (OSMD + curseur synchronisé à l'audio, onglet scan nettoyé), `mixer.ts` (« Je chante », volumes, couper, tempo/sonorité, téléchargements, correction via MuseScore).
-- Design : polices Literata (titres) + Manrope ; couleurs de voix soprano ocre, alto bissap, ténor malachite, basse indigo ; mode sombre géré.
+- Design (24/10/2026, thème « Pupitre × AIT ») : futuriste et lisible ; nuit profonde + bleu électrique et cyan du logo AIT, panneaux de verre (`.glass`), grille de circuit en fond, fils de portée lumineux aux couleurs des voix. Sombre par défaut, clair via le bouton de l'en-tête (`data-theme`, mémorisé dans `localStorage`). Polices Sora (titres) + Manrope. Partition toujours sur feuille blanche.
+- Éditeur : **AIT – Artificial Intelligence & Technology**, PDG **PALM Romeo Daratagnan** ; développeur **PALM Romeo Daratagnan**, Ouagadougou, Burkina Faso. Mentions centralisées dans `src/app/core/credits.ts` (en-tête, pied de page, page `/a-propos`). Logo détouré dans `public/ait-logo.png` et `public/ait-emblem.png`, toujours posé sur une plaque claire (il est dessiné pour fond blanc).
 
 ## Moteur (testé sur une vraie partition scannée)
 - `preprocess.py` : niveaux de gris, aplatissement de l'éclairage, seuillage adaptatif, suppression des bandes sombres de bord, dé-bruitage, redressement → `page-NN.png` + `clean.pdf`. Sans ce nettoyage, Audiveris ne reconnaissait que 4 mesures sur 13 ; avec, les 13 mesures et le 6/8 sont reconnus.
