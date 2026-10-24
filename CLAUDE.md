@@ -9,12 +9,13 @@
 - Contexte d'usage : chorales liturgiques au Burkina Faso, choristes qui ne lisent pas le solfège.
 
 ## Le produit
-Plateforme web : on dépose une partition de chorale (PDF, photo JPG/PNG ou MusicXML), elle lit les notes (OMR) et produit l'audio de chaque voix (Soprano, Alto, Ténor, Basse), avec une interface pour écouter sa voix en avant, régler les volumes, le tempo, télécharger des MP3 de travail et corriger la partition.
+Plateforme web : on dépose une partition de chorale (PDF, une ou plusieurs photos JPG/PNG/HEIC/TIFF, MusicXML, MIDI, MuseScore), elle lit les notes (OMR) et produit l'audio de chaque voix (Soprano, Alto, Ténor, Basse), avec une interface pour écouter sa voix en avant, régler les volumes, le tempo, télécharger des MP3 de travail et corriger la partition.
 Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisation**.
 
 ## Emplacements
 - Application : `~/pupitre-plateforme` (ce dossier).
-- Moteur Python (fonctionne, testé) : `~/pupitre/engine` → `preprocess.py`, `render.py`, venv `.venv` (Python 3.12).
+- Moteur Python : **dans le dépôt**, `engine/` → `omr.py`, `preprocess.py`, `merge.py`, `render.py`, `requirements.txt`. Le venv reste `~/pupitre/engine/.venv` (Python 3.12, + pillow-heif). `~/pupitre/engine` n'est plus lu par le serveur.
+- Banc d'essai : `engine/bench/` (`make_corpus.py` avec `~/pupitre/bench-venv` qui a Verovio ; `run_bench.py` avec le venv du moteur). Corpus dans `~/pupitre/bench-corpus`.
 - Audiveris (OMR) : `/Applications/Audiveris.app/Contents/MacOS/Audiveris` (copié depuis le .dmg, quarantaine retirée).
 - Banque de sons : `~/soundfonts/GeneralUser-GS.sf2` (variable `SOUNDFONT`, lue par render.py).
 - Données (fichiers) : `~/pupitre-plateforme/data/<uuid>/` (source, pages/, audio/, partition.mxl…).
@@ -32,7 +33,7 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - `server/config.ts` : chemins et variables (charge `.env` via `process.loadEnvFile`), `checkSetup()` liste ce qui manque.
 - `server/types.ts` : `ScoreMeta`, `Manifest`, `VoiceInfo`, `UserError` (message affiché tel quel à l'utilisateur).
 - `server/store.ts` : PostgreSQL (`initDb`, `readMeta`, `writeMeta`, `patchMeta`, `listMetas`, `removeScore`).
-- `server/jobs.ts` : pipeline `preprocess.py` → Audiveris `-batch -export` → `render.py`, progression en base, `enqueue()`, `recover()`.
+- `server/jobs.ts` : `omr.py` (nettoyage → Audiveris, seconde lecture si besoin → assemblage des mouvements) → `render.py`, progression en base, `enqueue()`, `recover()`. MIDI rendu directement ; MuseScore converti si `mscore` est installé.
 - `server/main.ts` : routes.
 
 ### API
@@ -58,7 +59,13 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - L'installation et la compilation Angular ont réussi.
 - **Problème à corriger en premier** : à la question « Serveur », l'utilisateur a saisi `http://localhost:3000`, ce qui donne `getaddrinfo ENOTFOUND http`. Correction :
   `sed -i '' 's#@http://localhost:3000:#@localhost:#' .env`, puis `node /tmp/pupitre-pgtest.cjs` (si le fichier existe encore), puis `npm run serve`.
-- **Jamais vérifié en conditions réelles** : le comportement de l'interface dans le navigateur (curseur OSMD, mixage Web Audio, envoi de fichiers) et le pipeline complet lancé depuis le serveur. Tester avec `~/Downloads/Seigneur Dieu d'amour voici tes deux enfants.pdf`.
+- Vérifié le 24/10/2026 dans le navigateur : envoi de plusieurs photos, affichage OSMD (import corrigé), lecture audio et curseur synchronisé.
+- Lancer avec `PATH=/usr/local/bin:$PATH` si le terminal est resté sur le Node v20 de nvm.
+
+## Lecture musicale (render.py, partitions lues par OMR)
+- Noms de portées ignorés (Audiveris nomme « Piano » toute accolade) ; voix dans l'ordre de la page (S, A, T, B).
+- Octaves corrigées par tessiture (centres La4, Mi4, La3, Ré3) ; mesures égalisées entre voix ; couplet de soliste versé dans la voix haute.
+- Banc d'essai du 24/10/2026 : 94 % de notes justes (81 % avant), 24/24 cas en 4 voix.
 
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.
