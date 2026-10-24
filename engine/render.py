@@ -78,24 +78,57 @@ def flatten_voices(part):
     return p
 
 
-def is_accompaniment(part):
-    """Portée d'instrument : nommée comme telle, ou remplie d'accords de 3 notes et plus."""
+def is_accompaniment(part, trust_names=True):
+    """Portée d'instrument : nommée comme telle, ou remplie d'accords de 3 notes et plus.
+    Audiveris nomme « Piano » toute paire de portées liées par une accolade, même un chœur SATB :
+    pour une partition lue par OMR, seul le contenu compte."""
     name = f"{part.partName or ''} {part.partAbbreviation or ''}".lower()
-    if any(w in name for w in ACCOMP_WORDS):
+    if trust_names and any(w in name for w in ACCOMP_WORDS):
         return True
     notes = len(part.recurse().notes)
     big = sum(1 for c in real_chords(part) if len(c.pitches) >= 3)
     return notes > 0 and big > notes * 0.25
 
 
-def extract_voices(score):
-    sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p)]
+def sounding(line):
+    return {m.number for m in line.getElementsByClass(stream.Measure) if m.recurse().notes}
+
+
+def fold_solos(voices):
+    """Une ligne qui ne chante que là où tout le chœur se tait (couplet d'un soliste) n'est pas une voix de plus :
+    on la verse dans la voix la plus aiguë, qui porte la mélodie."""
+    if len(voices) <= 4:
+        return voices
+    kept = list(voices)
+    for v in sorted(voices, key=lambda v: len(v.recurse().notes)):
+        others = [o for o in kept if o is not v]
+        if len(kept) <= 4:
+            break
+        mine, rest = sounding(v), set().union(*(sounding(o) for o in others))
+        if not mine or len(mine & rest) > 0.2 * len(mine):
+            continue
+        target = max(others, key=lambda o: mean_pitch(o) or 0)
+        by_number = {m.number: m for m in target.getElementsByClass(stream.Measure)}
+        for m in v.getElementsByClass(stream.Measure):
+            if m.number in mine and m.number in by_number:
+                dst = by_number[m.number]
+                for el in list(dst.notesAndRests):
+                    dst.remove(el)
+                for el in m.notesAndRests:
+                    dst.insert(el.offset, copy.deepcopy(el))
+        kept.remove(v)
+    return kept
+
+
+def extract_voices(score, trust_names=True):
+    sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
     voices = []
     for part in sung:
         lines = split_staff(part) if needs_split(part) else [flatten_voices(part)]
         voices.extend(l for l in lines if l.recurse().notes)
+    voices = fold_solos(voices)
     voices.sort(key=lambda v: mean_pitch(v) or 0, reverse=True)
     return voices
 
@@ -150,6 +183,7 @@ def main():
     ap.add_argument("src"); ap.add_argument("out")
     ap.add_argument("--tempo", type=int, default=0)
     ap.add_argument("--timbre", choices=["choeur", "piano"], default="choeur")
+    ap.add_argument("--omr", action="store_true", help="partition lue par Audiveris : ignorer les noms de portées")
     a = ap.parse_args()
 
     if not pathlib.Path(SF2).exists():
@@ -157,7 +191,7 @@ def main():
     out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
     score = converter.parse(a.src)
     tempo_qpm = a.tempo or detect_tempo(score)
-    voices = extract_voices(score)
+    voices = extract_voices(score, trust_names=not a.omr)
     if not voices:
         sys.exit("Aucune note n’a été reconnue dans la partition.")
 

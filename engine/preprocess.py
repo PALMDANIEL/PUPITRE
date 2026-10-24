@@ -20,11 +20,25 @@ def deskew(bw):
     return cv2.warpAffine(bw, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=255)
 
 
-def clean_page(img):
+def to_gray(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     scale = 2480 / gray.shape[1]
     if abs(scale - 1) > 0.05:
         gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    return gray
+
+
+def is_digital(gray):
+    """Page issue d'un logiciel de gravure (fond blanc pur, presque pas de gris) et non d'un scan ou d'une photo."""
+    return np.mean(gray > 245) > 0.8 and np.mean((gray > 60) & (gray < 200)) < 0.08
+
+
+def plain_page(gray):
+    """Simple seuillage : le nettoyage complet abîme les pages déjà propres (Audiveris peut alors planter)."""
+    return cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY)[1]
+
+
+def clean_page(gray):
     bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
     flat = cv2.divide(gray, bg, scale=255)
     bw = cv2.adaptiveThreshold(flat, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, 15)
@@ -60,17 +74,24 @@ def main(src, out_dir):
         pages = pdf_to_images(src, t) if src.suffix.lower() == ".pdf" else [src]
         if not pages:
             sys.exit("Le PDF ne contient aucune page lisible.")
-        outs = []
+        best, other, digital = [], [], 0
         for i, p in enumerate(pages, 1):
             img = cv2.imread(str(p), cv2.IMREAD_COLOR)
             if img is None:
                 sys.exit("Image illisible : utilisez un PDF, un JPG ou un PNG.")
-            dst = out / f"page-{i:02d}.png"
-            cv2.imwrite(str(dst), clean_page(img))
-            outs.append(dst)
-    imgs = [Image.open(p).convert("L") for p in outs]
-    imgs[0].save(out / "clean.pdf", save_all=True, append_images=imgs[1:], resolution=300)
-    print(f"Pages nettoyées : {len(outs)}")
+            gray = to_gray(img)
+            plain, cleaned = plain_page(gray), clean_page(gray)
+            if is_digital(gray):
+                digital += 1
+                best.append(plain); other.append(cleaned)
+            else:
+                best.append(cleaned); other.append(plain)
+            cv2.imwrite(str(out / f"page-{i:02d}.png"), best[-1])
+    # clean.pdf : la meilleure version pour Audiveris ; alt.pdf : l'autre, essayée si la première échoue.
+    for name, imgs in (("clean.pdf", best), ("alt.pdf", other)):
+        pil = [Image.fromarray(a) for a in imgs]
+        pil[0].save(out / name, save_all=True, append_images=pil[1:], resolution=300)
+    print(f"Pages préparées : {len(best)} (dont {digital} numériques)")
 
 
 if __name__ == "__main__":
