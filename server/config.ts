@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const root = process.cwd();
+// PUPITRE_ROOT : dossier des ressources (l'application de bureau le fixe ; sinon le dossier courant).
+const root = process.env.PUPITRE_ROOT ?? process.cwd();
 try { process.loadEnvFile(path.join(root, '.env')); } catch { }
 
 const env = process.env;
@@ -21,10 +22,15 @@ function findMuseScore(): string | null {
 
 export const config = {
   port: Number(env.PORT ?? 3000),
+  host: env.HOST,
+  /** postgres : installation serveur (DATABASE_URL défini) ; files : version installable, sans base de données. */
+  store: (env.STORE ?? (env.DATABASE_URL ? 'postgres' : 'files')) as 'postgres' | 'files',
   databaseUrl: env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/pupitre',
   storageDir: path.resolve(env.STORAGE_DIR ?? path.join(root, 'data')),
-  webDir: path.join(root, 'dist', 'pupitre', 'browser'),
+  webDir: path.resolve(env.WEB_DIR ?? path.join(root, 'dist', 'pupitre', 'browser')),
   engineDir: path.resolve(env.ENGINE_DIR ?? path.join(root, 'engine')),
+  /** Moteur autonome (PyInstaller) de la version installable ; à défaut, les scripts Python d'engineDir. */
+  engineBin: env.ENGINE_BIN ?? null,
   python: env.PYTHON_BIN ?? path.join(home, 'pupitre', 'engine', '.venv', 'bin', 'python3'),
   audiveris: env.AUDIVERIS_BIN ?? (fs.existsSync(macAudiveris) ? macAudiveris : '/opt/audiveris/bin/Audiveris'),
   musescore: findMuseScore(),
@@ -41,10 +47,19 @@ if (!env.SOUNDFONT) {
   if (fs.existsSync(sf)) process.env.SOUNDFONT = sf;
 }
 
+/** Commande pour une étape du moteur (omr, render…). */
+export function engineCommand(step: 'omr' | 'render', args: string[]): [string, string[]] {
+  return config.engineBin ? [config.engineBin, [step, ...args]] : [config.python, [path.join(config.engineDir, `${step}.py`), ...args]];
+}
+
 export function checkSetup(): string[] {
   const problems: string[] = [];
-  if (!fs.existsSync(path.join(config.engineDir, 'render.py'))) problems.push(`Moteur introuvable dans ${config.engineDir}`);
-  if (!fs.existsSync(config.python)) problems.push(`Python introuvable : ${config.python}`);
+  if (config.engineBin) {
+    if (!fs.existsSync(config.engineBin)) problems.push(`Moteur introuvable : ${config.engineBin}`);
+  } else {
+    if (!fs.existsSync(path.join(config.engineDir, 'render.py'))) problems.push(`Moteur introuvable dans ${config.engineDir}`);
+    if (!fs.existsSync(config.python)) problems.push(`Python introuvable : ${config.python}`);
+  }
   if (!fs.existsSync(config.audiveris)) problems.push(`Audiveris introuvable : ${config.audiveris}`);
   if (!process.env.SOUNDFONT) problems.push('Banque de sons introuvable : ~/soundfonts/GeneralUser-GS.sf2');
   if (!fs.existsSync(path.join(config.webDir, 'index.html'))) problems.push('Interface non compilée : lancez « npm start »');

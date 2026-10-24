@@ -150,7 +150,8 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: 'Erreur interne du serveur.' });
 });
 
-async function main() {
+/** Démarre Pupitre ; renvoie l'adresse réelle (port 0 = port libre choisi par le système). */
+export async function start(opts: { port?: number; host?: string } = {}): Promise<{ url: string; close: () => void }> {
   await fs.mkdir(config.storageDir, { recursive: true });
   const problems = checkSetup();
   if (problems.length) {
@@ -160,15 +161,27 @@ async function main() {
   }
   await initDb();
   await recover();
-  app.listen(config.port, () => {
-    const url = `http://localhost:${config.port}`;
-    console.log(`\nPupitre est lancé : ${url}`);
-    console.log('Laissez ce terminal ouvert. Ctrl+C pour arrêter.\n');
-    if (process.platform === 'darwin' && !process.env.NO_OPEN) spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
+  const port = opts.port ?? config.port;
+  const host = opts.host ?? config.host;
+  return new Promise((resolve, reject) => {
+    const server = host ? app.listen(port, host) : app.listen(port);
+    server.once('error', reject);
+    server.once('listening', () => {
+      const address = server.address();
+      const real = typeof address === 'object' && address ? address.port : port;
+      resolve({ url: `http://${host && host !== '0.0.0.0' ? host : 'localhost'}:${real}`, close: () => server.close() });
+    });
   });
 }
 
-main().catch((e) => {
-  console.error('\nImpossible de démarrer Pupitre :', e.message);
-  process.exit(1);
-});
+// Lancement en ligne de commande (npm run serve). L'application de bureau importe ce fichier et appelle start().
+if (!process.env.PUPITRE_EMBEDDED) {
+  start().then(({ url }) => {
+    console.log(`\nPupitre est lancé : ${url}`);
+    console.log('Laissez ce terminal ouvert. Ctrl+C pour arrêter.\n');
+    if (process.platform === 'darwin' && !process.env.NO_OPEN) spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
+  }).catch((e) => {
+    console.error('\nImpossible de démarrer Pupitre :', e.message);
+    process.exit(1);
+  });
+}

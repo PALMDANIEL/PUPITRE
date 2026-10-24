@@ -3,7 +3,7 @@ Pré-traitement : PDF ou photos -> pages nettoyées (cadrage, éclairage, bords,
 Usage : python3 preprocess.py <source.pdf|image|dossier_de_pages> <dossier_sortie>
 Images : JPG, PNG, HEIC/HEIF (iPhone), WEBP, TIFF (plusieurs pages), BMP. Un dossier = ses fichiers dans l'ordre des noms.
 """
-import sys, cv2, numpy as np, subprocess, pathlib, tempfile
+import sys, cv2, numpy as np, pathlib, tempfile
 from PIL import Image, ImageOps
 
 try:
@@ -123,11 +123,17 @@ def clean_page(gray):
 
 
 def pdf_pages(pdf, tmp):
-    tmp.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", str(pdf), str(tmp / "p")], capture_output=True)
-    if r.returncode:
+    """Pages du PDF en niveaux de gris à 300 dpi (pypdfium2 : embarqué, rien à installer)."""
+    import pypdfium2 as pdfium
+    try:
+        doc = pdfium.PdfDocument(str(pdf))
+    except Exception:
         sys.exit("Ce PDF est illisible ou protégé par un mot de passe.")
-    return [(cv2.imread(str(p), cv2.IMREAD_GRAYSCALE), False) for p in sorted(tmp.glob("p*.png"))]
+    pages = []
+    for page in doc:
+        img = page.render(scale=300 / 72, grayscale=True).to_numpy()
+        pages.append((img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), False))
+    return pages
 
 
 def image_pages(path):
@@ -151,7 +157,7 @@ def load_pages(src, tmp):
     for k, f in enumerate(files):
         ext = f.suffix.lower()
         if ext == ".pdf":
-            pages += pdf_pages(f, tmp / str(k))
+            pages += pdf_pages(f, tmp)
         elif ext in IMAGES:
             pages += image_pages(f)
         else:

@@ -9,6 +9,7 @@ idna==3.20
 joblib==1.6.0
 jsonpickle==4.1.4
 kiwisolver==1.5.1
+lameenc==1.9.0
 matplotlib==3.11.2
 more-itertools==11.2.1
 music21==10.5.0
@@ -17,10 +18,13 @@ opencv-python-headless==4.14.0.94
 packaging==26.3
 pillow==12.3.0
 pillow_heif==1.8.1
+PyAudio==0.2.14
 pyparsing==3.3.3
+pypdfium2==5.14.0
 python-dateutil==3.0.0
 requests==2.34.2
 six==1.17.0
+tinysoundfont==0.3.7
 tzdata==2026.5
 urllib3==2.8.0
 webcolors==25.10.0

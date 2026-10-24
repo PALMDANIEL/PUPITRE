@@ -254,8 +254,11 @@ def align_measures(voices):
         target = bar
         if lengths:
             common = statistics.mode(lengths)
+            edge = k == 0 or k == count - 1
             if lengths.count(common) * 2 > len(lengths):
-                target = common          # la majorité a raison (levée, mesure libre d'un récitatif…)
+                # la majorité a raison quand la mesure est plus longue (récitatif libre) ou incomplète en levée / en fin ;
+                # ailleurs, une mesure trop courte dans toutes les voix est un silence oublié par la lecture : on complète
+                target = common if common > bar or edge else bar
             elif len(set(lengths)) == len(lengths):
                 target = max(lengths)    # aucune majorité (un seul chanteur, ou tous différents) : on ne coupe rien
         for i, m in enumerate(row):
@@ -331,13 +334,58 @@ def prepare(part, tempo_qpm, timbre, velocity=None):
     return p
 
 
+RATE = 44100
+_synth = None
+
+
+def synth():
+    """Synthétiseur SoundFont intégré (TinySoundFont) : ni fluidsynth ni ffmpeg à installer, sur Mac comme sur Windows."""
+    global _synth
+    if _synth is None:
+        import tinysoundfont
+        _synth = tinysoundfont.Synth(samplerate=RATE, gain=-3)
+        _synth.sfload(SF2)
+    return _synth
+
+
+SFID = 0  # première (et seule) banque chargée
+
+
 def to_mp3(sc, base: pathlib.Path):
-    mid, wav, mp3 = base.with_suffix(".mid"), base.with_suffix(".wav"), base.with_suffix(".mp3")
-    sc.write("midi", fp=str(mid))
-    subprocess.run(["fluidsynth", "-ni", "-q", "-g", "0.8", "-F", str(wav), "-r", "44100", SF2, str(mid)],
-                   check=True, stdout=subprocess.DEVNULL)
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-b:a", "160k", str(mp3)], check=True)
-    wav.unlink(); mid.unlink()
+    """Joue la partition note par note dans le synthétiseur (tempo exact, sans fichier MIDI intermédiaire)."""
+    import lameenc, numpy as np
+    s = synth()
+    s.notes_off()
+    events = []  # (seconde, 0 = relâcher / 1 = jouer, canal, note, vélocité)
+    for chan, part in enumerate(sc.parts):
+        mark = next(iter(part.recurse().getElementsByClass(m21tempo.MetronomeMark)), None)
+        qpm = mark.getQuarterBPM() if mark else 72
+        inst = next(iter(part.recurse().getElementsByClass(instrument.Instrument)), None)
+        program = inst.midiProgram if inst is not None and inst.midiProgram is not None else 52
+        s.program_select(chan, SFID, 0, program)
+        sec = 60.0 / qpm
+        for n in part.stripTies().flatten().notes:
+            start, end = float(n.offset) * sec, float(n.offset + n.quarterLength) * sec
+            vel = int(n.volume.velocity or 90)
+            for p in n.pitches:
+                events.append((start, 1, chan, int(p.midi), vel))
+                events.append((max(start + 0.02, end - 0.01), 0, chan, int(p.midi), 0))
+    events.sort()
+    chunks, now = [], 0.0
+    for t, kind, chan, key, vel in events + [(events[-1][0] + 2.0 if events else 1.0, -1, 0, 0, 0)]:
+        frames = int(round((t - now) * RATE))
+        if frames > 0:
+            chunks.append(np.frombuffer(s.generate(frames), dtype=np.float32).copy())
+            now += frames / RATE
+        if kind == 1:
+            s.noteon(chan, key, vel)
+        elif kind == 0:
+            s.noteoff(chan, key)
+    pcm = np.clip(np.concatenate(chunks) if chunks else np.zeros(2, np.float32), -1, 1)
+    enc = lameenc.Encoder()
+    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(2)
+    mp3 = base.with_suffix(".mp3")
+    mp3.write_bytes(enc.encode((pcm * 32767).astype("<i2").tobytes()) + enc.flush())
     return mp3.name
 
 

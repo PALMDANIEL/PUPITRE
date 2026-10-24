@@ -13,6 +13,13 @@ AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
 TIMEOUT = int(os.environ.get("OMR_TIMEOUT_S", 15 * 60))
 
 
+def step(name, *args):
+    """Commande d'une autre étape du moteur : exécutable autonome (version installée) ou script Python (développement)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, name, *map(str, args)]
+    return [sys.executable, str(HERE / f"{name}.py"), *map(str, args)]
+
+
 def movements(folder: pathlib.Path):
     """Audiveris écrit clean.mxl, ou clean.mvt1.mxl, clean.mvt2.mxl… quand il coupe la partition."""
     order = lambda p: int(m.group(1)) if (m := re.search(r"\.mvt(\d+)\.", p.name)) else 0
@@ -58,7 +65,7 @@ def main(src, work):
     src, work = pathlib.Path(src), pathlib.Path(work)
     pre, pages_dir = work / "pre", work / "pages"
     shutil.rmtree(pre, ignore_errors=True)
-    prep = subprocess.run([sys.executable, str(HERE / "preprocess.py"), str(src), str(pre)], capture_output=True, text=True)
+    prep = subprocess.run(step("preprocess", src, pre), capture_output=True, text=True)
     if prep.returncode:
         last = (prep.stderr.strip().splitlines() or ["Le nettoyage de l’image a échoué."])[-1]
         sys.exit(last if "Error" not in last and "Traceback" not in last else "Le nettoyage de l’image a échoué.")
@@ -92,7 +99,7 @@ def main(src, work):
         shutil.copy(found[0], target)
     else:
         target = work / "partition.musicxml"
-        subprocess.run([sys.executable, str(HERE / "merge.py"), str(target), *map(str, found)], check=True)
+        subprocess.run(step("merge", target, *found), check=True)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
 

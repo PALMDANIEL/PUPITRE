@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { config } from './config';
+import { config, engineCommand } from './config';
 import { dirOf, listMetas, patchMeta, readMeta } from './store';
 import { BUSY, UserError, type Job, type Manifest } from './types';
 
@@ -33,8 +33,6 @@ function run(cmd: string, args: string[], opts: { label: string; timeoutMs: numb
   });
 }
 
-const engine = (script: string) => path.join(config.engineDir, script);
-
 async function processScore(id: string) {
   const meta = await readMeta(id);
   if (!meta) return;
@@ -59,7 +57,8 @@ async function processScore(id: string) {
   let partitionFile = '';
   const pagesDir = path.join(dir, 'pages');
   const update = (patch: Parameters<typeof patchMeta>[1]) => void patchMeta(id, patch).catch(() => undefined);
-  await run(config.python, [engine('omr.py'), path.join(dir, meta.sourceFile), dir], {
+  const [omrCmd, omrArgs] = engineCommand('omr', [path.join(dir, meta.sourceFile), dir]);
+  await run(omrCmd, omrArgs, {
     label: 'La lecture des notes',
     timeoutMs: config.omrTimeoutMs * 2,
     onLine: (line) => {
@@ -87,10 +86,11 @@ async function renderScore(id: string) {
   const base = meta.status === 'queued' ? 10 : Math.max(meta.progress, 62);
   await patchMeta(id, { status: 'rendering', progress: base });
 
-  const args = [engine('render.py'), path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
+  const args = [path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
   if (meta.tempo) args.push('--tempo', String(meta.tempo));
   if (meta.source === 'pdf' || meta.source === 'image') args.push('--omr');
-  await run(config.python, args, {
+  const [renderCmd, renderArgs] = engineCommand('render', args);
+  await run(renderCmd, renderArgs, {
     label: 'La création de l’audio',
     timeoutMs: config.renderTimeoutMs,
     onLine: (line) => {
