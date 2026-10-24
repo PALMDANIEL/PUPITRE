@@ -73,7 +73,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           curl -fsSL -o audiveris.dmg "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/Audiveris-${AUDIVERIS_VERSION}-${{ matrix.audiveris }}.dmg"
-          hdiutil attach audiveris.dmg -nobrowse -mountpoint /Volumes/audiveris
+          # l'image affiche l'accord de licence d'Audiveris (AGPL) : réponse automatique, sinon l'ouverture attend indéfiniment
+          yes | hdiutil attach audiveris.dmg -nobrowse -noautoopen -mountpoint /Volumes/audiveris > /dev/null
           mkdir -p desktop/vendor/audiveris
           ditto /Volumes/audiveris/Audiveris.app desktop/vendor/audiveris/Audiveris.app
           hdiutil detach /Volumes/audiveris
