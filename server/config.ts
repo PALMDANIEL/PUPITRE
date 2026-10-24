@@ -14,7 +14,7 @@ export const config = {
   databaseUrl: env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/pupitre',
   storageDir: path.resolve(env.STORAGE_DIR ?? path.join(root, 'data')),
   webDir: path.join(root, 'dist', 'pupitre', 'browser'),
-  engineDir: path.resolve(env.ENGINE_DIR ?? path.join(home, 'pupitre', 'engine')),
+  engineDir: path.resolve(env.ENGINE_DIR ?? path.join(root, 'engine')),
   python: env.PYTHON_BIN ?? path.join(home, 'pupitre', 'engine', '.venv', 'bin', 'python3'),
   audiveris: env.AUDIVERIS_BIN ?? (fs.existsSync(macAudiveris) ? macAudiveris : '/opt/audiveris/bin/Audiveris'),
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),
