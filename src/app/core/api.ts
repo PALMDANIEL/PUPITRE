@@ -11,7 +11,7 @@ export interface Manifest {
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
 export interface ScoreMeta {
-  id: string; title: string; originalName: string; source: 'pdf' | 'image' | 'musicxml';
+  id: string; title: string; originalName: string; source: 'pdf' | 'image' | 'musicxml' | 'midi' | 'musescore';
   partitionFile: string | null; corrected: boolean; pages: string[];
   status: ScoreStatus; progress: number; error: string | null;
   tempo: number | null; timbre: Timbre; manifest: Manifest | null; revision: number;
@@ -29,7 +29,7 @@ const VOICE_COLORS: Record<string, string> = {
 const CYCLE = ['var(--soprano)', 'var(--alto)', 'var(--tenor)', 'var(--basse)'];
 export const voiceColor = (id: string, index = 0) => VOICE_COLORS[id] ?? CYCLE[index % CYCLE.length];
 
-export const ACCEPT = '.pdf,.png,.jpg,.jpeg,.mxl,.musicxml,.xml';
+export const ACCEPT = '.pdf,.png,.jpg,.jpeg,.heic,.heif,.webp,.tif,.tiff,.bmp,.mxl,.musicxml,.xml,.mid,.midi,.mscz,.mscx';
 
 export const fileUrl = (s: Pick<ScoreMeta, 'id' | 'revision'>, folder: 'audio' | 'pages', file: string, download = false) =>
   `/files/${s.id}/${folder}/${encodeURIComponent(file)}?v=${s.revision}${download ? '&download' : ''}`;
@@ -48,9 +48,10 @@ export class ScoresApi {
 
   list() { return this.http.get<ScoreMeta[]>('/api/scores'); }
   get(id: string) { return this.http.get<ScoreMeta>(`/api/scores/${id}`); }
-  upload(file: File) {
+  /** Plusieurs photos envoyées ensemble = les pages d'une même partition, dans l'ordre des noms. */
+  upload(files: File[]) {
     const body = new FormData();
-    body.append('file', file);
+    for (const f of files) body.append('file', f);
     return this.http.post<ScoreMeta>('/api/scores', body, { reportProgress: true, observe: 'events' });
   }
   rename(id: string, title: string) { return this.http.patch<ScoreMeta>(`/api/scores/${id}`, { title }); }

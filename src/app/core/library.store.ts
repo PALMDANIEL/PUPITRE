@@ -20,10 +20,10 @@ export const LibraryStore = signalStore(
         patchState(store, { error: errorMessage(e), loaded: true });
       }
     },
-    upload(file: File): Promise<ScoreMeta> {
+    upload(files: File[]): Promise<ScoreMeta> {
       patchState(store, { uploading: true, uploadProgress: 0, error: null });
       return new Promise((resolve, reject) => {
-        api.upload(file).subscribe({
+        api.upload(files).subscribe({
           next: (ev) => {
             if (ev.type === HttpEventType.UploadProgress && ev.total) {
               patchState(store, { uploadProgress: Math.round((100 * ev.loaded) / ev.total) });

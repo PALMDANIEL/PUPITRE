@@ -109,7 +109,8 @@ export class ScorePage {
   protected readonly store = inject(ScoreStore);
 
   protected readonly steps = computed<Step[]>(() => {
-    const fromImage = this.store.score()?.source !== 'musicxml';
+    const source = this.store.score()?.source;
+    const fromImage = source === 'pdf' || source === 'image';
     const steps: Step[] = [];
     if (fromImage) {
       steps.push({ key: 'preprocessing', label: 'Nettoyage de l’image' }, { key: 'recognizing', label: 'Lecture des notes' });

@@ -35,79 +35,46 @@ function run(cmd: string, args: string[], opts: { label: string; timeoutMs: numb
 
 const engine = (script: string) => path.join(config.engineDir, script);
 
-async function findAll(dir: string, ext: string): Promise<string[]> {
-  try {
-    const entries = (await fs.readdir(dir, { recursive: true })).map(String);
-    // Audiveris écrit clean.mvt1.mxl, clean.mvt2.mxl… quand il coupe la partition en mouvements.
-    const order = (f: string) => Number(/\.mvt(\d+)\./.exec(f)?.[1] ?? 0);
-    return entries.filter((f) => f.toLowerCase().endsWith(ext)).sort((a, b) => order(a) - order(b)).map((f) => path.join(dir, f));
-  } catch {
-    return [];
-  }
-}
-
-async function recognize(id: string, pdf: string, omr: string): Promise<string[]> {
-  await fs.rm(omr, { recursive: true, force: true });
-  let ticks = 0;
-  try {
-    await run(config.audiveris, ['-batch', '-export', '-output', omr, '--', pdf], {
-      label: 'La lecture des notes',
-      timeoutMs: config.omrTimeoutMs,
-      onLine: (line) => {
-        if (/Sheet#\d+/.test(line) && ++ticks % 15 === 0) {
-          void patchMeta(id, { progress: Math.min(58, 20 + Math.floor(ticks / 15)) }).catch(() => undefined);
-        }
-      },
-    });
-  } catch (err) {
-    console.warn(`  Audiveris a échoué sur ${path.basename(pdf)} :`, err instanceof Error ? err.message.slice(0, 300) : err);
-  }
-  return findAll(omr, '.mxl');
-}
-
 async function processScore(id: string) {
   const meta = await readMeta(id);
   if (!meta) return;
   const dir = dirOf(id);
 
-  if (meta.source === 'musicxml') {
+  if (meta.source === 'musicxml' || meta.source === 'midi') {
     await patchMeta(id, { partitionFile: meta.sourceFile });
+    return renderScore(id);
+  }
+  if (meta.source === 'musescore') {
+    if (!config.musescore) {
+      throw new UserError('Ce serveur ne sait pas ouvrir les fichiers MuseScore. Dans MuseScore : Fichier › Exporter › MusicXML, puis envoyez ce fichier.');
+    }
+    await run(config.musescore, ['-o', path.join(dir, 'partition.musicxml'), path.join(dir, meta.sourceFile)], {
+      label: 'La conversion du fichier MuseScore', timeoutMs: config.renderTimeoutMs,
+    });
+    await patchMeta(id, { partitionFile: 'partition.musicxml' });
     return renderScore(id);
   }
 
   await patchMeta(id, { status: 'preprocessing', progress: 5 });
-  const pre = path.join(dir, 'pre');
-  await fs.rm(pre, { recursive: true, force: true });
-  await run(config.python, [engine('preprocess.py'), path.join(dir, meta.sourceFile), pre], {
-    label: 'Le nettoyage de l’image', timeoutMs: config.renderTimeoutMs,
-  });
+  let partitionFile = '';
   const pagesDir = path.join(dir, 'pages');
-  await fs.rm(pagesDir, { recursive: true, force: true });
-  await fs.mkdir(pagesDir, { recursive: true });
-  const pages = (await fs.readdir(pre)).filter((f) => f.endsWith('.png')).sort();
-  for (const p of pages) await fs.copyFile(path.join(pre, p), path.join(pagesDir, p));
-  await patchMeta(id, { pages, progress: 15 });
-
-  await patchMeta(id, { status: 'recognizing', progress: 20 });
-  const omr = path.join(dir, 'omr');
-  let movements = await recognize(id, path.join(pre, 'clean.pdf'), omr);
-  if (!movements.length) {
-    console.log('  nouvel essai avec l’autre version de l’image');
-    movements = await recognize(id, path.join(pre, 'alt.pdf'), omr);
-  }
-  if (!movements.length) throw new UserError('Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.');
-  for (const old of ['partition.mxl', 'partition.musicxml']) await fs.rm(path.join(dir, old), { force: true });
-  let partitionFile = 'partition.mxl';
-  if (movements.length === 1) {
-    await fs.copyFile(movements[0], path.join(dir, partitionFile));
-  } else {
-    partitionFile = 'partition.musicxml';
-    await run(config.python, [engine('merge.py'), path.join(dir, partitionFile), ...movements], {
-      label: 'L’assemblage des pages', timeoutMs: config.renderTimeoutMs,
-    });
-  }
-  await fs.rm(pre, { recursive: true, force: true });
-  await patchMeta(id, { partitionFile, corrected: false, progress: 62 });
+  const update = (patch: Parameters<typeof patchMeta>[1]) => void patchMeta(id, patch).catch(() => undefined);
+  await run(config.python, [engine('omr.py'), path.join(dir, meta.sourceFile), dir], {
+    label: 'La lecture des notes',
+    timeoutMs: config.omrTimeoutMs * 2,
+    onLine: (line) => {
+      if (line.startsWith('pages:')) {
+        void fs.readdir(pagesDir).then((files) => update({ pages: files.filter((f) => f.endsWith('.png')).sort(), status: 'recognizing', progress: 20 }));
+      }
+      const pct = /^progress:omr:(\d+)/.exec(line);
+      if (pct) update({ progress: 20 + Math.round((38 * Number(pct[1])) / 100) });
+      const done = /^partition:(.+)$/.exec(line);
+      if (done) partitionFile = done[1];
+    },
+  });
+  if (!partitionFile) throw new UserError('Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.');
+  const pages = (await fs.readdir(pagesDir)).filter((f) => f.endsWith('.png')).sort();
+  await patchMeta(id, { pages, partitionFile, corrected: false, progress: 62 });
   await renderScore(id);
 }
 
@@ -122,7 +89,7 @@ async function renderScore(id: string) {
 
   const args = [engine('render.py'), path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
   if (meta.tempo) args.push('--tempo', String(meta.tempo));
-  if (meta.source !== 'musicxml') args.push('--omr');
+  if (meta.source === 'pdf' || meta.source === 'image') args.push('--omr');
   await run(config.python, args, {
     label: 'La création de l’audio',
     timeoutMs: config.renderTimeoutMs,

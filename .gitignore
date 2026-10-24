@@ -3,3 +3,5 @@ dist
 .angular
 data
 .env
+__pycache__/
+*.pyc

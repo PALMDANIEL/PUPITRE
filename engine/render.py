@@ -164,8 +164,10 @@ def to_mp3(sc, base: pathlib.Path):
     return mp3.name
 
 
-def export_musicxml(src: pathlib.Path, dst: pathlib.Path):
-    if zipfile.is_zipfile(src):
+def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
+    if src.suffix.lower() in (".mid", ".midi"):
+        score.write("musicxml", fp=str(dst))  # MIDI : l'afficheur de partition a besoin de MusicXML
+    elif zipfile.is_zipfile(src):
         with zipfile.ZipFile(src) as z:
             root = None
             if "META-INF/container.xml" in z.namelist():
@@ -211,7 +213,7 @@ def main():
         print(f"Voix {i+1}/{len(voices)} : {vname} ({fr_name(lo)} à {fr_name(hi)})", flush=True)
 
     tutti = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre) for v in voices]), out / "tutti")
-    export_musicxml(pathlib.Path(a.src), out / "score.musicxml")
+    export_musicxml(pathlib.Path(a.src), out / "score.musicxml", score)
     ts = next(iter(score.recurse().getElementsByClass(meter.TimeSignature)), None)
     ks = score.analyze("key")
     manifest = {

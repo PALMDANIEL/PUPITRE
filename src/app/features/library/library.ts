@@ -16,14 +16,14 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
     <label class="drop" [class.over]="over()" [class.sending]="store.uploading()"
            (dragover)="$event.preventDefault(); over.set(true)" (dragleave)="over.set(false)" (drop)="drop($event)">
       <span class="stave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-      <input class="visually-hidden" type="file" [accept]="accept" [disabled]="store.uploading()" (change)="pick($event)">
+      <input class="visually-hidden" type="file" [accept]="accept" multiple [disabled]="store.uploading()" (change)="pick($event)">
       <span class="drop-body">
         @if (store.uploading()) {
           <span class="drop-title">Envoi en cours, {{ store.uploadProgress() }} %</span>
           <span class="meter"><span [style.width.%]="store.uploadProgress()"></span></span>
         } @else {
           <span class="drop-title">Déposez une partition ici</span>
-          <span class="drop-hint">PDF, photo (JPG, PNG) ou MusicXML, 30 Mo maximum</span>
+          <span class="drop-hint">PDF, photos (une par page), MusicXML, MIDI ou MuseScore, 30 Mo maximum</span>
           <span class="btn">Choisir un fichier</span>
         }
       </span>
@@ -120,22 +120,22 @@ export class Library {
   }
   protected pick(e: Event) {
     const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
+    const files = [...(input.files ?? [])];
     input.value = '';
-    if (file) void this.send(file);
+    if (files.length) void this.send(files);
   }
   protected drop(e: DragEvent) {
     e.preventDefault();
     this.over.set(false);
-    const file = e.dataTransfer?.files?.[0];
-    if (file && !this.store.uploading()) void this.send(file);
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length && !this.store.uploading()) void this.send(files);
   }
   protected remove(s: ScoreMeta) {
     if (confirm(`Supprimer « ${s.title} » et ses pistes audio ?`)) void this.store.remove(s.id);
   }
-  private async send(file: File) {
+  private async send(files: File[]) {
     try {
-      const meta = await this.store.upload(file);
+      const meta = await this.store.upload(files);
       await this.router.navigate(['/partition', meta.id]);
     } catch { }
   }

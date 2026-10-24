@@ -10,10 +10,16 @@ import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, write
 import { BUSY, UserError, type ScoreMeta, type SourceKind, type Timbre } from './types';
 
 const KINDS: Record<string, SourceKind> = {
-  '.pdf': 'pdf', '.png': 'image', '.jpg': 'image', '.jpeg': 'image',
+  '.pdf': 'pdf',
+  '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.heic': 'image', '.heif': 'image',
+  '.webp': 'image', '.tif': 'image', '.tiff': 'image', '.bmp': 'image',
   '.mxl': 'musicxml', '.musicxml': 'musicxml', '.xml': 'musicxml',
+  '.mid': 'midi', '.midi': 'midi',
+  '.mscz': 'musescore', '.mscx': 'musescore',
 };
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: 1 } });
+const UNSUPPORTED = 'Format non pris en charge. Envoyez un PDF, des photos (JPG, PNG, HEIC…), un fichier MusicXML, MIDI ou MuseScore.';
+const MAX_PAGES = 40;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: MAX_PAGES } });
 const utf8Name = (name: string) => Buffer.from(name, 'latin1').toString('utf8');
 const titleFrom = (name: string) =>
   path.parse(name).name.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Partition sans titre';
@@ -35,15 +41,31 @@ app.get('/api/health', (_req, res) => { res.json({ ok: true, problems: checkSetu
 app.get('/api/scores', async (_req, res) => { res.json(await listMetas()); });
 app.get('/api/scores/:id', async (req, res) => { res.json(await getScore(req.params.id)); });
 
-app.post('/api/scores', upload.single('file'), async (req, res) => {
-  const file = req.file ?? fail(400, 'Aucun fichier reçu.');
-  const originalName = utf8Name(file.originalname);
-  const ext = path.extname(originalName).toLowerCase();
-  const source = KINDS[ext] ?? fail(415, 'Format non pris en charge. Envoyez un PDF, une photo (JPG, PNG) ou un fichier MusicXML.');
+app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  if (!files.length) fail(400, 'Aucun fichier reçu.');
+  const named = files.map((f) => ({ f, name: utf8Name(f.originalname), ext: path.extname(utf8Name(f.originalname)).toLowerCase() }));
+  for (const n of named) if (!KINDS[n.ext]) fail(415, UNSUPPORTED);
+  if (named.length > 1 && named.some((n) => KINDS[n.ext] !== 'image' && KINDS[n.ext] !== 'pdf')) {
+    fail(415, 'Plusieurs fichiers à la fois : seulement des photos ou des PDF, qui deviennent les pages d’une même partition.');
+  }
+  const originalName = named[0].name;
   const id = randomUUID();
   await fs.mkdir(dirOf(id), { recursive: true });
-  const sourceFile = `source${ext}`;
-  await fs.writeFile(path.join(dirOf(id), sourceFile), file.buffer);
+  let source = KINDS[named[0].ext];
+  let sourceFile = `source${named[0].ext}`;
+  if (named.length === 1) {
+    await fs.writeFile(path.join(dirOf(id), sourceFile), named[0].f.buffer);
+  } else {
+    // Les pages, dans l'ordre naturel des noms (page2 avant page10), dans un dossier « source ».
+    source = 'image';
+    sourceFile = 'source';
+    await fs.mkdir(path.join(dirOf(id), sourceFile));
+    const sorted = [...named].sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
+    for (const [i, n] of sorted.entries()) {
+      await fs.writeFile(path.join(dirOf(id), sourceFile, `${String(i + 1).padStart(2, '0')}${n.ext}`), n.f.buffer);
+    }
+  }
   const now = new Date().toISOString();
   const meta = await writeMeta({
     id, title: titleFrom(originalName), originalName, source, sourceFile, partitionFile: null, corrected: false, pages: [],

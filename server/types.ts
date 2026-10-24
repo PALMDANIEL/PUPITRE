@@ -1,5 +1,5 @@
 export type ScoreStatus = 'queued' | 'preprocessing' | 'recognizing' | 'rendering' | 'ready' | 'failed';
-export type SourceKind = 'pdf' | 'image' | 'musicxml';
+export type SourceKind = 'pdf' | 'image' | 'musicxml' | 'midi' | 'musescore';
 export type Timbre = 'choeur' | 'piano';
 export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'rendering'];
 
