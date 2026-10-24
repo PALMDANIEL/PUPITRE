@@ -1,11 +1,12 @@
 # Fabrique les installateurs de Pupitre : Windows (.exe), Mac Intel et Mac Apple Silicon (.dmg).
-# - à la main : onglet Actions › Installateurs › Run workflow (les fichiers sont dans « Artifacts ») ;
+# - à chaque envoi sur main, ou à la main (Actions › Installateurs › Run workflow) : fichiers dans « Artifacts » ;
 # - en publiant une version : git tag v1.0.0 && git push origin v1.0.0 → Release GitHub avec les installateurs.
 name: Installateurs
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
 
 permissions:
