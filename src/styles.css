@@ -22,8 +22,8 @@
   --basse: #7F96FF;
   --danger: #FF7B73;
   --ok: #35D9A8;
-  --serif: 'Sora', 'Manrope', system-ui, sans-serif;
-  --sans: 'Manrope', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --serif: 'Sora Variable', 'Sora', 'Manrope Variable', system-ui, sans-serif;
+  --sans: 'Manrope Variable', 'Manrope', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --radius: 20px;
   color-scheme: dark;
 }

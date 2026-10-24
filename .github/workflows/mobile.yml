@@ -1,0 +1,87 @@
+# Applications mobiles de Pupitre (lecteur de packs de répétition).
+# - Android : APK installable directement (signé avec la clé AIT si les secrets sont configurés) ;
+# - iOS : compilation de contrôle (simulateur) ; la publication demandera un compte Apple Developer.
+# Lancement : onglet Actions › Mobile › Run workflow, ou étiquette v* (APK joint à la Release).
+name: Mobile
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="1.0.0"; fi
+          echo "PUPITRE_VERSION=$V" >> "$GITHUB_ENV"
+          echo "PUPITRE_VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+      - name: Interface
+        run: |
+          npm ci
+          npx ng build
+          npx cap sync android
+      - name: Clé de signature AIT
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pupitre.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/pupitre.jks" >> "$GITHUB_ENV"
+      - name: APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          cd android
+          chmod +x gradlew
+          if [ -n "$ANDROID_KEYSTORE_FILE" ]; then
+            ./gradlew --no-daemon assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk "../Pupitre-$PUPITRE_VERSION-android.apk"
+          else
+            echo "::warning::Secrets ANDROID_KEYSTORE_* absents : APK de test (signature de débogage)."
+            ./gradlew --no-daemon assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk "../Pupitre-$PUPITRE_VERSION-android-test.apk"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pupitre-android
+          path: Pupitre-*.apk
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: Pupitre-*.apk
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Interface
+        run: |
+          npm ci
+          npx ng build
+          npx cap sync ios
+      - name: Compilation de contrôle (simulateur, sans signature)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -20

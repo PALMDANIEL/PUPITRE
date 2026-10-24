@@ -31,8 +31,14 @@ export const voiceColor = (id: string, index = 0) => VOICE_COLORS[id] ?? CYCLE[i
 
 export const ACCEPT = '.pdf,.png,.jpg,.jpeg,.heic,.heif,.webp,.tif,.tiff,.bmp,.mxl,.musicxml,.xml,.mid,.midi,.mscz,.mscx';
 
+/** Fichiers d'un pack de répétition ouvert sur le téléphone : adresses locales (blob:) au lieu du serveur. */
+const localFiles = new Map<string, Record<string, string>>();
+export function registerFiles(id: string, urls: Record<string, string> | null) {
+  if (urls) localFiles.set(id, urls); else localFiles.delete(id);
+}
+
 export const fileUrl = (s: Pick<ScoreMeta, 'id' | 'revision'>, folder: 'audio' | 'pages', file: string, download = false) =>
-  `/files/${s.id}/${folder}/${encodeURIComponent(file)}?v=${s.revision}${download ? '&download' : ''}`;
+  localFiles.get(s.id)?.[file] ?? `/files/${s.id}/${folder}/${encodeURIComponent(file)}?v=${s.revision}${download ? '&download' : ''}`;
 
 export function errorMessage(e: unknown): string {
   if (e instanceof HttpErrorResponse) {

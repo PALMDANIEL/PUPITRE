@@ -69,6 +69,13 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - Armures harmonisées : la plus chargée (lue au moins deux fois) vaut pour toutes les portées.
 - Banc d’essai du 24/10/2026 : 96 % de notes justes (81 % avant), 24/24 cas en 4 voix.
 
+## Versions installables (branche feat/bureau, 24/10/2026)
+- **Bureau (Windows / Mac)** : `desktop/` (Electron 44). Serveur intégré sur 127.0.0.1, stockage fichiers dans Documents/Pupitre (`STORE=files`, sans PostgreSQL), moteur PyInstaller (`engine/pupitre-engine.spec`, entrée `engine/pupitre_engine.py`), Audiveris 5.11 embarqué. Plus de fluidsynth/ffmpeg/pdftoppm : TinySoundFont + lameenc + pypdfium2.
+- **Licences** : `licence/` (Ed25519, liée à l'identifiant de machine). Outil AIT : `npm run licence -- creer …`. Clé privée et clé Android dans `~/.pupitre-ait` (jamais dans Git). Guide : `docs/DISTRIBUTION.md`.
+- **Mobile (Android / iOS)** : Capacitor 8 (`android/`, `ios/`), même interface en mode lecteur (`IS_PLAYER`, `?lecteur` dans un navigateur) : importe les packs `.pupitre` exportés par l'ordinateur (`GET /api/scores/:id/pack`), stockés en IndexedDB. Lecture des photos par un serveur AIT : à faire (hébergement).
+- **Construction** : GitHub Actions `.github/workflows/installateurs.yml` (exe, dmg Intel et Apple Silicon) et `mobile.yml` (APK, compilation iOS de contrôle). Étiquette `v*` = Release.
+- Polices Sora et Manrope intégrées (`@fontsource-variable`), plus de Google Fonts : tout fonctionne hors ligne.
+
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.
 - Les paroles ne sont pas chantées (son « aah » de chœur ou piano).

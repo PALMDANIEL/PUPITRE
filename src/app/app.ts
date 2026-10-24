@@ -1,6 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CREDITS } from './core/credits';
+import { IS_PLAYER } from './core/platform';
 
 type Theme = 'dark' | 'light';
 
@@ -20,7 +21,7 @@ type Theme = 'dark' | 'light';
         </a>
 
         <nav aria-label="Navigation principale">
-          <a routerLink="/" routerLinkActive="on" [routerLinkActiveOptions]="{ exact: true }">Partitions</a>
+          <a routerLink="/" routerLinkActive="on" [routerLinkActiveOptions]="{ exact: true }">{{ player ? 'Mes chants' : 'Partitions' }}</a>
           <a routerLink="/a-propos" routerLinkActive="on">À propos</a>
         </nav>
 
@@ -120,6 +121,7 @@ type Theme = 'dark' | 'light';
 })
 export class App {
   protected readonly credits = CREDITS;
+  protected readonly player = IS_PLAYER;
   protected readonly year = new Date().getFullYear();
   protected readonly theme = signal<Theme>(document.documentElement.dataset['theme'] === 'light' ? 'light' : 'dark');
 

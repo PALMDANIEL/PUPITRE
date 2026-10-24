@@ -48,6 +48,15 @@ import { ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
         }
       </ul>
 
+      @if (!player()) {
+      <section class="share">
+        <div>
+          <p class="share-title">Pour les choristes</p>
+          <p class="hint">Un fichier .pupitre à envoyer par WhatsApp : ils l’ouvrent dans l’application Pupitre de leur téléphone, sans Internet.</p>
+        </div>
+        <a class="btn" [href]="'/api/scores/' + score().id + '/pack'" download>Exporter le pack de répétition</a>
+      </section>
+
       <details>
         <summary>Tempo et sonorité</summary>
         <label class="row">
@@ -92,6 +101,7 @@ import { ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
         </div>
         @if (score().corrected) { <p class="hint">L’audio actuel vient de votre version corrigée.</p> }
       </details>
+      }
     </section>
   `,
   styles: [`
@@ -146,13 +156,19 @@ import { ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
     .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
     .actions .btn { font-size: .88rem; }
     label.btn.disabled { opacity: .45; pointer-events: none; }
+    .share { display: grid; gap: .75rem; padding: 1rem; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--accent-2) 35%, transparent);
+             background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent-2) 8%, transparent)); }
+    .share-title { font-weight: 800; margin-bottom: .2rem; }
+    .share .btn { justify-self: start; font-size: .9rem; }
   `],
 })
 export class Mixer {
   readonly score = input.required<ScoreMeta>();
   readonly busy = input(false);
+  /** Lecteur mobile : pas de serveur, donc ni recréation de l'audio, ni correction, ni téléchargements. */
+  readonly player = input(false);
   protected readonly engine = inject(AudioEngine);
-  private readonly store = inject(ScoreStore);
+  private readonly store = inject(ScoreStore, { optional: true });
 
   protected readonly voices = computed(() => this.score().manifest?.voices ?? []);
   protected readonly focus = signal<string>('all');
@@ -192,12 +208,12 @@ export class Mixer {
   }
   protected seek(e: Event) { this.engine.seek(this.num(e)); }
   protected num(e: Event) { return Number((e.target as HTMLInputElement).value); }
-  protected regenerate() { void this.store.render({ tempo: this.tempo(), timbre: this.timbre() }); }
+  protected regenerate() { void this.store?.render({ tempo: this.tempo(), timbre: this.timbre() }); }
   protected correct(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) void this.store.uploadCorrection(file);
+    if (file) void this.store?.uploadCorrection(file);
   }
   protected fmt(t: number) {
     const s = Math.max(0, Math.floor(t));

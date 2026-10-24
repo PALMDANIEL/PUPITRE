@@ -8,6 +8,7 @@ import { checkSetup, config } from './config';
 import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, UserError, type ScoreMeta, type SourceKind, type Timbre } from './types';
+import { zip } from './zip';
 
 const KINDS: Record<string, SourceKind> = {
   '.pdf': 'pdf',
@@ -121,6 +122,25 @@ app.delete('/api/scores/:id', async (req, res) => {
   assertIdle(meta);
   await removeScore(meta.id);
   res.status(204).end();
+});
+
+/** Pack de répétition (.pupitre) : partition + une piste par voix, à envoyer aux choristes pour l'application mobile. */
+app.get('/api/scores/:id/pack', async (req, res) => {
+  const meta = await getScore(req.params.id);
+  const m = meta.manifest ?? fail(409, 'L’audio de cette partition n’est pas encore prêt.');
+  const audio = path.join(dirOf(meta.id), 'audio');
+  const files = [m.score, m.tutti, ...m.voices.map((v) => v.stem)];
+  const pack = {
+    format: 'pupitre-pack', version: 1, title: meta.title, exportedAt: new Date().toISOString(),
+    manifest: { ...m, voices: m.voices.map(({ practice: _p, ...v }) => v) },
+  };
+  const entries = [{ name: 'pack.json', data: Buffer.from(JSON.stringify(pack, null, 1)) }];
+  for (const f of files) entries.push({ name: `audio/${f}`, data: await fs.readFile(path.join(audio, f)) });
+  const name = `${meta.title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'chant'}.pupitre`;
+  res.setHeader('Content-Type', 'application/octet-stream');
+  const ascii = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]|"/g, '_');
+  res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.send(zip(entries));
 });
 
 app.get('/files/:id/:folder/:file', async (req, res) => {
