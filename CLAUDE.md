@@ -65,7 +65,8 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 ## Lecture musicale (render.py, partitions lues par OMR)
 - Noms de portées ignorés (Audiveris nomme « Piano » toute accolade) ; voix dans l'ordre de la page (S, A, T, B).
 - Octaves corrigées par tessiture (centres La4, Mi4, La3, Ré3) ; mesures égalisées entre voix ; couplet de soliste versé dans la voix haute.
-- Banc d'essai du 24/10/2026 : 94 % de notes justes (81 % avant), 24/24 cas en 4 voix.
+- Armures harmonisées : la plus chargée (lue au moins deux fois) vaut pour toutes les portées.
+- Banc d’essai du 24/10/2026 : 96 % de notes justes (81 % avant), 24/24 cas en 4 voix.
 
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.

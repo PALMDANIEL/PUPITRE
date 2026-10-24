@@ -125,6 +125,54 @@ def fold_solos(voices):
     return kept
 
 
+def harmonize_keys(score):
+    """Armure oubliée sur une portée (fréquent sur photo : 3 dièses lus au lieu de 4, ou aucun) :
+    toutes les voix d'un chœur partagent la même armure, et la lecture perd des altérations bien plus
+    souvent qu'elle n'en invente. Si toutes les armures lues vont dans le même sens, on prend la plus chargée
+    pour toute la partition ; sinon (vrai changement dièses <-> bémols), la plus chargée de chaque mesure.
+    Les notes sans altération écrite reçoivent alors l'altération de l'armure."""
+    parts = [p for p in score.parts if p.recurse().notes]
+    rows = [list(p.getElementsByClass(stream.Measure)) for p in parts]
+    if not rows:
+        return 0
+    count = min(len(r) for r in rows)
+    keys = []  # armure en vigueur, par portée et par mesure
+    for r in rows:
+        current, ks = 0, []
+        for m in r[:count]:
+            if m.keySignature is not None:
+                current = m.keySignature.sharps
+            ks.append(current)
+        keys.append(ks)
+    # armures réellement imprimées (début de système), pour écarter un dièse vu une seule fois dans une tache
+    printed = [m.keySignature.sharps for r in rows for m in r[:count] if m.keySignature is not None]
+    seen = {k for k in printed if k}
+    one_way = all(k > 0 for k in seen) or all(k < 0 for k in seen)
+    trusted = [k for k in sorted(seen, key=abs, reverse=True) if printed.count(k) >= 2]
+    best = trusted[0] if trusted else (statistics.mode(printed) if printed else 0)
+    fixed = 0
+    for j in range(count):
+        target = best if one_way else max((ks[j] for ks in keys), key=abs)
+        tks = key.KeySignature(target)
+        for i, r in enumerate(rows):
+            if keys[i][j] == target:
+                continue
+            carried = set()  # une altération écrite vaut pour la suite de la mesure
+            for n in r[j].recurse().notes:
+                for p in n.pitches:
+                    if p.accidental is not None and p.accidental.displayStatus:
+                        carried.add((p.step, p.octave))
+                        continue
+                    if (p.step, p.octave) in carried:
+                        continue
+                    want = tks.accidentalByStep(p.step)
+                    have = p.accidental.alter if p.accidental is not None else 0
+                    if (want.alter if want else 0) != have:
+                        p.accidental = copy.deepcopy(want) if want else None
+                        fixed += 1
+    return fixed
+
+
 # Centre de la tessiture de chaque pupitre (MIDI) : La4, Mi4, La3, Ré3.
 CENTERS = {4: [69, 64, 57, 50]}
 
@@ -241,6 +289,8 @@ def extract_voices(score, trust_names=True):
     """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
     c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
     Pour un fichier MusicXML ou MIDI (hauteurs exactes, ordre des pistes parfois quelconque), on trie par hauteur."""
+    if not trust_names:
+        harmonize_keys(score)
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]

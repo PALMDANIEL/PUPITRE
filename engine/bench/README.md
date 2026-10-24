@@ -10,4 +10,4 @@ Mesure la justesse de la chaîne complète (nettoyage → Audiveris → séparat
 `--reuse` réutilise les lectures Audiveris déjà faites (pour itérer vite sur `render.py`).
 Une vraie partition se teste en la copiant dans `<corpus>/reel-nom/source.pdf` (sans `truth.json` : seules les tessitures sont affichées).
 
-Résultats du 24/10/2026 (6 chorals × 2 mises en page × net/photo) : 81 % → 94 % de notes justes, 22/24 → 24/24 cas en 4 voix.
+Résultats du 24/10/2026 (6 chorals × 2 mises en page × net/photo) : 81 % → 96 % de notes justes, 22/24 → 24/24 cas en 4 voix. Limite connue : une dernière ligne très courte (une mesure seule) est ignorée par Audiveris.
