@@ -6,8 +6,8 @@ Guide AIT pour fabriquer les installateurs, créer les licences et installer Pup
 
 | Produit | Pour qui | Fichier | Licence |
 |---|---|---|---|
-| **Pupitre pour Windows** | chef de chœur | `Pupitre-x.y.z-win-x64.exe` | licence AIT liée à l'ordinateur |
-| **Pupitre pour Mac** (Intel / Apple Silicon) | chef de chœur | `Pupitre-x.y.z-mac-x64.dmg` / `-mac-arm64.dmg` | licence AIT liée à l'ordinateur |
+| **Pupitre pour Windows** | chef de chœur | `Pupitre-x.y.z-Windows.exe` | licence AIT liée à l'ordinateur |
+| **Pupitre pour Mac** (Intel / Apple Silicon) | chef de chœur | `Pupitre-x.y.z-Mac-Intel.dmg` / `-Mac-Apple-Silicon-M1-M2-M3-M4.dmg` | licence AIT liée à l'ordinateur |
 | **Pupitre mobile** (Android, iOS à venir) | choristes | `Pupitre-x.y.z-android.apk` | gratuit : lecteur des packs |
 
 L'ordinateur lit les partitions (Audiveris + moteur Python embarqués) et crée les voix.
@@ -78,7 +78,10 @@ Les installateurs ne sont pas encore signés par Apple / Microsoft : un avertiss
 
 - **Windows** : « Windows a protégé votre ordinateur » → *Informations complémentaires* → *Exécuter quand même*.
   L'installation demande d'accepter le contrat de licence.
-- **Mac** : ouvrir le `.dmg`, glisser Pupitre dans *Applications*. Au premier lancement, si macOS refuse :
+- **Mac** : vérifier le processeur (menu Apple › *À propos de ce Mac* : « Intel » ou « Puce Apple M… »),
+  télécharger le `.dmg` correspondant (la version Intel marche aussi sur les Mac M1…, en plus lent ;
+  l'inverse est impossible : icône barrée 🚫). Ouvrir le `.dmg`, glisser Pupitre dans *Applications*.
+  Si « l'image disque est endommagée » : éjecter d'abord tout autre volume « Pupitre » déjà ouvert. Au premier lancement, si macOS refuse :
   *Réglages Système › Confidentialité et sécurité* → *Ouvrir quand même*.
 - **Android** : ouvrir le fichier `.apk` reçu → autoriser « Installer des applications inconnues » pour l'application
   qui l'ouvre (WhatsApp, Fichiers…) → *Installer*.

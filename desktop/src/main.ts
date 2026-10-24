@@ -5,6 +5,7 @@
  * 3. ouvre l'interface dans une fenêtre.
  */
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { daysLeft, frDate } from '../../licence/core';
@@ -37,8 +38,21 @@ function find(dir: string, names: string[], depth = 5): string | null {
   return null;
 }
 
+/**
+ * Mac : une application téléchargée a tous ses fichiers marqués « en quarantaine ». L'utilisateur autorise Pupitre,
+ * mais le moteur et Audiveris embarqués, lancés ensuite, pourraient être bloqués à leur tour : on lève la marque
+ * sur nos propres ressources (sans effet si l'application est sur un disque en lecture seule).
+ */
+function releaseQuarantine() {
+  if (DEV || process.platform !== 'darwin') return;
+  for (const dir of ['engine', 'audiveris']) {
+    spawnSync('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', path.join(RES, dir)], { stdio: 'ignore' });
+  }
+}
+
 /** Emplacements du moteur, d'Audiveris et des sons : embarqués dans l'installation, ou ceux du développeur. */
 function configureEnvironment() {
+  releaseQuarantine();
   const exe = process.platform === 'win32' ? '.exe' : '';
   const env = process.env;
   env.PUPITRE_EMBEDDED = '1';

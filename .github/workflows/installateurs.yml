@@ -24,14 +24,17 @@ jobs:
           - os: windows-latest
             name: windows-x64
             builder: --win --x64
+            file: Windows
           - os: macos-15-intel
             name: mac-intel
             builder: --mac --x64
             audiveris: macosx-x86_64
+            file: Mac-Intel
           - os: macos-latest
             name: mac-apple-silicon
             builder: --mac --arm64
             audiveris: macosx-arm64
+            file: Mac-Apple-Silicon-M1-M2-M3-M4
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
     steps:
@@ -99,7 +102,7 @@ jobs:
           npm ci
           ../.github/scripts/journal.sh "Assemblage" npm run vendor
           npx node build.mjs
-          ../.github/scripts/journal.sh "electron-builder" npx electron-builder ${{ matrix.builder }} --publish never
+          ../.github/scripts/journal.sh "electron-builder" npx electron-builder ${{ matrix.builder }} --publish never '-c.artifactName=Pupitre-${version}-${{ matrix.file }}.${ext}'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -124,7 +127,15 @@ jobs:
           files: installateurs/*
           body: |
             Installateurs de Pupitre ${{ github.ref_name }} (AIT – Artificial Intelligence & Technology).
-            - Windows : Pupitre-…-win-x64.exe
-            - Mac Intel : Pupitre-…-mac-x64.dmg
-            - Mac Apple Silicon (M1, M2…) : Pupitre-…-mac-arm64.dmg
-            Une licence AIT est nécessaire au premier lancement.
+
+            **Quel fichier choisir ?**
+            - PC **Windows** : `Pupitre-…-Windows.exe`
+            - **Mac** : menu Apple  › *À propos de ce Mac*.
+              - « Processeur … Intel » → `Pupitre-…-Mac-Intel.dmg`
+              - « Puce Apple M1, M2, M3 ou M4 » → `Pupitre-…-Mac-Apple-Silicon-M1-M2-M3-M4.dmg`
+                (la version Intel fonctionne aussi sur ces Mac, un peu plus lentement)
+            - Téléphone **Android** (choristes) : `Pupitre-…-android.apk`
+
+            Une licence AIT est nécessaire au premier lancement de la version ordinateur.
+            Mac : au premier lancement, si macOS refuse d'ouvrir Pupitre, *Réglages Système › Confidentialité et sécurité › Ouvrir quand même*.
+            Windows : « Windows a protégé votre ordinateur » › *Informations complémentaires* › *Exécuter quand même*.
