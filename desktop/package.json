@@ -1,0 +1,19 @@
+{
+  "name": "pupitre",
+  "productName": "Pupitre",
+  "version": "1.0.0",
+  "description": "Pupitre : écoutez chaque voix de votre chant de chorale. Par AIT – Artificial Intelligence & Technology.",
+  "author": "AIT – Artificial Intelligence & Technology (PALM Romeo Daratagnan)",
+  "private": true,
+  "main": "build/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "dist": "node build.mjs && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0",
+    "esbuild": "0.28.2"
+  }
+}

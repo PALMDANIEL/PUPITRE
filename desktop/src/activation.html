@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>Activer Pupitre</title>
+  <style>
+    :root { --bg: #050918; --surface: rgba(17, 27, 64, .7); --ink: #EAF0FF; --soft: #97A4C9; --hair: rgba(132, 166, 255, .16);
+            --accent: #2F7BFF; --accent-2: #27CBFF; --danger: #FF7B73; --ok: #35D9A8; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { font: 400 15px/1.55 -apple-system, 'Segoe UI', system-ui, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased;
+           background: radial-gradient(700px 400px at 90% -10%, rgba(47, 123, 255, .28), transparent 70%), linear-gradient(var(--bg), #0A1230);
+           display: flex; flex-direction: column; padding: 28px 32px; gap: 18px; user-select: none; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand svg { width: 34px; height: 25px; fill: none; stroke-width: 2.6; stroke-linecap: round; filter: drop-shadow(0 0 6px rgba(39, 203, 255, .5)); }
+    .brand b { font-size: 22px; letter-spacing: -.01em; }
+    .brand span { margin-left: auto; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--soft); }
+    h1 { margin: 6px 0 0; font-size: 26px; line-height: 1.15; letter-spacing: -.02em; }
+    p { margin: 0; color: var(--soft); }
+    .card { background: var(--surface); border: 1px solid var(--hair); border-radius: 16px; padding: 16px 18px; }
+    .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--accent-2); margin-bottom: 8px; }
+    .machine { display: flex; align-items: center; gap: 12px; }
+    .machine code { flex: 1; font: 700 22px/1 ui-monospace, 'SF Mono', Consolas, monospace; letter-spacing: .08em; user-select: all; }
+    button { font: inherit; cursor: pointer; border-radius: 999px; padding: 9px 16px; font-weight: 700; }
+    .quiet { background: transparent; color: var(--ink); border: 1px solid rgba(132, 166, 255, .35); }
+    .quiet:hover { border-color: var(--accent-2); color: var(--accent-2); }
+    .primary { border: 0; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+               box-shadow: 0 0 0 1px rgba(47, 123, 255, .35), 0 10px 30px -10px rgba(39, 140, 255, .6); }
+    .primary:disabled { opacity: .5; cursor: progress; }
+    textarea { width: 100%; height: 112px; resize: none; border-radius: 12px; border: 1px solid var(--hair); background: rgba(0, 0, 0, .25);
+               color: var(--ink); font: 13px/1.4 ui-monospace, 'SF Mono', Consolas, monospace; padding: 10px 12px; user-select: text; }
+    textarea:focus { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+    .message { min-height: 22px; font-weight: 600; }
+    .message.err { color: var(--danger); }
+    .message.ok { color: var(--ok); }
+    .reason { color: #FFC66B; font-weight: 600; }
+    footer { margin-top: auto; font-size: 12.5px; color: var(--soft); border-top: 1px solid var(--hair); padding-top: 12px; }
+    footer b { color: var(--ink); }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <svg viewBox="0 0 30 22" aria-hidden="true">
+      <path d="M1 2.5h28" stroke="#F4B740"/><path d="M1 8.2h28" stroke="#F2679F"/><path d="M1 13.8h28" stroke="#35D9A8"/><path d="M1 19.5h28" stroke="#7F96FF"/>
+    </svg>
+    <b>Pupitre</b><span>par AIT</span>
+  </div>
+
+  <div>
+    <h1>Activer Pupitre sur cet ordinateur</h1>
+    <p id="reason" class="reason"></p>
+  </div>
+
+  <section class="card">
+    <div class="eyebrow">1 · Envoyez cet identifiant à AIT</div>
+    <div class="machine">
+      <code id="machine">…</code>
+      <button class="quiet" id="copy" type="button">Copier</button>
+    </div>
+    <p style="margin-top:8px">AIT vous renvoie une licence prévue pour cet ordinateur seulement.</p>
+  </section>
+
+  <section class="card">
+    <div class="eyebrow">2 · Collez la licence reçue</div>
+    <textarea id="key" placeholder="PUP1.…" spellcheck="false" aria-label="Licence"></textarea>
+    <div class="actions">
+      <button class="quiet" id="file" type="button">Ouvrir un fichier .licence</button>
+      <button class="primary" id="go" type="button">Activer</button>
+    </div>
+  </section>
+
+  <p id="msg" class="message" role="status" aria-live="polite"></p>
+
+  <footer id="contact"></footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const status = JSON.parse(new URLSearchParams(location.search).get('status') || '{}');
+    $('machine').textContent = status.machine || '';
+    if (status.problem && status.problem !== 'missing') $('reason').textContent = status.message;
+    window.pupitre.credits().then((c) => {
+      $('contact').innerHTML = `Contact : <b>${c.company}</b> · ${c.companyLong} · ${c.city}, ${c.country}<br>Téléphone : <b>${c.phones.map((p) => p.label).join('</b> · <b>')}</b>`;
+    });
+    $('copy').onclick = async () => { await window.pupitre.copyMachine(); $('copy').textContent = 'Copié ✓'; setTimeout(() => ($('copy').textContent = 'Copier'), 1600); };
+    $('file').onclick = async () => { const text = await window.pupitre.openFile(); if (text) { $('key').value = text.trim(); activate(); } };
+    $('go').onclick = () => activate();
+    async function activate() {
+      const text = $('key').value.trim();
+      const msg = $('msg');
+      if (!text) { msg.className = 'message err'; msg.textContent = 'Collez d’abord la licence reçue d’AIT.'; return; }
+      $('go').disabled = true;
+      msg.className = 'message'; msg.textContent = 'Vérification…';
+      const res = await window.pupitre.install(text);
+      $('go').disabled = false;
+      if (res.ok) { msg.className = 'message ok'; msg.textContent = 'Licence activée. Ouverture de Pupitre…'; }
+      else { msg.className = 'message err'; msg.textContent = res.message; }
+    }
+  </script>
+</body>
+</html>
