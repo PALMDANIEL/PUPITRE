@@ -54,7 +54,7 @@ jobs:
       - name: Version depuis l'étiquette
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: cd desktop && npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+        run: cd desktop && npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
 
       - name: Interface (Angular)
         run: |
