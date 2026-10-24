@@ -13,6 +13,10 @@ AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
 TIMEOUT = int(os.environ.get("OMR_TIMEOUT_S", 15 * 60))
 
 
+# Windows : pas de fenêtre de console pour chaque programme lancé (Audiveris, étapes du moteur)
+QUIET = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
+
 def step(name, *args):
     """Commande d'une autre étape du moteur : exécutable autonome (version installée) ou script Python (développement)."""
     if getattr(sys, "frozen", False):
@@ -48,7 +52,7 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int):
     seen = set()
     try:
         proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), "--", str(pdf)],
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", **QUIET)
         for line in proc.stdout:
             m = re.search(r"Sheet#(\d+)", line)
             if m and m.group(1) not in seen:
@@ -65,7 +69,7 @@ def main(src, work):
     src, work = pathlib.Path(src), pathlib.Path(work)
     pre, pages_dir = work / "pre", work / "pages"
     shutil.rmtree(pre, ignore_errors=True)
-    prep = subprocess.run(step("preprocess", src, pre), capture_output=True, text=True)
+    prep = subprocess.run(step("preprocess", src, pre), capture_output=True, text=True, **QUIET)
     if prep.returncode:
         last = (prep.stderr.strip().splitlines() or ["Le nettoyage de l’image a échoué."])[-1]
         sys.exit(last if "Error" not in last and "Traceback" not in last else "Le nettoyage de l’image a échoué.")
@@ -99,7 +103,7 @@ def main(src, work):
         shutil.copy(found[0], target)
     else:
         target = work / "partition.musicxml"
-        subprocess.run(step("merge", target, *found), check=True)
+        subprocess.run(step("merge", target, *found), check=True, **QUIET)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
 

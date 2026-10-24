@@ -1,0 +1,36 @@
+CONTRAT DE LICENCE D'UTILISATION – PUPITRE
+AIT – Artificial Intelligence & Technology, Ouagadougou, Burkina Faso
+Téléphone : 00226 77 41 91 06 · 00226 73 63 08 82
+
+1. Objet
+Pupitre est un logiciel édité par AIT. Il est concédé sous licence, il n'est pas vendu. Le présent contrat
+fixe les conditions d'utilisation du logiciel par le client (« l'Utilisateur »).
+
+2. Licence
+AIT accorde à l'Utilisateur un droit personnel, non exclusif et non transférable d'utiliser Pupitre sur
+l'ordinateur pour lequel la licence a été délivrée, pendant la durée indiquée dans la licence. Chaque licence
+est liée à un seul ordinateur. L'utilisation sur un autre ordinateur nécessite une nouvelle licence.
+
+3. Restrictions
+Il est interdit de copier, revendre, louer, prêter, modifier, décompiler ou désassembler le logiciel, ou de
+contourner le système de licence, sauf dans les limites autorisées par la loi.
+
+4. Composants tiers
+Pupitre intègre des composants tiers (notamment Audiveris, sous licence GNU AGPL v3) qui restent soumis à leurs
+propres licences, reproduites dans le dossier « licences-tierces » de l'installation.
+
+5. Partitions
+L'Utilisateur est seul responsable des partitions qu'il importe dans Pupitre et du respect des droits d'auteur
+qui s'y rattachent. Les fichiers restent sur son ordinateur.
+
+6. Garantie et responsabilité
+Le logiciel est fourni en l'état. La lecture automatique des partitions peut comporter des erreurs. AIT ne
+saurait être tenue responsable des dommages indirects résultant de l'utilisation du logiciel.
+
+7. Durée et fin
+La licence prend fin à la date indiquée dans la licence, ou en cas de manquement au présent contrat.
+
+8. Droit applicable
+Le présent contrat est soumis au droit burkinabè.
+
+En installant Pupitre, l'Utilisateur accepte le présent contrat.

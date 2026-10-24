@@ -7,7 +7,7 @@ import { BUSY, UserError, type Job, type Manifest } from './types';
 
 function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env, windowsHide: true });
     let tail = '';
     let buffer = '';
     const timer = setTimeout(() => {

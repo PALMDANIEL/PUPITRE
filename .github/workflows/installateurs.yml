@@ -1,0 +1,126 @@
+# Fabrique les installateurs de Pupitre : Windows (.exe), Mac Intel et Mac Apple Silicon (.dmg).
+# - à la main : onglet Actions › Installateurs › Run workflow (les fichiers sont dans « Artifacts ») ;
+# - en publiant une version : git tag v1.0.0 && git push origin v1.0.0 → Release GitHub avec les installateurs.
+name: Installateurs
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  AUDIVERIS_VERSION: '5.11.0'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            builder: --win --x64
+          - os: macos-15-intel
+            name: mac-intel
+            builder: --mac --x64
+            audiveris: macosx-x86_64
+          - os: macos-latest
+            name: mac-apple-silicon
+            builder: --mac --arm64
+            audiveris: macosx-arm64
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+
+      - name: Version depuis l'étiquette
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: cd desktop && npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+
+      - name: Interface (Angular)
+        run: |
+          npm ci
+          npx ng build
+
+      - name: Moteur autonome (PyInstaller)
+        shell: bash
+        run: |
+          python -m pip install -r engine/requirements.txt pyinstaller==6.22.3
+          pyinstaller --noconfirm --distpath engine/dist --workpath engine/build engine/pupitre-engine.spec
+
+      - name: Audiveris (Mac)
+        if: runner.os == 'macOS'
+        run: |
+          curl -fsSL -o audiveris.dmg "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/Audiveris-${AUDIVERIS_VERSION}-${{ matrix.audiveris }}.dmg"
+          hdiutil attach audiveris.dmg -nobrowse -mountpoint /Volumes/audiveris
+          mkdir -p desktop/vendor/audiveris
+          ditto /Volumes/audiveris/Audiveris.app desktop/vendor/audiveris/Audiveris.app
+          hdiutil detach /Volumes/audiveris
+
+      - name: Audiveris (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/Audiveris/audiveris/releases/download/$env:AUDIVERIS_VERSION/Audiveris-$env:AUDIVERIS_VERSION-windowsConsole-x86_64.msi"
+          Invoke-WebRequest -Uri $url -OutFile audiveris.msi
+          $target = Join-Path $PWD 'desktop\vendor\audiveris'
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Start-Process msiexec.exe -Wait -ArgumentList '/a', 'audiveris.msi', '/qn', "TARGETDIR=$target"
+          Get-ChildItem -Recurse -Filter 'Audiveris*.exe' $target | Select-Object -First 3 FullName
+
+      - name: Installateur
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          cd desktop
+          npm ci
+          npm run vendor
+          npx node build.mjs
+          npx electron-builder ${{ matrix.builder }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pupitre-${{ matrix.name }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installateurs
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Pupitre ${{ github.ref_name }}
+          files: installateurs/*
+          body: |
+            Installateurs de Pupitre ${{ github.ref_name }} (AIT – Artificial Intelligence & Technology).
+            - Windows : Pupitre-…-win-x64.exe
+            - Mac Intel : Pupitre-…-mac-x64.dmg
+            - Mac Apple Silicon (M1, M2…) : Pupitre-…-mac-arm64.dmg
+            Une licence AIT est nécessaire au premier lancement.

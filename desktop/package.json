@@ -9,11 +9,73 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "node build.mjs && electron .",
-    "dist": "node build.mjs && electron-builder"
+    "dist": "node build.mjs && electron-builder",
+    "vendor": "node scripts/vendor.mjs"
   },
   "devDependencies": {
     "electron": "44.7.0",
     "electron-builder": "26.17.0",
     "esbuild": "0.28.2"
+  },
+  "build": {
+    "appId": "bf.ait.pupitre",
+    "productName": "Pupitre",
+    "copyright": "© 2026 AIT – Artificial Intelligence & Technology",
+    "artifactName": "Pupitre-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "build/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor",
+        "to": ".",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg"
+        }
+      ],
+      "category": "public.app-category.music",
+      "icon": "assets/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "Pupitre ${version}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "shortcutName": "Pupitre",
+      "license": "assets/contrat-licence.txt",
+      "installerLanguages": [
+        "fr_FR"
+      ],
+      "language": "1036"
+    }
   }
 }
