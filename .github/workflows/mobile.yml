@@ -51,11 +51,11 @@ jobs:
           cd android
           chmod +x gradlew
           if [ -n "$ANDROID_KEYSTORE_FILE" ]; then
-            ./gradlew --no-daemon assembleRelease
+            ../.github/scripts/journal.sh "Gradle" ./gradlew --no-daemon assembleRelease
             cp app/build/outputs/apk/release/app-release.apk "../Pupitre-$PUPITRE_VERSION-android.apk"
           else
             echo "::warning::Secrets ANDROID_KEYSTORE_* absents : APK de test (signature de débogage)."
-            ./gradlew --no-daemon assembleDebug
+            ../.github/scripts/journal.sh "Gradle" ./gradlew --no-daemon assembleDebug
             cp app/build/outputs/apk/debug/app-debug.apk "../Pupitre-$PUPITRE_VERSION-android-test.apk"
           fi
       - uses: actions/upload-artifact@v4
