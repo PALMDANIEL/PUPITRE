@@ -28,6 +28,9 @@ import { CREDITS } from '../../core/credits';
         <dl>
           <div><dt>PDG</dt><dd>{{ credits.ceo }}</dd></div>
           <div><dt>Siège</dt><dd>{{ credits.city }}, {{ credits.country }}</dd></div>
+          <div><dt>Téléphone</dt><dd class="phones">
+            @for (p of credits.phones; track p.tel) { <a [href]="'tel:' + p.tel">{{ p.label }}</a> }
+          </dd></div>
         </dl>
       </article>
       <article class="glass card">
@@ -92,6 +95,9 @@ import { CREDITS } from '../../core/credits';
     dl div { display: grid; grid-template-columns: 7rem 1fr; gap: .75rem; padding-top: .55rem; border-top: 1px solid var(--hair); }
     dt { color: var(--ink-soft); font-size: .88rem; }
     dd { margin: 0; font-weight: 600; }
+    .phones { display: grid; gap: .2rem; }
+    .phones a { color: var(--accent-2); text-decoration: none; white-space: nowrap; }
+    .phones a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
     .how { margin-top: clamp(2.5rem, 6vw, 4rem); }
     .how h2 { font-size: 1.6rem; margin-bottom: 1.25rem; }

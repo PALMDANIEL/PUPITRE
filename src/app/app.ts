@@ -49,6 +49,11 @@ type Theme = 'dark' | 'light';
           <p class="made">Conçu et développé par <strong>{{ credits.company }}</strong> · {{ credits.companyLong }}</p>
           <p>PDG : <strong>{{ credits.ceo }}</strong></p>
           <p>Développeur : <strong>{{ credits.developer }}</strong> · {{ credits.city }}, {{ credits.country }}</p>
+          <p class="phones">Téléphone :
+            @for (p of credits.phones; track p.tel; let last = $last) {
+              <a [href]="'tel:' + p.tel">{{ p.label }}</a>@if (!last) { <span aria-hidden="true"> · </span> }
+            }
+          </p>
         </div>
         <p class="copy">© {{ year }} {{ credits.company }} · Pupitre, pour les chorales</p>
       </div>
@@ -98,6 +103,8 @@ type Theme = 'dark' | 'light';
     .foot-text { display: grid; gap: .15rem; font-size: .9rem; color: var(--ink-soft); }
     .foot-text strong { color: var(--ink); font-weight: 700; }
     .made { color: var(--ink); }
+    .phones a { color: var(--accent-2); font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .phones a:hover { text-decoration: underline; text-underline-offset: 3px; }
     .copy { font-size: .8rem; color: var(--ink-soft); text-align: right; }
     @media (max-width: 720px) {
       .by > span:first-child { display: none; }
