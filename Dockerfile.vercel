@@ -12,10 +12,12 @@ RUN npx ng build
 FROM ubuntu:24.04
 ARG AUDIVERIS_VERSION=5.11.0
 ENV DEBIAN_FRONTEND=noninteractive
+# libgtk-3 : Audiveris l'interroge au démarrage (réglage haute définition), même sans écran, et s'arrête sans elle.
 # Audiveris (paquet Linux) veut ajouter une icône au menu du bureau : sans bureau sur un serveur, on lui prépare
 # le dossier attendu, et s'il échoue malgré tout on ignore ce script d'icône (sans effet sur la lecture).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg python3 python3-venv libglib2.0-0 fontconfig fonts-dejavu-core \
+    libgtk-3-0t64 \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && curl -fsSL -o /tmp/audiveris.deb "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/Audiveris-${AUDIVERIS_VERSION}-ubuntu24.04-x86_64.deb" \
