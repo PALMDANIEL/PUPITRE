@@ -134,7 +134,12 @@ jobs:
               - « Processeur … Intel » → `Pupitre-…-Mac-Intel.dmg`
               - « Puce Apple M1, M2, M3 ou M4 » → `Pupitre-…-Mac-Apple-Silicon-M1-M2-M3-M4.dmg`
                 (la version Intel fonctionne aussi sur ces Mac, un peu plus lentement)
-            - Téléphone **Android** (choristes) : `Pupitre-…-android.apk`
+            - Téléphone **Android** (choristes) : `Pupitre-…-android….apk` (autoriser « applications inconnues »)
+            - **iPhone** : `Pupitre-…-iOS-non-signe.ipa`, à installer avec **AltStore** ou **Sideloadly** et un identifiant Apple
+              (gratuit, à renouveler tous les 7 jours) en attendant la publication sur l'App Store
+
+            Téléphone : *Mes chants › Réglages du serveur de lecture* → adresse `https://pupitre-lecture.vercel.app`
+            et code d'accès de la chorale, pour photographier une partition.
 
             Une licence AIT est nécessaire au premier lancement de la version ordinateur.
             Mac : au premier lancement, si macOS refuse d'ouvrir Pupitre, *Réglages Système › Confidentialité et sécurité › Ouvrir quand même*.
