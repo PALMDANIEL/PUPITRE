@@ -21,6 +21,17 @@ export interface IssuedItem {
   text: string;
 }
 
+export const ADMIN_SERVER = 'https://pupitre-lecture.vercel.app';
+
+/** Élément du registre du serveur (licence ou code), avec sa dernière connexion. */
+export interface ServerItem {
+  id: string; kind: 'licence' | 'acces'; client: string; contact: string | null; machine: string | null;
+  issued: string | null; expires: string | null; status: 'active' | 'revoked'; reason: string | null;
+  first_seen: string | null; last_seen: string | null; app_version: string | null; os: string | null; uses: number;
+}
+export interface ServerEvent { at: string; kind: string; item_id: string | null; client: string | null; detail: Record<string, unknown> | null }
+export type Overview = Record<'licences' | 'licences_desactivees' | 'codes' | 'codes_desactives' | 'en_ligne' | 'actifs_7j' | 'clients' | 'lectures' | 'lectures_24h', number>;
+
 const KEY = 'pupitre-ait-cle';
 const REGISTRY = 'pupitre-ait-registre';
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -128,6 +139,31 @@ export class AitStore {
     const payload = { id, client, ...(form.contact.trim() ? { contact: form.contact.trim() } : {}), issued, expires, kind: 'acces' };
     return this.add({ kind: 'acces', id, client, contact: form.contact.trim(), machine: '', issued, expires, createdAt: new Date().toISOString(),
       text: signToken('PUPA1', payload, seed) });
+  }
+
+  /** Appel d'administration : jeton PUPADM1 signé par la clé AIT, valable 9 minutes. */
+  async admin<T>(path: string, init: { method?: string; body?: unknown } = {}, server = ADMIN_SERVER): Promise<T> {
+    const seed = this.seed() ?? (() => { throw new Error('Espace AIT verrouillé.'); })();
+    const token = signToken('PUPADM1', { kind: 'admin', exp: new Date(Date.now() + 9 * 60_000).toISOString(), nonce: crypto.randomUUID() }, seed);
+    let res: Response;
+    try {
+      res = await fetch(`${server}/api/admin${path}`, {
+        method: init.method ?? 'GET',
+        headers: { Authorization: `PupitreAdmin ${token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+        body: init.body ? JSON.stringify(init.body) : undefined,
+      });
+    } catch {
+      throw new Error('Serveur AIT injoignable : vérifiez la connexion Internet.');
+    }
+    const data = await res.json().catch(() => null) as (T & { error?: string }) | null;
+    if (!res.ok) throw new Error(data?.error ?? `Erreur du serveur (${res.status}).`);
+    return data as T;
+  }
+
+  /** Inscrit au registre du serveur les licences et codes créés sur ce téléphone (même hors ligne). */
+  syncRegistry() {
+    const items = this.registry().map((i) => i.text);
+    return items.length ? this.admin<{ count: number }>('/enregistrer', { method: 'POST', body: { items } }) : Promise.resolve({ count: 0 });
   }
 
   csv(): string {

@@ -17,7 +17,7 @@ export const b64url = (bytes: Uint8Array) =>
 export const unb64url = (text: string) =>
   Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4)), (c) => c.charCodeAt(0));
 
-export function signToken(prefix: 'PUP1' | 'PUPA1', payload: object, seed: Uint8Array): string {
+export function signToken(prefix: 'PUP1' | 'PUPA1' | 'PUPADM1', payload: object, seed: Uint8Array): string {
   const body = `${prefix}.${b64url(enc.encode(JSON.stringify(payload)))}`;
   return `${body}.${b64url(ed.sign(enc.encode(body), seed))}`;
 }
