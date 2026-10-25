@@ -87,6 +87,7 @@ sont `AIT-2026-T0001` / `ACC-2026-T0001` (ceux du Mac : `AIT-2026-0001`), regist
 - **Téléphone** : sous « Mes chants », « Abonnement de … : du … au … inclus · N jours restants ».
 
 ## Administrer à distance (tableau de bord AIT)
+Accès : le lien *Espace AIT* n'apparaît (dans *À propos*) que sur un téléphone qui a la clé AIT. Pour la première importation, **touchez 7 fois le logo AIT** de la page *À propos*. PIN de 6 à 8 chiffres ; après 3 PIN faux, attente de 30 s, puis doublée à chaque erreur (jusqu'à 1 h).
 Sur votre téléphone : *Espace AIT* → onglet **Tableau de bord** (la clé AIT signe chaque demande, valable 9 minutes).
 - Ordinateurs et codes de chorale par client : en ligne (moins de 15 min), dernière connexion, système, version, photos lues.
 - **Désactiver / Réactiver** un ordinateur ou un code, ou **tout un client** ; motif facultatif ; journal des événements.

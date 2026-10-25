@@ -34,7 +34,7 @@ const DUREES = [
               {{ qr() ? 'QR code lu ✓ (reprendre)' : 'Photographier le QR code' }}
             </label>
           </li>
-          <li>Choisissez un code PIN (4 à 8 chiffres), demandé à chaque ouverture de l’Espace AIT :
+          <li>Choisissez un code PIN de 6 à 8 chiffres, différent de celui de l’écran du téléphone, demandé à chaque ouverture de l’Espace AIT :
             <div class="pins">
               <input type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="Code PIN" [(ngModel)]="pin" name="pin">
               <input type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="Confirmer" [(ngModel)]="pin2" name="pin2">

@@ -34,6 +34,7 @@ export type Overview = Record<'licences' | 'licences_desactivees' | 'codes' | 'c
 
 const KEY = 'pupitre-ait-cle';
 const REGISTRY = 'pupitre-ait-registre';
+const ATTEMPTS = 'pupitre-ait-essais';
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 function load<T>(key: string, fallback: T): T {
@@ -75,7 +76,8 @@ export class AitStore {
   readonly unlocked = computed(() => !!this.seed());
 
   async setup(qrText: string, pin: string) {
-    if (!/^\d{4,8}$/.test(pin)) throw new Error('Le code PIN doit faire 4 à 8 chiffres.');
+    if (!/^\d{6,8}$/.test(pin)) throw new Error('Le code PIN doit faire 6 à 8 chiffres.');
+    if (/^(\d)\1+$/.test(pin) || '0123456789'.includes(pin) || '9876543210'.includes(pin)) throw new Error('Code PIN trop facile à deviner (111111, 123456…) : choisissez-en un autre.');
     const seed = parseKeyQr(qrText);
     const sealed = await seal(seed, pin);
     store(KEY, sealed);
@@ -86,7 +88,18 @@ export class AitStore {
   async unlock(pin: string) {
     const sealed = this.sealed();
     if (!sealed) throw new Error('Aucune clé sur ce téléphone.');
-    this.seed.set(await unseal(sealed, pin));
+    const tries = load<{ fails: number; until: number }>(ATTEMPTS, { fails: 0, until: 0 });
+    const wait = Math.ceil((tries.until - Date.now()) / 1000);
+    if (wait > 0) throw new Error(`Trop d’essais. Réessayez dans ${wait > 90 ? Math.ceil(wait / 60) + ' minutes' : wait + ' secondes'}.`);
+    try {
+      this.seed.set(await unseal(sealed, pin));
+      store(ATTEMPTS, { fails: 0, until: 0 });
+    } catch (e) {
+      // À partir du 3e échec, attente doublée à chaque fois : 30 s, 1 min, 2 min… jusqu'à 1 h.
+      const fails = tries.fails + 1;
+      store(ATTEMPTS, { fails, until: fails >= 3 ? Date.now() + Math.min(3_600_000, 30_000 * 2 ** (fails - 3)) : 0 });
+      throw e;
+    }
   }
 
   lock() {

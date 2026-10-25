@@ -1,5 +1,6 @@
 import { Component, inject } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
+import { AitStore } from '../../core/ait';
 import { CREDITS } from '../../core/credits';
 import { frDateShort } from '../../core/dates';
 import { LicenceService } from '../../core/licence';
@@ -12,7 +13,7 @@ import { IS_PLAYER } from '../../core/platform';
     <section class="hero">
       <div class="logo-wrap">
         <span class="halo" aria-hidden="true"></span>
-        <img [src]="credits.logo" [alt]="credits.company + ' – ' + credits.companyLong" width="720" height="628">
+        <img (click)="secretTap()" [src]="credits.logo" [alt]="credits.company + ' – ' + credits.companyLong" width="720" height="628">
       </div>
       <div class="lead">
         <p class="eyebrow">À propos</p>
@@ -90,7 +91,7 @@ import { IS_PLAYER } from '../../core/platform';
       </ol>
     </section>
 
-    @if (player) { <p class="admin"><a routerLink="/ait">Espace AIT (administration)</a></p> }
+    @if (player && ait.hasKey()) { <p class="admin"><a routerLink="/ait">Espace AIT (administration)</a></p> }
   `,
   styles: [`
     .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: clamp(1.5rem, 5vw, 4rem); align-items: center;
@@ -145,4 +146,15 @@ export class About {
   protected readonly licence = inject(LicenceService);
   protected readonly date = frDateShort;
   protected readonly player = IS_PLAYER;
+  protected readonly ait = inject(AitStore);
+  private readonly router = inject(Router);
+  private taps: number[] = [];
+
+  /** Accès caché à l'Espace AIT (avant l'import de la clé) : 7 touches sur le logo en moins de 4 secondes. */
+  protected secretTap() {
+    if (!this.player) return;
+    const now = Date.now();
+    this.taps = [...this.taps.filter((t) => now - t < 4000), now];
+    if (this.taps.length >= 7) { this.taps = []; void this.router.navigate(['/ait']); }
+  }
 }
