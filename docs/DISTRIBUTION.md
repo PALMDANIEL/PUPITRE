@@ -70,6 +70,8 @@ Pupitre prévient 30 jours avant l'expiration. Changement d'ordinateur : nouvell
 npm run licence -- acces --client "Chorale Sainte Cécile" --duree 1a
 ```
 
+Adresse du serveur à donner avec le code : **https://pupitre-lecture.vercel.app** (essai gratuit sur Vercel, voir `deploy/LISEZ-MOI.md`).
+
 Le code `PUPA1…` est valable pour toute la chorale (tous ses téléphones) jusqu'à sa date de fin. Les choristes le
 collent avec l'adresse du serveur dans *Mes chants › Réglages du serveur de lecture*. Registre :
 `~/.pupitre-ait/registre-acces.csv`. Les partitions de chaque chorale sont séparées sur le serveur.

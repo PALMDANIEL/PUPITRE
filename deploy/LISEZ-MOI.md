@@ -7,6 +7,23 @@ Pupitre) et renvoie un pack de répétition au téléphone. L'écoute se fait en
 - Une chorale ne voit jamais les partitions d'une autre.
 - L'image est construite et testée par GitHub Actions (workflow *Serveur*) : `ghcr.io/palmdaniel/pupitre-serveur`.
 
+## Hébergement actuel : Vercel (essai gratuit)
+
+Le serveur tourne sur **https://pupitre-lecture.vercel.app** (projet `pupitre-lecture`, équipe `palmdaniels-projects`).
+Vercel construit `Dockerfile.vercel` (même image, réglée pour Vercel) en **lecture directe** : le téléphone reste
+connecté pendant la lecture et reçoit le pack dans la même réponse ; rien n'est conservé sur Vercel.
+
+- Limites de l'offre gratuite (Hobby) : **5 minutes par lecture** (1 à 2 pages ; une page ≈ 1 min 30),
+  envois de 4,5 Mo au plus (le téléphone réduit les photos), **usage non commercial**.
+- Pour commercialiser : offre Pro (20 $/mois, jusqu'à 13 min par lecture) ou VPS ci-dessous.
+- Redéployer après une modification du serveur (depuis le dossier `pupitre-plateforme`) :
+
+```bash
+vercel deploy --prod
+```
+
+## VPS (plus tard, avec un nom de domaine)
+
 ## Ce qu'il faut
 
 - Un **VPS Linux x86_64** (Ubuntu 24.04 conseillé) : 2 processeurs, 4 Go de mémoire, 40 Go de disque.
