@@ -3,6 +3,7 @@ import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { PackStore, PackSummary } from '../../core/packs';
 import { RemoteReader } from '../../core/remote';
+import { frDateShort } from '../../core/dates';
 import { voiceColor } from '../../core/api';
 
 @Component({
@@ -37,6 +38,12 @@ import { voiceColor } from '../../core/api';
       </span>
     </label>
     </div>
+    @if (remote.settings().info; as i) {
+      <p class="access" [class.warn]="soon(i.expires)">
+        Abonnement de <b>{{ i.client }}</b> : {{ i.issued ? 'du ' + date(i.issued) + ' ' : '' }}{{ i.expires ? 'au ' + date(i.expires) + ' inclus' : 'sans date de fin' }}
+        @if (left(i.expires); as n) { · {{ n }} jour{{ n === 1 ? '' : 's' }} restant{{ n === 1 ? '' : 's' }} }
+      </p>
+    }
     <p class="settings"><a routerLink="/reglages">Réglages du serveur de lecture</a></p>
     @if (store.error()) { <p class="error banner" role="alert">{{ store.error() }}</p> }
 
@@ -81,6 +88,9 @@ import { voiceColor } from '../../core/api';
     .actions { display: grid; gap: .8rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
     .photo { text-decoration: none; }
     .settings { margin-top: .7rem; font-size: .85rem; }
+    .access { margin-top: .8rem; font-size: .88rem; color: var(--ink-soft); }
+    .access b { color: var(--ink); }
+    .access.warn { color: var(--danger); }
     .settings a { color: var(--ink-soft); text-underline-offset: 3px; }
     .import { display: flex; align-items: center; gap: 1rem; padding: 1.1rem 1.25rem; cursor: pointer; transition: border-color .2s, box-shadow .2s; }
     .import:hover, .import.over { border-color: var(--accent-2); box-shadow: var(--glow); }
@@ -119,10 +129,17 @@ export class PackLibrary {
   private readonly router = inject(Router);
   protected readonly over = signal(false);
   protected readonly color = voiceColor;
+  protected readonly date = frDateShort;
+  protected left(expires: string | null): number | null {
+    if (!expires) return null;
+    return Math.max(0, Math.round((Date.parse(`${expires}T00:00:00Z`) - Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)) / 86_400_000));
+  }
+  protected soon(expires: string | null) { const n = this.left(expires); return n !== null && n <= 30; }
 
   constructor() {
     void this.store.load();
     void this.remote.follow(); // reprend les lectures commencées avant la fermeture de l'application
+    void this.remote.refreshAccess();
   }
 
   protected pick(e: Event) {

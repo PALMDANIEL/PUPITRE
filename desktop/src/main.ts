@@ -139,8 +139,18 @@ function keepInside(win: BrowserWindow, base: string) {
   });
 }
 
+/** L'interface affiche la licence (dates, jours restants) : le serveur intégré la lit dans ce même processus. */
+function publishLicence(status = currentStatus()) {
+  if (!status.ok) { delete process.env.PUPITRE_LICENCE; return; }
+  const l = status.licence;
+  process.env.PUPITRE_LICENCE = JSON.stringify({
+    id: l.id, client: l.client, issued: l.issued, expires: l.expires, machine: status.machine, daysLeft: daysLeft(l, new Date()),
+  });
+}
+
 async function openMain() {
   configureEnvironment();
+  publishLicence();
   const { start } = await import('../../server/main');
   const { url } = await start({ port: 0, host: '127.0.0.1' });
   serverStarted = true;
@@ -177,6 +187,8 @@ ipcMain.handle('licence:open-file', async () => {
 ipcMain.handle('licence:install', async (_e, text: string) => {
   const status = install(String(text ?? ''));
   if (status.ok) {
+    publishLicence(status);
+    mainWindow?.webContents.reload();
     activation?.close();
     if (!serverStarted) await openMain();
   }

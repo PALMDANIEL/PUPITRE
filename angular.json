@@ -30,6 +30,7 @@
               "src/styles.css"
             ],
             "allowedCommonJsDependencies": [
+              "jsqr",
               "opensheetmusicdisplay"
             ]
           },

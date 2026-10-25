@@ -8,8 +8,8 @@ import { shrinkPhoto } from './shrink';
  * et renvoie un pack de répétition, enregistré dans le téléphone (l'écoute se fait ensuite sans Internet).
  */
 /** direct : serveur sans stockage (Vercel) → lecture en une seule connexion (/api/lire), application ouverte */
-export interface RemoteSettings { url: string; code: string; direct?: boolean }
-export interface AccessInfo { client: string; id: string; expires: string | null; direct?: boolean }
+export interface AccessInfo { client: string; id: string; issued?: string | null; expires: string | null; direct?: boolean }
+export interface RemoteSettings { url: string; code: string; direct?: boolean; info?: AccessInfo | null }
 export interface RemoteJob { id: string; title: string; status: ScoreStatus; progress: number; error: string | null; startedAt: string; direct?: boolean }
 
 /** Limite d'envoi des hébergements sans serveur (4,5 Mo) : on garde de la marge. */
@@ -45,9 +45,19 @@ export class RemoteReader {
   readonly busyCount = computed(() => this.jobs().filter((j) => j.status !== 'ready' && j.status !== 'failed').length);
 
   save(settings: RemoteSettings) {
-    const clean = { url: settings.url.trim().replace(/\/+$/, ''), code: settings.code.replace(/\s+/g, ''), direct: !!settings.direct };
+    const clean = { url: settings.url.trim().replace(/\/+$/, ''), code: settings.code.replace(/\s+/g, ''), direct: !!settings.direct, info: settings.info ?? null };
     this.settings.set(clean);
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(clean)); } catch { /* stockage indisponible : réglage pour la session */ }
+  }
+
+  /** Met à jour les dates du code (renouvellement, expiration) quand Internet est disponible ; silencieux sinon. */
+  async refreshAccess() {
+    const s = this.settings();
+    if (!s.url || !s.code) return;
+    try {
+      const info = await this.check(s);
+      if (info.client) this.save({ ...s, direct: !!info.direct, info });
+    } catch { /* hors ligne ou code refusé : on garde les dernières dates connues */ }
   }
 
   private headers(s = this.settings()): HeadersInit { return { Authorization: `Pupitre ${s.code}` }; }

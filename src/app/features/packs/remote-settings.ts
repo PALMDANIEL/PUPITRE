@@ -27,7 +27,7 @@ import { AccessInfo, RemoteReader } from '../../core/remote';
       <button class="btn" type="submit" [disabled]="checking()">{{ checking() ? 'Vérification…' : 'Vérifier et enregistrer' }}</button>
       @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
       @if (info(); as i) {
-        <p class="ok" role="status">✓ Code valable pour <b>{{ i.client }}</b>{{ i.expires ? ' jusqu’au ' + date(i.expires) : '' }}.</p>
+        <p class="ok" role="status">✓ Code valable pour <b>{{ i.client }}</b>{{ i.issued ? ', du ' + date(i.issued) : '' }}{{ i.expires ? ' au ' + date(i.expires) + ' inclus' : ' (sans date de fin)' }}.</p>
       }
     </form>
     <p class="hint">L’écoute des chants déjà enregistrés n’a jamais besoin d’Internet.</p>
@@ -57,7 +57,7 @@ export class RemoteSettingsPage {
   protected code = this.remote.settings().code;
   protected readonly checking = signal(false);
   protected readonly error = signal<string | null>(null);
-  protected readonly info = signal<AccessInfo | null>(null);
+  protected readonly info = signal<AccessInfo | null>(this.remote.settings().info ?? null);
   protected readonly date = frDateShort;
 
   protected async verify() {
@@ -68,7 +68,7 @@ export class RemoteSettingsPage {
     try {
       const info = await this.remote.check({ url: this.url, code: this.code });
       if (!info.client) throw new Error('Ce serveur n’est pas un serveur de lecture en ligne Pupitre.');
-      this.remote.save({ url: this.url, code: this.code, direct: !!info.direct });
+      this.remote.save({ url: this.url, code: this.code, direct: !!info.direct, info });
       this.info.set(info);
       setTimeout(() => void this.router.navigate(['/photo']), 900);
     } catch (e) {

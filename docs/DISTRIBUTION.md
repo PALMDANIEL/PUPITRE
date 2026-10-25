@@ -64,6 +64,28 @@ Renouvellement : même commande avec la même machine ; le client saisit la nouv
 *Pupitre › Licence… › Saisir une nouvelle licence* (Windows : *Aide › Licence…*).
 Pupitre prévient 30 jours avant l'expiration. Changement d'ordinateur : nouvelle licence pour le nouvel identifiant.
 
+## Créer les licences depuis votre téléphone (Espace AIT)
+
+1. Une seule fois, sur le Mac (dossier `pupitre-plateforme`) :
+
+```bash
+npm run licence -- export-mobile
+```
+
+2. Sur votre téléphone : Pupitre › *À propos* › tout en bas *Espace AIT (administration)* ›
+   *Photographier le QR code*, puis choisir un code PIN. Effacez ensuite le Terminal du Mac (Cmd+K).
+3. Ensuite : *Espace AIT* › PIN › *Licence d'ordinateur* (client, identifiant de l'ordinateur, durée)
+   ou *Code de chorale*, puis *Envoyer (WhatsApp…)*. Fonctionne sans Internet.
+
+La clé est gardée chiffrée par le PIN ; l'espace se reverrouille quand on le quitte. Les numéros créés au téléphone
+sont `AIT-2026-T0001` / `ACC-2026-T0001` (ceux du Mac : `AIT-2026-0001`), registre exportable en CSV
+(*Registre › Exporter*). Téléphone perdu : *Retirer la clé* n'est plus possible, mais sans le PIN la clé est illisible.
+
+## Ce que voit le client
+- **Ordinateur** : pied de page « Licence AIT-… · jusqu'au … », fiche *Votre licence* dans *À propos*
+  (début, fin, jours restants, ordinateur) et alerte sur l'accueil 30 jours avant la fin.
+- **Téléphone** : sous « Mes chants », « Abonnement de … : du … au … inclus · N jours restants ».
+
 ## Codes d'accès au serveur de lecture (photos depuis le téléphone)
 
 ```bash

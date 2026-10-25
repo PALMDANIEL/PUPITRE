@@ -23,7 +23,7 @@ export function signAccess(payload: AccessPayload, privatePem: string): string {
 
 export function checkAccess(text: string, publicPem: string, now = new Date()): AccessPayload {
   const acc = decodeToken<AccessPayload>(ACCESS_PREFIX, text, publicPem, 'un code d’accès Pupitre');
-  if (acc.kind !== 'acces' || !/^ACC-\d{4}-\d{4}$/.test(acc.id)) throw new LicenceError('format', 'Ce texte n’est pas un code d’accès Pupitre.');
+  if (acc.kind !== 'acces' || !/^ACC-\d{4}-T?\d{4}$/.test(acc.id)) throw new LicenceError('format', 'Ce texte n’est pas un code d’accès Pupitre.');
   if (acc.expires && now.toISOString().slice(0, 10) > acc.expires) {
     throw new LicenceError('expired', `Le code d’accès de « ${acc.client} » a expiré le ${frDate(acc.expires)}. Contactez AIT pour le renouveler.`);
   }

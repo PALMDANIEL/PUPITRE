@@ -78,11 +78,15 @@ if (config.online) {
   });
 }
 
+/** Application de bureau : licence de cet ordinateur (dates de début et de fin) ; null ailleurs. */
+app.get('/api/licence', (_req, res) => {
+  try { res.json({ licence: process.env.PUPITRE_LICENCE ? JSON.parse(process.env.PUPITRE_LICENCE) : null }); } catch { res.json({ licence: null }); }
+});
 app.get('/api/health', (_req, res) => { res.json({ ok: true, online: config.online, direct: config.direct, problems: checkSetup() }); });
 /** Réglages de l'application mobile : vérifie le code et affiche la chorale. */
 app.get('/api/acces', (_req, res) => {
   const acc = res.locals['access'] as AccessPayload | undefined;
-  res.json({ ...(acc ? { client: acc.client, id: acc.id, expires: acc.expires } : { client: null, id: null, expires: null }), direct: config.direct });
+  res.json({ ...(acc ? { client: acc.client, id: acc.id, issued: acc.issued, expires: acc.expires } : { client: null, id: null, issued: null, expires: null }), direct: config.direct });
 });
 app.get('/api/scores', async (_req, res) => {
   const owner = ownerOf(res);

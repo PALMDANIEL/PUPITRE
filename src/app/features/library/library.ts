@@ -2,6 +2,8 @@ import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { LibraryStore } from '../../core/library.store';
+import { LicenceService } from '../../core/licence';
+import { frDateShort } from '../../core/dates';
 import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/api';
 
 @Component({
@@ -22,6 +24,11 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
       </ul>
     </section>
 
+    @if (licence.info(); as l) {
+      @if (l.daysLeft !== null && l.daysLeft <= 30) {
+        <p class="renew" role="status">Votre licence se termine le <b>{{ date(l.expires!) }}</b> ({{ l.daysLeft }} jour{{ l.daysLeft === 1 ? '' : 's' }}). <a routerLink="/a-propos">Voir la licence</a></p>
+      }
+    }
     <label class="drop glass" [class.over]="over()" [class.sending]="store.uploading()"
            (dragover)="$event.preventDefault(); over.set(true)" (dragleave)="over.set(false)" (drop)="drop($event)">
       <span class="stave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
@@ -88,6 +95,9 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
     .voices li { display: flex; align-items: center; gap: .7rem; font-size: .82rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
     .voices li::before { content: ""; width: 74px; height: 3px; border-radius: 3px; background: var(--c); box-shadow: 0 0 12px var(--c); }
 
+    .renew { margin-bottom: 1rem; padding: .75rem 1rem; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--soprano) 50%, transparent);
+             background: color-mix(in srgb, var(--soprano) 12%, transparent); }
+    .renew a { color: var(--accent-2); }
     .drop { position: relative; display: grid; place-items: center; min-height: 300px; padding: 2rem; cursor: pointer; overflow: hidden;
             transition: border-color .25s, box-shadow .25s; }
     .drop::after { content: ""; position: absolute; inset: 10px; border-radius: calc(var(--radius) - 8px); border: 1.5px dashed var(--rule);
@@ -157,6 +167,8 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
 })
 export class Library {
   protected readonly store = inject(LibraryStore);
+  protected readonly licence = inject(LicenceService);
+  protected readonly date = frDateShort;
   private readonly router = inject(Router);
   protected readonly over = signal(false);
   protected readonly accept = ACCEPT;

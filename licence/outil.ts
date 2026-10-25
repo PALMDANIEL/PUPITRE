@@ -9,13 +9,17 @@
  *   npm run licence -- acces --client "Chorale Sainte Cécile" --duree 1a
  *        code d'accès au serveur de lecture en ligne (photo de partition depuis le téléphone)
  *   npm run licence -- machine                   identifiant de cet ordinateur
+ *   npm run licence -- export-mobile             QR code à photographier dans Pupitre mobile › Espace AIT
+ *        (pour créer les licences depuis votre téléphone ; la clé y est ensuite chiffrée par votre code PIN)
  *
  * Clé privée et registre : ~/.pupitre-ait (ou PUPITRE_AIT_DIR). Sauvegardez ce dossier :
  * sans la clé privée, impossible d'émettre des licences reconnues par les versions déjà installées.
  */
+import { createPrivateKey } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { addDuration as duration } from '../src/app/core/duree';
 import { signAccess, type AccessPayload } from './acces';
 import { checkLicence, decodeLicence, frDate, generateKeys, signLicence, type LicencePayload } from './core';
 import { machineId, normalizeMachineId } from './machine';
@@ -44,17 +48,7 @@ function args(list: string[]) {
 }
 
 function addDuration(start: string, duree: string): string | null {
-  if (/^illimit/i.test(duree)) return null;
-  const m = /^(\d+)\s*([ajm])/i.exec(duree);
-  if (!m) fail('Durée invalide. Exemples : 1a (un an), 6m (six mois), 30j (trente jours), illimitee.');
-  const n = Number(m[1]);
-  const d = new Date(`${start}T12:00:00Z`);
-  const unit = m[2].toLowerCase();
-  if (unit === 'a') d.setUTCFullYear(d.getUTCFullYear() + n);
-  if (unit === 'm') d.setUTCMonth(d.getUTCMonth() + n);
-  if (unit === 'j') d.setUTCDate(d.getUTCDate() + n);
-  d.setUTCDate(d.getUTCDate() - 1); // une licence d'un an émise le 24/10 vaut jusqu'au 23/10 inclus
-  return d.toISOString().slice(0, 10);
+  try { return duration(start, duree); } catch (e) { fail((e as Error).message); }
 }
 
 const csv = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -154,6 +148,16 @@ switch (command) {
   case 'liste': {
     if (!fs.existsSync(REGISTRY)) { console.log('\n  Aucune licence émise pour l’instant.\n'); break; }
     console.log(`\n${fs.readFileSync(REGISTRY, 'utf8')}`);
+    break;
+  }
+  case 'export-mobile': {
+    if (!fs.existsSync(PRIVATE)) fail('Aucune clé privée. Lancez d’abord : npm run licence -- init');
+    const der = createPrivateKey(fs.readFileSync(PRIVATE, 'utf8')).export({ format: 'der', type: 'pkcs8' }) as Buffer;
+    const text = `PUPK1:${der.subarray(der.length - 32).toString('base64url')}`;
+    const QR = require('qrcode') as typeof import('qrcode');
+    console.log('\n  Clé AIT pour votre téléphone — photographiez ce QR code dans Pupitre mobile › Espace AIT.');
+    console.log('  ⚠ Ne le montrez à personne et ne le prenez pas en capture d’écran. Effacez ensuite le Terminal (Cmd+K).\n');
+    QR.toString(text, { type: 'terminal', small: true, errorCorrectionLevel: 'M' }, (err, qr) => console.log(err ? text : qr));
     break;
   }
   case 'machine': {

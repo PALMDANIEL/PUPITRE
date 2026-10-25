@@ -1,6 +1,9 @@
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CREDITS } from '../../core/credits';
+import { frDateShort } from '../../core/dates';
+import { LicenceService } from '../../core/licence';
+import { IS_PLAYER } from '../../core/platform';
 
 @Component({
   selector: 'app-about',
@@ -19,6 +22,23 @@ import { CREDITS } from '../../core/credits';
         <a routerLink="/" class="btn">Déposer une partition</a>
       </div>
     </section>
+
+    @if (licence.info(); as l) {
+      <section class="glass card licence" aria-labelledby="lic-title">
+        <p class="eyebrow">Votre licence</p>
+        <h2 id="lic-title">{{ l.client }}</h2>
+        <dl>
+          <div><dt>Numéro</dt><dd>{{ l.id }}</dd></div>
+          <div><dt>Début</dt><dd>{{ date(l.issued) }}</dd></div>
+          <div><dt>Fin</dt><dd>{{ l.expires ? date(l.expires) + ' inclus' : 'Licence définitive (sans date de fin)' }}</dd></div>
+          @if (l.daysLeft !== null) {
+            <div><dt>Reste</dt><dd [class.warn]="l.daysLeft <= 30">{{ l.daysLeft }} jour{{ l.daysLeft === 1 ? '' : 's' }}</dd></div>
+          }
+          <div><dt>Ordinateur</dt><dd class="mono">{{ l.machine }}</dd></div>
+        </dl>
+        <p class="note">Pour renouveler : menu <b>Licence…</b> › <b>Saisir une nouvelle licence</b>, ou contactez AIT au {{ credits.phones[0].label }}.</p>
+      </section>
+    }
 
     <section class="people" aria-label="L'équipe">
       <article class="glass card">
@@ -69,6 +89,8 @@ import { CREDITS } from '../../core/credits';
         </li>
       </ol>
     </section>
+
+    @if (player) { <p class="admin"><a routerLink="/ait">Espace AIT (administration)</a></p> }
   `,
   styles: [`
     .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: clamp(1.5rem, 5vw, 4rem); align-items: center;
@@ -85,6 +107,12 @@ import { CREDITS } from '../../core/credits';
     .lead h1 { font-size: clamp(2rem, 4.4vw, 3.2rem); }
     .lead > p:not(.eyebrow) { color: var(--ink-soft); font-size: 1.1rem; max-width: 36rem; }
 
+    .licence { margin-bottom: 1.25rem; }
+    .admin { margin-top: 2rem; text-align: center; font-size: .82rem; }
+    .admin a { color: var(--ink-soft); text-underline-offset: 3px; }
+    .warn { color: var(--danger); }
+    .mono { font-family: ui-monospace, 'SF Mono', Consolas, monospace; letter-spacing: .05em; }
+    .note { margin-top: .6rem; color: var(--ink-soft); font-size: .9rem; }
     .people { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
     .card { padding: 1.6rem 1.75rem; display: grid; gap: .45rem; position: relative; overflow: hidden; }
     .card::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px;
@@ -114,4 +142,7 @@ import { CREDITS } from '../../core/credits';
 })
 export class About {
   protected readonly credits = CREDITS;
+  protected readonly licence = inject(LicenceService);
+  protected readonly date = frDateShort;
+  protected readonly player = IS_PLAYER;
 }

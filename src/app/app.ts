@@ -1,7 +1,9 @@
-import { Component, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { CREDITS } from './core/credits';
 import { IS_PLAYER } from './core/platform';
+import { LicenceService } from './core/licence';
+import { frDateShort } from './core/dates';
 
 type Theme = 'dark' | 'light';
 
@@ -56,7 +58,12 @@ type Theme = 'dark' | 'light';
             }
           </p>
         </div>
-        <p class="copy">© {{ year }} {{ credits.company }} · Pupitre, pour les chorales</p>
+        <p class="copy">
+          @if (licence.info(); as l) {
+            <a routerLink="/a-propos" class="lic">Licence {{ l.id }} · {{ l.expires ? 'jusqu’au ' + date(l.expires) : 'définitive' }}</a><br>
+          }
+          © {{ year }} {{ credits.company }} · Pupitre, pour les chorales
+        </p>
       </div>
     </footer>
   `,
@@ -107,6 +114,7 @@ type Theme = 'dark' | 'light';
     .phones a { color: var(--accent-2); font-weight: 700; text-decoration: none; white-space: nowrap; }
     .phones a:hover { text-decoration: underline; text-underline-offset: 3px; }
     .copy { font-size: .8rem; color: var(--ink-soft); text-align: right; }
+    .lic { color: var(--accent-2); text-decoration: none; font-weight: 600; }
     @media (max-width: 720px) {
       .by > span:first-child { display: none; }
       .mark span { display: none; }
@@ -122,6 +130,8 @@ type Theme = 'dark' | 'light';
 export class App {
   protected readonly credits = CREDITS;
   protected readonly player = IS_PLAYER;
+  protected readonly licence = inject(LicenceService);
+  protected readonly date = frDateShort;
   protected readonly year = new Date().getFullYear();
   protected readonly theme = signal<Theme>(document.documentElement.dataset['theme'] === 'light' ? 'light' : 'dark');
 
