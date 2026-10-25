@@ -86,6 +86,14 @@ sont `AIT-2026-T0001` / `ACC-2026-T0001` (ceux du Mac : `AIT-2026-0001`), regist
   (début, fin, jours restants, ordinateur) et alerte sur l'accueil 30 jours avant la fin.
 - **Téléphone** : sous « Mes chants », « Abonnement de … : du … au … inclus · N jours restants ».
 
+## Administrer à distance (tableau de bord AIT)
+Sur votre téléphone : *Espace AIT* → onglet **Tableau de bord** (la clé AIT signe chaque demande, valable 9 minutes).
+- Ordinateurs et codes de chorale par client : en ligne (moins de 15 min), dernière connexion, système, version, photos lues.
+- **Désactiver / Réactiver** un ordinateur ou un code, ou **tout un client** ; motif facultatif ; journal des événements.
+- Registre : base PostgreSQL Neon (`pupitre_bd`, Francfort), variable `DATABASE_URL` du projet Vercel (tables `ait_items`, `ait_events`).
+- Chez le client, Pupitre se signale au démarrage puis toutes les 10 minutes (`POST /api/checkin`).
+  Désactivé : il se ferme et affiche le motif. **Sans Internet pendant 30 jours** : il demande une connexion de quelques secondes.
+
 ## Codes d'accès au serveur de lecture (photos depuis le téléphone)
 
 ```bash

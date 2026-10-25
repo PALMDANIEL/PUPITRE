@@ -16,6 +16,7 @@ connecté pendant la lecture et reçoit le pack dans la même réponse ; rien n'
 - Limites de l'offre gratuite (Hobby) : **5 minutes par lecture** (1 à 2 pages ; une page ≈ 1 min 30),
   envois de 4,5 Mo au plus (le téléphone réduit les photos), **usage non commercial**.
 - Pour commercialiser : offre Pro (20 $/mois, jusqu'à 13 min par lecture) ou VPS ci-dessous.
+- Région `fra1` (Francfort, `vercel.json`), à côté de la base Neon du registre d'administration (`DATABASE_URL`).
 - Redéployer après une modification du serveur (depuis le dossier `pupitre-plateforme`) :
 
 ```bash
