@@ -28,7 +28,7 @@ export function run(cmd: string, args: string[], opts: { label: string; timeoutM
       if (code === 0) return resolve();
       const last = tail.trim().split('\n').pop() ?? '';
       const readable = last && !last.includes('Traceback') && !last.includes('Error') && !/^\s*File /.test(last);
-      reject(readable ? new UserError(last) : new Error(`${opts.label} a échoué (code ${code}) :\n${tail}`));
+      reject(Object.assign(readable ? new UserError(last) : new Error(`${opts.label} a échoué (code ${code}) :\n${tail}`), { detail: tail }));
     });
   });
 }

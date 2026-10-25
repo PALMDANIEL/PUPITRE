@@ -53,19 +53,28 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int):
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     seen = set()
+    tail = []  # dernières lignes d'Audiveris, affichées s'il ne produit rien (diagnostic sur un serveur)
+    proc = None
     try:
         proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), "--", str(pdf)],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", **QUIET)
         for line in proc.stdout:
+            tail = (tail + [line.rstrip()])[-25:]
             m = re.search(r"Sheet#(\d+)", line)
             if m and m.group(1) not in seen:
                 seen.add(m.group(1))
                 print(f"progress:omr:{min(95, int(100 * len(seen) / max(pages, 1)))}", flush=True)
         proc.wait(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        if proc: proc.kill()
         print("Audiveris a dépassé le temps imparti", file=sys.stderr)
-    return movements(out)
+    except OSError as e:
+        print(f"Audiveris introuvable ou impossible à lancer ({AUDIVERIS}) : {e}", file=sys.stderr)
+    found = movements(out)
+    if not found:
+        print(f"Audiveris n'a rien produit pour {pdf.name} (code {getattr(proc, 'returncode', '?')}). Dernières lignes :", file=sys.stderr)
+        print("\n".join(tail), file=sys.stderr)
+    return found
 
 
 def main(src, work):

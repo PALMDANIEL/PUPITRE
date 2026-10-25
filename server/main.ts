@@ -195,7 +195,7 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
     const pack = await readDirect(files, title, (e) => send(e));
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
   } catch (e) {
-    console.error('Lecture directe :', e);
+    console.error('Lecture directe :', e, (e as { detail?: string }).detail ?? '');
     send({ status: 'failed', error: e instanceof UserError ? e.message : 'La lecture a échoué. Reprenez la photo : page bien à plat, en pleine lumière.' });
   } finally {
     clearInterval(ping);

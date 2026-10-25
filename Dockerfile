@@ -44,8 +44,10 @@ COPY --from=web /app/dist ./dist
 ENV NODE_ENV=production NO_OPEN=1 PORT=3000 \
     ACCES_EN_LIGNE=1 STORE=files STORAGE_DIR=/data \
     PYTHON_BIN=/opt/venv/bin/python3 SOUNDFONT=/opt/soundfont/GeneralUser-GS.sf2 AUDIVERIS_BIN=/opt/audiveris/bin/Audiveris \
-    JAVA_TOOL_OPTIONS=-Djava.awt.headless=true
+    HOME=/tmp/home XDG_CONFIG_HOME=/tmp/home/.config XDG_CACHE_HOME=/tmp/home/.cache XDG_DATA_HOME=/tmp/home/.local/share \
+    JAVA_TOOL_OPTIONS="-Djava.awt.headless=true -Duser.home=/tmp/home -Djava.io.tmpdir=/tmp"
 VOLUME /data
 EXPOSE 3000
 HEALTHCHECK --interval=60s --timeout=5s CMD curl -fs http://localhost:3000/api/health || exit 1
-CMD ["npx", "tsx", "server/main.ts"]
+# Hébergements en lecture seule (Vercel) : seul /tmp est inscriptible, on y met le dossier personnel
+CMD ["sh", "-c", "mkdir -p /tmp/home && exec npx tsx server/main.ts"]
