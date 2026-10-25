@@ -68,7 +68,7 @@ export class RemoteSettingsPage {
     try {
       const info = await this.remote.check({ url: this.url, code: this.code });
       if (!info.client) throw new Error('Ce serveur n’est pas un serveur de lecture en ligne Pupitre.');
-      this.remote.save({ url: this.url, code: this.code });
+      this.remote.save({ url: this.url, code: this.code, direct: !!info.direct });
       this.info.set(info);
       setTimeout(() => void this.router.navigate(['/photo']), 900);
     } catch (e) {

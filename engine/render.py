@@ -411,6 +411,7 @@ def main():
     ap.add_argument("--tempo", type=int, default=0)
     ap.add_argument("--timbre", choices=["choeur", "piano"], default="choeur")
     ap.add_argument("--omr", action="store_true", help="partition lue par Audiveris : ignorer les noms de portées")
+    ap.add_argument("--sans-travail", action="store_true", help="pas de pistes de travail (lecture directe pour le mobile, qui mixe lui-même)")
     a = ap.parse_args()
 
     if not pathlib.Path(SF2).exists():
@@ -427,10 +428,12 @@ def main():
     for i, v in enumerate(voices):
         vid, vname = labels[i]
         stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
-        practice = stream.Score()
-        for j, other in enumerate(voices):
-            practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 38))
-        work = to_mp3(practice, out / f"{vid}_travail")
+        work = ""
+        if not a.sans_travail:
+            practice = stream.Score()
+            for j, other in enumerate(voices):
+                practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 38))
+            work = to_mp3(practice, out / f"{vid}_travail")
         pitches = [p for n in v.recurse().notes for p in n.pitches]
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
         entries.append({"id": vid, "name": vname, "stem": stem, "practice": work,

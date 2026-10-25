@@ -1,14 +1,19 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { ScoreMeta, ScoreStatus } from './api';
 import { PackStore } from './packs';
+import { shrinkPhoto } from './shrink';
 
 /**
  * Serveur de lecture AIT (en ligne) : le téléphone envoie la photo d'une partition, le serveur lit les notes
  * et renvoie un pack de répétition, enregistré dans le téléphone (l'écoute se fait ensuite sans Internet).
  */
-export interface RemoteSettings { url: string; code: string }
-export interface AccessInfo { client: string; id: string; expires: string | null }
-export interface RemoteJob { id: string; title: string; status: ScoreStatus; progress: number; error: string | null; startedAt: string }
+/** direct : serveur sans stockage (Vercel) → lecture en une seule connexion (/api/lire), application ouverte */
+export interface RemoteSettings { url: string; code: string; direct?: boolean }
+export interface AccessInfo { client: string; id: string; expires: string | null; direct?: boolean }
+export interface RemoteJob { id: string; title: string; status: ScoreStatus; progress: number; error: string | null; startedAt: string; direct?: boolean }
+
+/** Limite d'envoi des hébergements sans serveur (4,5 Mo) : on garde de la marge. */
+const DIRECT_MAX_BYTES = 4_200_000;
 
 const SETTINGS_KEY = 'pupitre-serveur';
 const JOBS_KEY = 'pupitre-lectures';
@@ -17,7 +22,12 @@ function read<T>(key: string, fallback: T): T {
   try { return { ...fallback, ...JSON.parse(localStorage.getItem(key) ?? 'null') } as T; } catch { return fallback; }
 }
 function readJobs(): RemoteJob[] {
-  try { return JSON.parse(localStorage.getItem(JOBS_KEY) ?? '[]') as RemoteJob[]; } catch { return []; }
+  try {
+    // une lecture directe ne survit pas à la fermeture de l'application
+    return (JSON.parse(localStorage.getItem(JOBS_KEY) ?? '[]') as RemoteJob[]).map((j) =>
+      j.direct && j.status !== 'ready' && j.status !== 'failed'
+        ? { ...j, status: 'failed' as const, error: 'Lecture interrompue : l’application a été fermée. Relancez-la.' } : j);
+  } catch { return []; }
 }
 
 export class RemoteError extends Error {}
@@ -35,7 +45,7 @@ export class RemoteReader {
   readonly busyCount = computed(() => this.jobs().filter((j) => j.status !== 'ready' && j.status !== 'failed').length);
 
   save(settings: RemoteSettings) {
-    const clean = { url: settings.url.trim().replace(/\/+$/, ''), code: settings.code.replace(/\s+/g, '') };
+    const clean = { url: settings.url.trim().replace(/\/+$/, ''), code: settings.code.replace(/\s+/g, ''), direct: !!settings.direct };
     this.settings.set(clean);
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(clean)); } catch { /* stockage indisponible : réglage pour la session */ }
   }
@@ -64,7 +74,68 @@ export class RemoteReader {
   }
 
   /** Envoie les pages (photos ou PDF) ; la lecture continue sur le serveur même si l'application est fermée. */
-  send(files: File[], title: string): Promise<RemoteJob> {
+  async send(pages: File[], title: string): Promise<RemoteJob> {
+    const files = await Promise.all(pages.map(shrinkPhoto));
+    if (this.settings().direct) return this.sendDirect(files, title);
+    return this.sendQueued(files, title);
+  }
+
+  /** Serveur sans stockage : une seule connexion, progression en direct, pack reçu à la fin. */
+  private async sendDirect(files: File[], title: string): Promise<RemoteJob> {
+    const s = this.settings();
+    if (files.reduce((n, f) => n + f.size, 0) > DIRECT_MAX_BYTES) {
+      throw new RemoteError('Trop lourd pour une seule lecture : envoyez au plus 2 ou 3 pages à la fois.');
+    }
+    const body = new FormData();
+    body.append('titre', title);
+    for (const f of files) body.append('file', f);
+    const job: RemoteJob = { id: crypto.randomUUID(), title, status: 'queued', progress: 0, error: null, startedAt: new Date().toISOString(), direct: true };
+    this.store([job, ...this.jobs()]);
+    this.uploading.set(true);
+    void (async () => {
+      try {
+        let res: Response;
+        try {
+          res = await fetch(`${s.url}/api/lire`, { method: 'POST', body, headers: this.headers(s) });
+        } catch {
+          throw new RemoteError('Le serveur ne répond pas. Vérifiez la connexion Internet.');
+        } finally {
+          this.uploading.set(false);
+        }
+        if (!res.ok || !res.body) {
+          const err = await res.json().catch(() => null) as { error?: string } | null;
+          throw new RemoteError(err?.error ?? (res.status === 413 ? 'Photos trop lourdes : envoyez moins de pages à la fois.' : `Erreur du serveur (${res.status}).`));
+        }
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines.filter(Boolean)) {
+            const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; pack?: string; title?: string };
+            if (msg.error) throw new RemoteError(msg.error);
+            if (msg.pack) {
+              const bytes = Uint8Array.from(atob(msg.pack), (c) => c.charCodeAt(0));
+              const local = await this.packs.import([new File([bytes], `${msg.title ?? title}.pupitre`)]);
+              if (!local) throw new RemoteError(this.packs.error() ?? 'Pack reçu illisible.');
+              this.update(job.id, { status: 'ready', progress: 100, title: msg.title ?? title });
+              return;
+            }
+            if (msg.status) this.update(job.id, { status: msg.status, progress: msg.progress ?? 0 });
+          }
+        }
+        throw new RemoteError('La connexion a été coupée avant la fin de la lecture. Réessayez.');
+      } catch (e) {
+        this.update(job.id, { status: 'failed', error: (e as Error).message });
+      }
+    })();
+    return job;
+  }
+
+  private sendQueued(files: File[], title: string): Promise<RemoteJob> {
     const s = this.settings();
     if (!s.url || !s.code) return Promise.reject(new RemoteError('Indiquez d’abord le serveur et le code de votre chorale dans les réglages.'));
     this.uploading.set(true);
@@ -116,8 +187,8 @@ export class RemoteReader {
     if (this.polling) return;
     this.polling = true;
     try {
-      while (this.jobs().some((j) => j.status !== 'ready' && j.status !== 'failed')) {
-        for (const job of this.jobs().filter((j) => j.status !== 'ready' && j.status !== 'failed')) {
+      while (this.jobs().some((j) => !j.direct && j.status !== 'ready' && j.status !== 'failed')) {
+        for (const job of this.jobs().filter((j) => !j.direct && j.status !== 'ready' && j.status !== 'failed')) {
           try {
             const meta = await this.call<ScoreMeta>(`/api/scores/${job.id}`);
             if (meta.status === 'ready') {

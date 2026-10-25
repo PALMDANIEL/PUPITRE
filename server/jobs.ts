@@ -5,7 +5,7 @@ import { config, engineCommand } from './config';
 import { dirOf, listMetas, patchMeta, readMeta } from './store';
 import { BUSY, UserError, type Job, type Manifest } from './types';
 
-function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
+export function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env, windowsHide: true });
     let tail = '';

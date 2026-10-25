@@ -9,7 +9,8 @@ import { checkSetup, config } from './config';
 import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, UserError, type ScoreMeta, type SourceKind, type Timbre } from './types';
-import { zip } from './zip';
+import { buildPack, packFileName } from './pack';
+import { readDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
 
 const KINDS: Record<string, SourceKind> = {
@@ -77,11 +78,11 @@ if (config.online) {
   });
 }
 
-app.get('/api/health', (_req, res) => { res.json({ ok: true, online: config.online, problems: checkSetup() }); });
+app.get('/api/health', (_req, res) => { res.json({ ok: true, online: config.online, direct: config.direct, problems: checkSetup() }); });
 /** Réglages de l'application mobile : vérifie le code et affiche la chorale. */
 app.get('/api/acces', (_req, res) => {
   const acc = res.locals['access'] as AccessPayload | undefined;
-  res.json(acc ? { client: acc.client, id: acc.id, expires: acc.expires } : { client: null, id: null, expires: null });
+  res.json({ ...(acc ? { client: acc.client, id: acc.id, expires: acc.expires } : { client: null, id: null, expires: null }), direct: config.direct });
 });
 app.get('/api/scores', async (_req, res) => {
   const owner = ownerOf(res);
@@ -172,22 +173,45 @@ app.delete('/api/scores/:id', async (req, res) => {
 });
 
 /** Pack de répétition (.pupitre) : partition + une piste par voix, à envoyer aux choristes pour l'application mobile. */
+/**
+ * Lecture directe : photos (ou PDF) → pack de répétition dans la même réponse, sans rien stocker.
+ * Réponse en lignes JSON : {"status","progress"} au fil de la lecture, puis {"pack": base64} ou {"error"}.
+ */
+app.post('/api/lire', upload.array('file', 12), async (req, res) => {
+  const files = ((req.files as Express.Multer.File[] | undefined) ?? []).map((f) => {
+    const name = utf8Name(f.originalname);
+    return { name, ext: path.extname(name).toLowerCase(), data: f.buffer };
+  });
+  if (!files.length) fail(400, 'Aucune photo reçue.');
+  if (files.some((f) => KINDS[f.ext] !== 'image' && KINDS[f.ext] !== 'pdf')) fail(415, 'Envoyez des photos (JPG, PNG, HEIC) ou un PDF.');
+  files.sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
+  const title = (typeof req.body?.titre === 'string' && req.body.titre.trim().slice(0, 140)) || titleFrom(files[0].name);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
+  const ping = setInterval(() => send({ ping: true }), 10_000); // garde la connexion ouverte pendant les longues lectures
+  try {
+    const pack = await readDirect(files, title, (e) => send(e));
+    send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
+  } catch (e) {
+    console.error('Lecture directe :', e);
+    send({ status: 'failed', error: e instanceof UserError ? e.message : 'La lecture a échoué. Reprenez la photo : page bien à plat, en pleine lumière.' });
+  } finally {
+    clearInterval(ping);
+    res.end();
+  }
+});
+
 app.get('/api/scores/:id/pack', async (req, res) => {
   const meta = await getScore(req.params.id, res);
   const m = meta.manifest ?? fail(409, 'L’audio de cette partition n’est pas encore prêt.');
-  const audio = path.join(dirOf(meta.id), 'audio');
-  const files = [m.score, m.tutti, ...m.voices.map((v) => v.stem)];
-  const pack = {
-    format: 'pupitre-pack', version: 1, title: meta.title, exportedAt: new Date().toISOString(),
-    manifest: { ...m, voices: m.voices.map(({ practice: _p, ...v }) => v) },
-  };
-  const entries = [{ name: 'pack.json', data: Buffer.from(JSON.stringify(pack, null, 1)) }];
-  for (const f of files) entries.push({ name: `audio/${f}`, data: await fs.readFile(path.join(audio, f)) });
-  const name = `${meta.title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'chant'}.pupitre`;
+  const data = await buildPack(meta.title, m, path.join(dirOf(meta.id), 'audio'));
+  const name = packFileName(meta.title);
   res.setHeader('Content-Type', 'application/octet-stream');
   const ascii = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]|"/g, '_');
   res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
-  res.send(zip(entries));
+  res.send(data);
 });
 
 app.get('/files/:id/:folder/:file', async (req, res) => {

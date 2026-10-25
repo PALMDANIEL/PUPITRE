@@ -36,6 +36,8 @@ export const config = {
   musescore: findMuseScore(),
   /** Serveur de lecture en ligne AIT : codes d'accès exigés, partitions séparées par chorale, CORS pour l'app mobile. */
   online: env.ACCES_EN_LIGNE === '1',
+  /** Hébergement sans disque permanent (Vercel) : l'application mobile utilise la lecture directe /api/lire. */
+  direct: env.LECTURE_DIRECTE === '1',
   accessPublicKey: env.ACCESS_PUBLIC_KEY_FILE ?? path.join(root, 'licence', 'cle-publique.pem'),
   corsOrigins: (env.CORS_ORIGINS ?? 'https://localhost,capacitor://localhost,http://localhost').split(',').map((o) => o.trim()).filter(Boolean),
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),

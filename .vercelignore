@@ -1,0 +1,14 @@
+node_modules
+dist
+data
+.angular
+.env
+desktop
+android
+ios
+docs
+deploy
+engine/build
+engine/dist
+engine/bench/fixtures
+**/__pycache__

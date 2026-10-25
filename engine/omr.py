@@ -4,13 +4,16 @@ Usage : python3 omr.py <source> <dossier_travail>
 Écrit <dossier_travail>/pages/page-NN.png et <dossier_travail>/partition.mxl|.musicxml,
 affiche « progress:omr:<0-100> » pendant la lecture et « partition:<fichier> » à la fin.
 """
-import os, pathlib, re, shutil, subprocess, sys
+import os, pathlib, re, shutil, subprocess, sys, time
 
 HERE = pathlib.Path(__file__).resolve().parent
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
     (p for p in ("/Applications/Audiveris.app/Contents/MacOS/Audiveris", "/opt/audiveris/bin/Audiveris") if os.path.exists(p)),
     "audiveris")
 TIMEOUT = int(os.environ.get("OMR_TIMEOUT_S", 15 * 60))
+# Hébergement à durée limitée (Vercel : 5 min par requête) : temps total accordé à la lecture des notes.
+# La seconde lecture (autre version de l'image) n'est tentée que s'il reste le temps d'en faire une autre.
+BUDGET = int(os.environ.get("OMR_BUDGET_S", 0)) or None
 
 
 # Windows : pas de fenêtre de console pour chaque programme lancé (Audiveris, étapes du moteur)
@@ -81,9 +84,14 @@ def main(src, work):
     print(f"pages:{len(pages)}", flush=True)
 
     omr, alt = work / "omr", work / "omr-alt"
+    started = time.monotonic()
     found = audiveris(pre / "clean.pdf", omr, len(pages))
+    first_took = time.monotonic() - started
     first = systems(omr)
-    if not found or broken(first):
+    in_budget = BUDGET is None or 2 * first_took < BUDGET
+    if not in_budget and found:
+        print("Seconde lecture écartée faute de temps", file=sys.stderr)
+    if (not found or broken(first)) and (in_budget or not found):
         # Seconde lecture avec l'autre version de l'image ; on garde celle qui regroupe le mieux les portées
         # (un vrai couplet en solo donne le même découpage dans les deux cas : on garde alors la première).
         print("Seconde lecture avec l’autre version de l’image", file=sys.stderr)

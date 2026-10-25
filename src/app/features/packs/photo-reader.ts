@@ -67,7 +67,7 @@ interface Page { file: File; url: string }
               </div>
               @if (isBusy(j)) {
                 <span class="bar"><span [style.width.%]="j.progress"></span></span>
-                <span class="hint">Vous pouvez fermer l’application : la lecture continue sur le serveur (1 à 3 minutes par page).</span>
+                <span class="hint">{{ j.direct ? 'Gardez l’application ouverte pendant la lecture (1 à 3 minutes par page).' : 'Vous pouvez fermer l’application : la lecture continue sur le serveur (1 à 3 minutes par page).' }}</span>
               }
               @if (j.error) { <span class="error">{{ j.error }}</span> }
               <div class="actions">

@@ -1,0 +1,62 @@
+/**
+ * Lecture directe (sans stockage) : pour un hébergement sans disque permanent, comme Vercel.
+ * Le téléphone envoie ses photos et reste connecté ; on lit la partition dans un dossier temporaire,
+ * on lui envoie la progression au fil de l'eau, puis le pack de répétition, et on efface tout.
+ */
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { config, engineCommand } from './config';
+import { run } from './jobs';
+import { buildPack } from './pack';
+import { UserError, type Manifest, type ScoreStatus } from './types';
+
+export interface DirectEvent { status: ScoreStatus; progress: number }
+
+export async function readDirect(
+  files: { name: string; ext: string; data: Buffer }[],
+  title: string,
+  onEvent: (e: DirectEvent) => void,
+): Promise<Buffer> {
+  const dir = path.join(os.tmpdir(), `pupitre-direct-${randomUUID()}`);
+  await fs.mkdir(dir, { recursive: true });
+  try {
+    let source = path.join(dir, `source${files[0].ext}`);
+    if (files.length === 1) {
+      await fs.writeFile(source, files[0].data);
+    } else {
+      source = path.join(dir, 'source');
+      await fs.mkdir(source);
+      for (const [i, f] of files.entries()) await fs.writeFile(path.join(source, `${String(i + 1).padStart(2, '0')}${f.ext}`), f.data);
+    }
+    onEvent({ status: 'preprocessing', progress: 5 });
+    let partition = '';
+    const [omrCmd, omrArgs] = engineCommand('omr', [source, dir]);
+    await run(omrCmd, omrArgs, {
+      label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2,
+      onLine: (line) => {
+        if (line.startsWith('pages:')) onEvent({ status: 'recognizing', progress: 20 });
+        const pct = /^progress:omr:(\d+)/.exec(line);
+        if (pct) onEvent({ status: 'recognizing', progress: 20 + Math.round((38 * Number(pct[1])) / 100) });
+        const done = /^partition:(.+)$/.exec(line);
+        if (done) partition = done[1];
+      },
+    });
+    if (!partition) throw new UserError('Aucune portée n’a été reconnue. Reprenez la photo : page bien à plat, en pleine lumière.');
+    onEvent({ status: 'rendering', progress: 62 });
+    const audio = path.join(dir, 'audio');
+    const [renderCmd, renderArgs] = engineCommand('render', [path.join(dir, partition), audio, '--timbre', 'choeur', '--omr', '--sans-travail']);
+    await run(renderCmd, renderArgs, {
+      label: 'La création de l’audio', timeoutMs: config.renderTimeoutMs,
+      onLine: (line) => {
+        const m = /(?:progress:voice:|Voix )(\d+)\/(\d+)/.exec(line);
+        if (m) onEvent({ status: 'rendering', progress: 62 + Math.round((33 * Number(m[1])) / Number(m[2])) });
+      },
+    });
+    const manifest = JSON.parse(await fs.readFile(path.join(audio, 'manifest.json'), 'utf8')) as Manifest;
+    return await buildPack(title, manifest, audio);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
