@@ -1,0 +1,28 @@
+# Serveur de lecture Pupitre sur un VPS Linux (x86_64), avec HTTPS automatique (Caddy + Let's Encrypt).
+#   DOMAINE=lecture.exemple.bf docker compose up -d
+services:
+  pupitre:
+    image: ghcr.io/palmdaniel/pupitre-serveur:latest
+    restart: unless-stopped
+    volumes:
+      - pupitre-donnees:/data
+    environment:
+      # origines de l'application mobile (Android : https://localhost, iOS : capacitor://localhost)
+      CORS_ORIGINS: https://localhost,capacitor://localhost
+      MAX_UPLOAD_MB: '30'
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAINE: ${DOMAINE:?Indiquez le nom de domaine, ex. DOMAINE=lecture.exemple.bf}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-donnees:/data
+    depends_on:
+      - pupitre
+volumes:
+  pupitre-donnees:
+  caddy-donnees:

@@ -11,6 +11,8 @@ Guide AIT pour fabriquer les installateurs, créer les licences et installer Pup
 | **Pupitre mobile** (Android, iOS à venir) | choristes | `Pupitre-x.y.z-android.apk` | gratuit : lecteur des packs |
 
 L'ordinateur lit les partitions (Audiveris + moteur Python embarqués) et crée les voix.
+Le téléphone peut aussi **photographier une partition** : la photo est lue par le serveur en ligne AIT
+(voir `deploy/LISEZ-MOI.md`), qui renvoie le pack de répétition ; il faut pour cela un **code d'accès** de chorale.
 Le téléphone ne lit pas les partitions : il ouvre les **packs de répétition** (`.pupitre`) exportés depuis l'ordinateur
 (bouton « Exporter le pack de répétition » sur la page d'une partition), envoyés par WhatsApp.
 
@@ -61,6 +63,16 @@ Autres commandes : `npm run licence -- liste` (registre), `npm run licence -- ve
 Renouvellement : même commande avec la même machine ; le client saisit la nouvelle licence par
 *Pupitre › Licence… › Saisir une nouvelle licence* (Windows : *Aide › Licence…*).
 Pupitre prévient 30 jours avant l'expiration. Changement d'ordinateur : nouvelle licence pour le nouvel identifiant.
+
+## Codes d'accès au serveur de lecture (photos depuis le téléphone)
+
+```bash
+npm run licence -- acces --client "Chorale Sainte Cécile" --duree 1a
+```
+
+Le code `PUPA1…` est valable pour toute la chorale (tous ses téléphones) jusqu'à sa date de fin. Les choristes le
+collent avec l'adresse du serveur dans *Mes chants › Réglages du serveur de lecture*. Registre :
+`~/.pupitre-ait/registre-acces.csv`. Les partitions de chaque chorale sont séparées sur le serveur.
 
 ### Le dossier `~/.pupitre-ait` — à sauvegarder
 

@@ -1,0 +1,12 @@
+node_modules
+dist
+data
+.angular
+.env
+.git
+desktop
+android
+ios
+engine/build
+engine/dist
+**/__pycache__

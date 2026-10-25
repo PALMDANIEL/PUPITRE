@@ -2,6 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { PackStore, PackSummary } from '../../core/packs';
+import { RemoteReader } from '../../core/remote';
 import { voiceColor } from '../../core/api';
 
 @Component({
@@ -14,6 +15,16 @@ import { voiceColor } from '../../core/api';
       <p class="lede">Ouvrez le fichier <b>.pupitre</b> envoyé par votre chef de chœur, puis choisissez votre voix.</p>
     </section>
 
+    <div class="actions">
+    <a class="import glass photo" routerLink="/photo">
+      <span class="import-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </span>
+      <span class="import-text">
+        <b>Photographier une partition</b>
+        <span>Lue en ligne par le serveur AIT, puis enregistrée ici{{ remote.busyCount() ? ' · ' + remote.busyCount() + ' lecture(s) en cours' : '' }}</span>
+      </span>
+    </a>
     <label class="import glass" [class.over]="over()" [class.busy]="store.importing()"
            (dragover)="$event.preventDefault(); over.set(true)" (dragleave)="over.set(false)" (drop)="drop($event)">
       <input class="visually-hidden" type="file" multiple [disabled]="store.importing()" (change)="pick($event)">
@@ -22,9 +33,11 @@ import { voiceColor } from '../../core/api';
       </span>
       <span class="import-text">
         <b>{{ store.importing() ? 'Import en cours…' : 'Ouvrir un pack .pupitre' }}</b>
-        <span>Reçu par WhatsApp, e-mail ou clé USB · enregistré dans le téléphone</span>
+        <span>Reçu par WhatsApp, e-mail ou clé USB · sans Internet</span>
       </span>
     </label>
+    </div>
+    <p class="settings"><a routerLink="/reglages">Réglages du serveur de lecture</a></p>
     @if (store.error()) { <p class="error banner" role="alert">{{ store.error() }}</p> }
 
     <section class="list" aria-labelledby="t">
@@ -65,6 +78,10 @@ import { voiceColor } from '../../core/api';
     .intro { display: grid; gap: .8rem; padding: clamp(1.5rem, 6vw, 3.5rem) 0 1.5rem; max-width: 40rem; }
     .intro h1 { font-size: clamp(2rem, 7vw, 3.2rem); }
     .lede { color: var(--ink-soft); font-size: 1.05rem; }
+    .actions { display: grid; gap: .8rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .photo { text-decoration: none; }
+    .settings { margin-top: .7rem; font-size: .85rem; }
+    .settings a { color: var(--ink-soft); text-underline-offset: 3px; }
     .import { display: flex; align-items: center; gap: 1rem; padding: 1.1rem 1.25rem; cursor: pointer; transition: border-color .2s, box-shadow .2s; }
     .import:hover, .import.over { border-color: var(--accent-2); box-shadow: var(--glow); }
     .import.busy { cursor: progress; opacity: .8; }
@@ -98,11 +115,15 @@ import { voiceColor } from '../../core/api';
 })
 export class PackLibrary {
   protected readonly store = inject(PackStore);
+  protected readonly remote = inject(RemoteReader);
   private readonly router = inject(Router);
   protected readonly over = signal(false);
   protected readonly color = voiceColor;
 
-  constructor() { void this.store.load(); }
+  constructor() {
+    void this.store.load();
+    void this.remote.follow(); // reprend les lectures commencées avant la fermeture de l'application
+  }
 
   protected pick(e: Event) {
     const input = e.target as HTMLInputElement;

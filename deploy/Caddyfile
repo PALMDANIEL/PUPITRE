@@ -1,0 +1,4 @@
+{$DOMAINE} {
+	encode gzip
+	reverse_proxy pupitre:3000
+}

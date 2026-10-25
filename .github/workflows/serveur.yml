@@ -1,0 +1,50 @@
+# Serveur de lecture en ligne (Docker) : construit l'image, la teste en lisant une vraie partition,
+# puis la publie sur ghcr.io/palmdaniel/pupitre-serveur (à chaque envoi sur main et à chaque version v*).
+name: Serveur
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Image Docker
+        run: docker build -t pupitre-serveur .
+      - name: Essai réel (code d'accès d'essai, lecture d'un PDF par Audiveris)
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          CODE=$(npx tsx .github/scripts/code-essai.ts "$RUNNER_TEMP/cle-essai.pem")
+          docker run -d --name essai -p 3000:3000 -v "$RUNNER_TEMP/cle-essai.pem:/cle.pem:ro" -e ACCESS_PUBLIC_KEY_FILE=/cle.pem pupitre-serveur
+          for i in $(seq 1 60); do curl -fs localhost:3000/api/health && break; sleep 2; done; echo
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/api/scores)" = 401
+          ID=$(curl -fs -H "Authorization: Pupitre $CODE" -F "file=@engine/bench/fixtures/choral-bwv269.pdf" localhost:3000/api/scores | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          for i in $(seq 1 150); do
+            S=$(curl -fs -H "Authorization: Pupitre $CODE" "localhost:3000/api/scores/$ID")
+            echo "$S" | grep -qE '"status":"(ready|failed)"' && break; sleep 4
+          done
+          echo "$S" | python3 -c "import sys,json; x=json.load(sys.stdin); print(x['status'], x['error'], [(v['name'], v['range']) for v in (x['manifest'] or {}).get('voices', [])])"
+          echo "$S" | grep -q '"status":"ready"' || { docker logs essai | tail -60; echo "::error title=Serveur::la lecture du PDF a échoué"; exit 1; }
+          curl -fs -o pack.pupitre -H "Authorization: Pupitre $CODE" "localhost:3000/api/scores/$ID/pack" && unzip -l pack.pupitre
+      - name: Publication (ghcr.io)
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMG=ghcr.io/palmdaniel/pupitre-serveur
+          docker tag pupitre-serveur $IMG:latest
+          docker push $IMG:latest
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then docker tag pupitre-serveur "$IMG:${GITHUB_REF_NAME#v}"; docker push "$IMG:${GITHUB_REF_NAME#v}"; fi

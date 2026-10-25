@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Pupitre utilise l’appareil photo pour photographier une partition et en lire les notes.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Pupitre ouvre vos photos pour lire une partition déjà photographiée.</string>
   <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
