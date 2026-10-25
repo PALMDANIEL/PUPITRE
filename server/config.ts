@@ -34,6 +34,10 @@ export const config = {
   python: env.PYTHON_BIN ?? path.join(home, 'pupitre', 'engine', '.venv', 'bin', 'python3'),
   audiveris: env.AUDIVERIS_BIN ?? (fs.existsSync(macAudiveris) ? macAudiveris : '/opt/audiveris/bin/Audiveris'),
   musescore: findMuseScore(),
+  /** Serveur de lecture en ligne AIT : codes d'accès exigés, partitions séparées par chorale, CORS pour l'app mobile. */
+  online: env.ACCES_EN_LIGNE === '1',
+  accessPublicKey: env.ACCESS_PUBLIC_KEY_FILE ?? path.join(root, 'licence', 'cle-publique.pem'),
+  corsOrigins: (env.CORS_ORIGINS ?? 'https://localhost,capacitor://localhost,http://localhost').split(',').map((o) => o.trim()).filter(Boolean),
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),
   omrTimeoutMs: Number(env.OMR_TIMEOUT_MS ?? 15 * 60_000),
   renderTimeoutMs: Number(env.RENDER_TIMEOUT_MS ?? 8 * 60_000),
@@ -63,5 +67,6 @@ export function checkSetup(): string[] {
   if (!fs.existsSync(config.audiveris)) problems.push(`Audiveris introuvable : ${config.audiveris}`);
   if (!process.env.SOUNDFONT) problems.push('Banque de sons introuvable : ~/soundfonts/GeneralUser-GS.sf2');
   if (!fs.existsSync(path.join(config.webDir, 'index.html'))) problems.push('Interface non compilée : lancez « npm start »');
+  if (config.online && !fs.existsSync(config.accessPublicKey)) problems.push(`Clé publique des codes d’accès introuvable : ${config.accessPublicKey}`);
   return problems;
 }

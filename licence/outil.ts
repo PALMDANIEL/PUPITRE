@@ -6,6 +6,8 @@
  *        --duree : 1a, 2a, 6m, 30j… ou illimitee        options : --contact "…" --debut AAAA-MM-JJ
  *   npm run licence -- verifier <fichier .licence ou texte PUP1…> [--machine …]
  *   npm run licence -- liste                     registre des licences émises
+ *   npm run licence -- acces --client "Chorale Sainte Cécile" --duree 1a
+ *        code d'accès au serveur de lecture en ligne (photo de partition depuis le téléphone)
  *   npm run licence -- machine                   identifiant de cet ordinateur
  *
  * Clé privée et registre : ~/.pupitre-ait (ou PUPITRE_AIT_DIR). Sauvegardez ce dossier :
@@ -14,6 +16,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { signAccess, type AccessPayload } from './acces';
 import { checkLicence, decodeLicence, frDate, generateKeys, signLicence, type LicencePayload } from './core';
 import { machineId, normalizeMachineId } from './machine';
 
@@ -22,6 +25,8 @@ const PRIVATE = path.join(HOME, 'licence-privee.pem');
 const PUBLIC = path.join(__dirname, 'cle-publique.pem');
 const ISSUED = path.join(HOME, 'licences');
 const REGISTRY = path.join(HOME, 'registre.csv');
+const ACCESS_DIR = path.join(HOME, 'acces');
+const ACCESS_REGISTRY = path.join(HOME, 'registre-acces.csv');
 
 function fail(msg: string): never {
   console.error(`\n  ✗ ${msg}\n`);
@@ -54,10 +59,10 @@ function addDuration(start: string, duree: string): string | null {
 
 const csv = (v: string) => `"${v.replace(/"/g, '""')}"`;
 
-function nextId(year: string): string {
-  const lines = fs.existsSync(REGISTRY) ? fs.readFileSync(REGISTRY, 'utf8').split('\n') : [];
-  const n = lines.filter((l) => l.startsWith(`"AIT-${year}-`)).length + 1;
-  return `AIT-${year}-${String(n).padStart(4, '0')}`;
+function nextId(year: string, prefix = 'AIT', registry = REGISTRY): string {
+  const lines = fs.existsSync(registry) ? fs.readFileSync(registry, 'utf8').split('\n') : [];
+  const n = lines.filter((l) => l.startsWith(`"${prefix}-${year}-`)).length + 1;
+  return `${prefix}-${year}-${String(n).padStart(4, '0')}`;
 }
 
 function describe(lic: LicencePayload) {
@@ -122,6 +127,28 @@ switch (command) {
     } catch (e) {
       fail((e as Error).message);
     }
+    break;
+  }
+  case 'acces': {
+    if (!fs.existsSync(PRIVATE)) fail('Aucune clé privée. Lancez d’abord : npm run licence -- init');
+    const client = named['client'];
+    if (!client || client === 'oui') fail('Indiquez la chorale : --client "Chorale Sainte Cécile"');
+    const issued = named['debut'] ?? new Date().toISOString().slice(0, 10);
+    const expires = addDuration(issued, named['duree'] ?? fail('Indiquez la durée : --duree 1a, 6m, 30j ou illimitee'));
+    const payload: AccessPayload = {
+      id: nextId(issued.slice(0, 4), 'ACC', ACCESS_REGISTRY), client, issued, expires, kind: 'acces',
+      ...(named['contact'] && named['contact'] !== 'oui' ? { contact: named['contact'] } : {}),
+    };
+    const text = signAccess(payload, fs.readFileSync(PRIVATE, 'utf8'));
+    fs.mkdirSync(ACCESS_DIR, { recursive: true });
+    const file = path.join(ACCESS_DIR, `${payload.id}.txt`);
+    fs.writeFileSync(file, `${text}\n`);
+    if (!fs.existsSync(ACCESS_REGISTRY)) fs.writeFileSync(ACCESS_REGISTRY, 'numero,client,contact,emis,expire\n');
+    fs.appendFileSync(ACCESS_REGISTRY, [payload.id, client, payload.contact ?? '', issued, expires ?? 'illimité'].map(csv).join(',') + '\n');
+    console.log(`\n  ✓ Code d’accès ${payload.id} pour ${client}, valable ${expires ? `jusqu’au ${frDate(expires)} inclus` : 'sans limite'}`);
+    console.log('  À envoyer aux choristes (WhatsApp) : ils le collent dans Pupitre mobile › Réglages.\n');
+    console.log(text);
+    console.log(`\n  (copie : ${file})\n`);
     break;
   }
   case 'liste': {

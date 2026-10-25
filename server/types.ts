@@ -21,6 +21,8 @@ export interface ScoreMeta {
   manifest: Manifest | null;
   revision: number;
   createdAt: string; updatedAt: string;
+  /** Serveur en ligne : code d'accès (ACC-…) de la chorale propriétaire ; null en local */
+  owner?: string | null;
 }
 
 export interface Job { id: string; kind: 'process' | 'render' }

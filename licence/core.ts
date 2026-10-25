@@ -32,25 +32,34 @@ export function generateKeys(): { privatePem: string; publicPem: string } {
   };
 }
 
-export function signLicence(payload: LicencePayload, privatePem: string): string {
-  const body = `${PREFIX}.${b64(Buffer.from(JSON.stringify(payload)))}`;
+/** Signe un contenu JSON sous la forme « <préfixe>.<contenu>.<signature> » (licences PUP1, codes d'accès PUPA1). */
+export function signToken(prefix: string, payload: object, privatePem: string): string {
+  const body = `${prefix}.${b64(Buffer.from(JSON.stringify(payload)))}`;
   return `${body}.${b64(sign(null, Buffer.from(body), createPrivateKey(privatePem)))}`;
 }
 
-/** Lit une licence collée par l'utilisateur (espaces et retours à la ligne tolérés). */
-export function decodeLicence(text: string, publicPem: string): LicencePayload {
+/** Lit un texte signé collé par l'utilisateur (espaces et retours à la ligne tolérés). */
+export function decodeToken<T>(prefix: string, text: string, publicPem: string, what: string): T {
   const clean = text.replace(/\s+/g, '');
   const parts = clean.split('.');
-  if (parts.length !== 3 || parts[0] !== PREFIX) throw new LicenceError('format', 'Ce texte n’est pas une licence Pupitre.');
+  if (parts.length !== 3 || parts[0] !== prefix) throw new LicenceError('format', `Ce texte n’est pas ${what}.`);
   const body = `${parts[0]}.${parts[1]}`;
   let ok = false;
   try { ok = verify(null, Buffer.from(body), createPublicKey(publicPem), unb64(parts[2])); } catch { ok = false; }
-  if (!ok) throw new LicenceError('signature', 'Cette licence n’est pas valide (elle a été modifiée ou ne vient pas d’AIT).');
+  if (!ok) throw new LicenceError('signature', `Ce texte n’est pas valide (il a été modifié ou ne vient pas d’AIT).`);
   try {
-    return JSON.parse(unb64(parts[1]).toString('utf8')) as LicencePayload;
+    return JSON.parse(unb64(parts[1]).toString('utf8')) as T;
   } catch {
-    throw new LicenceError('format', 'Ce texte n’est pas une licence Pupitre.');
+    throw new LicenceError('format', `Ce texte n’est pas ${what}.`);
   }
+}
+
+export function signLicence(payload: LicencePayload, privatePem: string): string {
+  return signToken(PREFIX, payload, privatePem);
+}
+
+export function decodeLicence(text: string, publicPem: string): LicencePayload {
+  return decodeToken<LicencePayload>(PREFIX, text, publicPem, 'une licence Pupitre');
 }
 
 export type LicenceProblem = 'format' | 'signature' | 'machine' | 'expired' | 'clock' | 'missing';

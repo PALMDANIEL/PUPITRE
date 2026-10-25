@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import multer from 'multer';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { checkSetup, config } from './config';
@@ -9,6 +10,7 @@ import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, UserError, type ScoreMeta, type SourceKind, type Timbre } from './types';
 import { zip } from './zip';
+import { checkAccess, type AccessPayload } from '../licence/acces';
 
 const KINDS: Record<string, SourceKind> = {
   '.pdf': 'pdf',
@@ -28,9 +30,14 @@ const titleFrom = (name: string) =>
 function fail(status: number, message: string): never {
   throw Object.assign(new UserError(message), { status });
 }
-async function getScore(id: unknown): Promise<ScoreMeta> {
+/** Chorale à l'origine de la requête (serveur en ligne) ; null en local. */
+const ownerOf = (res: Response): string | null => (res.locals['owner'] as string | undefined) ?? null;
+
+async function getScore(id: unknown, res: Response): Promise<ScoreMeta> {
   const meta = isId(id) ? await readMeta(id) : null;
-  return meta ?? fail(404, 'Cette partition n’existe pas ou a été supprimée.');
+  // En ligne, une chorale ne voit jamais les partitions d'une autre : même réponse que si elle n'existait pas
+  if (!meta || (config.online && (meta.owner ?? null) !== ownerOf(res))) fail(404, 'Cette partition n’existe pas ou a été supprimée.');
+  return meta;
 }
 const assertIdle = (m: ScoreMeta) => { if (BUSY.includes(m.status)) fail(409, 'Un traitement est déjà en cours pour cette partition.'); };
 
@@ -38,9 +45,49 @@ const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '100kb' }));
 
-app.get('/api/health', (_req, res) => { res.json({ ok: true, problems: checkSetup() }); });
-app.get('/api/scores', async (_req, res) => { res.json(await listMetas()); });
-app.get('/api/scores/:id', async (req, res) => { res.json(await getScore(req.params.id)); });
+if (config.online) {
+  const publicKey = fsSync.readFileSync(config.accessPublicKey, 'utf8');
+  // Application mobile (Capacitor) : autre origine que le serveur
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && config.corsOrigins.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    }
+    if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+    next();
+  });
+  // Code d'accès de la chorale : en-tête « Authorization: Pupitre PUPA1… »
+  app.use(['/api', '/files'], (req, res, next) => {
+    if (req.path === '/health') return next();
+    const header = req.headers.authorization ?? '';
+    const token = header.startsWith('Pupitre ') ? header.slice(8) : '';
+    if (!token) { res.status(401).json({ error: 'Code d’accès manquant. Saisissez le code de votre chorale dans les réglages.' }); return; }
+    try {
+      const acc = checkAccess(token, publicKey);
+      res.locals['owner'] = acc.id;
+      res.locals['access'] = acc;
+      next();
+    } catch (e) {
+      res.status(401).json({ error: (e as Error).message });
+    }
+  });
+}
+
+app.get('/api/health', (_req, res) => { res.json({ ok: true, online: config.online, problems: checkSetup() }); });
+/** Réglages de l'application mobile : vérifie le code et affiche la chorale. */
+app.get('/api/acces', (_req, res) => {
+  const acc = res.locals['access'] as AccessPayload | undefined;
+  res.json(acc ? { client: acc.client, id: acc.id, expires: acc.expires } : { client: null, id: null, expires: null });
+});
+app.get('/api/scores', async (_req, res) => {
+  const owner = ownerOf(res);
+  res.json((await listMetas()).filter((m) => !config.online || (m.owner ?? null) === owner));
+});
+app.get('/api/scores/:id', async (req, res) => { res.json(await getScore(req.params.id, res)); });
 
 app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
@@ -69,7 +116,7 @@ app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
   }
   const now = new Date().toISOString();
   const meta = await writeMeta({
-    id, title: titleFrom(originalName), originalName, source, sourceFile, partitionFile: null, corrected: false, pages: [],
+    id, title: titleFrom(originalName), originalName, source, sourceFile, partitionFile: null, corrected: false, pages: [], owner: ownerOf(res),
     status: 'queued', progress: 0, error: null, tempo: null, timbre: 'choeur', manifest: null, revision: 0,
     createdAt: now, updatedAt: now,
   });
@@ -78,14 +125,14 @@ app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
 });
 
 app.patch('/api/scores/:id', async (req, res) => {
-  const meta = await getScore(req.params.id);
+  const meta = await getScore(req.params.id, res);
   const title = typeof req.body?.title === 'string' ? req.body.title.trim().slice(0, 140) : '';
   if (!title) fail(400, 'Le titre ne peut pas être vide.');
   res.json(await patchMeta(meta.id, { title }));
 });
 
 app.post('/api/scores/:id/render', async (req, res) => {
-  const meta = await getScore(req.params.id);
+  const meta = await getScore(req.params.id, res);
   assertIdle(meta);
   if (!meta.partitionFile) fail(409, 'La partition n’a pas encore été lue.');
   const tempo = req.body?.tempo == null ? meta.tempo : Number(req.body.tempo);
@@ -97,7 +144,7 @@ app.post('/api/scores/:id/render', async (req, res) => {
 });
 
 app.post('/api/scores/:id/retry', async (req, res) => {
-  const meta = await getScore(req.params.id);
+  const meta = await getScore(req.params.id, res);
   assertIdle(meta);
   const next = await patchMeta(meta.id, { status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: meta.partitionFile ? 'render' : 'process' });
@@ -105,7 +152,7 @@ app.post('/api/scores/:id/retry', async (req, res) => {
 });
 
 app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => {
-  const meta = await getScore(req.params.id);
+  const meta = await getScore(req.params.id, res);
   assertIdle(meta);
   const file = req.file ?? fail(400, 'Aucun fichier reçu.');
   const ext = path.extname(utf8Name(file.originalname)).toLowerCase();
@@ -118,7 +165,7 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
 });
 
 app.delete('/api/scores/:id', async (req, res) => {
-  const meta = await getScore(req.params.id);
+  const meta = await getScore(req.params.id, res);
   assertIdle(meta);
   await removeScore(meta.id);
   res.status(204).end();
@@ -126,7 +173,7 @@ app.delete('/api/scores/:id', async (req, res) => {
 
 /** Pack de répétition (.pupitre) : partition + une piste par voix, à envoyer aux choristes pour l'application mobile. */
 app.get('/api/scores/:id/pack', async (req, res) => {
-  const meta = await getScore(req.params.id);
+  const meta = await getScore(req.params.id, res);
   const m = meta.manifest ?? fail(409, 'L’audio de cette partition n’est pas encore prêt.');
   const audio = path.join(dirOf(meta.id), 'audio');
   const files = [m.score, m.tutti, ...m.voices.map((v) => v.stem)];
@@ -146,6 +193,7 @@ app.get('/api/scores/:id/pack', async (req, res) => {
 app.get('/files/:id/:folder/:file', async (req, res) => {
   const { id, folder, file } = req.params;
   if (!isId(id) || !['audio', 'pages'].includes(folder) || !/^[\w.-]+$/.test(file)) fail(404, 'Fichier introuvable.');
+  if (config.online) await getScore(id, res);
   const download = req.query['download'] !== undefined;
   res.sendFile(file, {
     root: path.join(dirOf(id), folder), dotfiles: 'deny', maxAge: '7d',
