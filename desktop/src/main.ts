@@ -10,9 +10,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { daysLeft, frDate } from '../../licence/core';
 import { CREDITS } from '../../src/app/core/credits';
-import { currentStatus, install, type LicenceStatus } from './licence-state';
+import { checkIn, currentStatus, install, type LicenceStatus } from './licence-state';
 
 const DEV = !app.isPackaged;
+// Développement et tests : données de Pupitre (licence, réglages) dans un autre dossier
+if (DEV && process.env.PUPITRE_DONNEES) app.setPath('userData', process.env.PUPITRE_DONNEES);
 const REPO = path.resolve(__dirname, '..', '..');
 const RES = DEV ? REPO : process.resourcesPath;
 const BG = '#050918';
@@ -145,15 +147,22 @@ function publishLicence(status = currentStatus()) {
   const l = status.licence;
   process.env.PUPITRE_LICENCE = JSON.stringify({
     id: l.id, client: l.client, issued: l.issued, expires: l.expires, machine: status.machine, daysLeft: daysLeft(l, new Date()),
+    lastCheck: status.lastCheck, checkDeadline: status.checkDeadline,
   });
 }
 
+let serverUrl = '';
+
 async function openMain() {
-  configureEnvironment();
   publishLicence();
-  const { start } = await import('../../server/main');
-  const { url } = await start({ port: 0, host: '127.0.0.1' });
-  serverStarted = true;
+  if (!serverStarted) {
+    configureEnvironment();
+    const { start } = await import('../../server/main');
+    serverUrl = (await start({ port: 0, host: '127.0.0.1' })).url;
+    serverStarted = true;
+  }
+  if (mainWindow) { mainWindow.focus(); return; }
+  const url = serverUrl;
   mainWindow = new BrowserWindow({
     width: 1320, height: 880, minWidth: 380, minHeight: 600, backgroundColor: BG, title: 'Pupitre', show: false,
     webPreferences: { contextIsolation: true, sandbox: true },
@@ -184,21 +193,41 @@ ipcMain.handle('licence:open-file', async () => {
   });
   return canceled || !filePaths[0] ? null : fs.readFileSync(filePaths[0], 'utf8');
 });
-ipcMain.handle('licence:install', async (_e, text: string) => {
-  const status = install(String(text ?? ''));
+async function afterCheck(status: LicenceStatus) {
   if (status.ok) {
     publishLicence(status);
     mainWindow?.webContents.reload();
     activation?.close();
-    if (!serverStarted) await openMain();
+    await openMain();
   }
   return status;
+}
+
+ipcMain.handle('licence:install', async (_e, text: string) => {
+  const installed = install(String(text ?? ''));
+  return afterCheck(installed.ok ? await checkIn() : installed);
 });
+ipcMain.handle('licence:retry', async () => afterCheck(await checkIn()));
+
+/** Vérification auprès d'AIT toutes les 10 minutes : « en ligne » au tableau de bord, désactivation appliquée. */
+function watchLicence() {
+  setInterval(async () => {
+    const status = await checkIn();
+    if (status.ok) { publishLicence(status); return; }
+    if (status.problem === 'revoked' && mainWindow) {
+      publishLicence(status);
+      openActivation(status);
+      mainWindow.close();
+      void dialog.showMessageBox({ type: 'warning', title: 'Licence désactivée', message: 'Pupitre a été désactivé par AIT sur cet ordinateur.', detail: status.message });
+    }
+  }, 10 * 60_000);
+}
 ipcMain.handle('credits', () => CREDITS);
 
 app.whenReady().then(async () => {
   buildMenu();
-  const status = currentStatus();
+  watchLicence();
+  const status = await checkIn(); // quelques secondes au plus ; sans réseau, la licence installée suffit (30 jours)
   if (!status.ok) return openActivation(status);
   await openMain();
   const left = daysLeft(status.licence, new Date());

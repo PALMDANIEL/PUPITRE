@@ -52,6 +52,7 @@
   <div>
     <h1>Activer Pupitre sur cet ordinateur</h1>
     <p id="reason" class="reason"></p>
+    <button class="primary" id="retry" type="button" hidden style="margin-top:12px">Réessayer la vérification</button>
   </div>
 
   <section class="card">
@@ -81,6 +82,18 @@
     const status = JSON.parse(new URLSearchParams(location.search).get('status') || '{}');
     $('machine').textContent = status.machine || '';
     if (status.problem && status.problem !== 'missing') $('reason').textContent = status.message;
+    if (status.problem === 'offline' || status.problem === 'revoked') {
+      $('retry').hidden = false;
+      if (status.problem === 'offline') document.querySelector('h1').textContent = 'Vérification de la licence';
+    }
+    $('retry').onclick = async () => {
+      $('retry').disabled = true; $('retry').textContent = 'Vérification…';
+      const res = await window.pupitre.retry();
+      $('retry').disabled = false; $('retry').textContent = 'Réessayer la vérification';
+      const msg = $('msg');
+      if (res.ok) { msg.className = 'message ok'; msg.textContent = 'Licence vérifiée. Ouverture de Pupitre…'; }
+      else { msg.className = 'message err'; msg.textContent = res.problem === 'offline' ? 'Toujours pas de connexion à Internet. Vérifiez le Wi-Fi ou les données mobiles, puis réessayez.' : res.message; }
+    };
     window.pupitre.credits().then((c) => {
       $('contact').innerHTML = `Contact : <b>${c.company}</b> · ${c.companyLong} · ${c.city}, ${c.country}<br>Téléphone : <b>${c.phones.map((p) => p.label).join('</b> · <b>')}</b>`;
     });
