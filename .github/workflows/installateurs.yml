@@ -142,5 +142,6 @@ jobs:
             et code d'accès de la chorale, pour photographier une partition.
 
             Une licence AIT est nécessaire au premier lancement de la version ordinateur.
+            L'ordinateur vérifie sa licence auprès d'AIT quand il a Internet ; il doit se connecter au moins une fois tous les 30 jours.
             Mac : au premier lancement, si macOS refuse d'ouvrir Pupitre, *Réglages Système › Confidentialité et sécurité › Ouvrir quand même*.
             Windows : « Windows a protégé votre ordinateur » › *Informations complémentaires* › *Exécuter quand même*.
