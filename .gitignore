@@ -11,3 +11,5 @@ desktop/release
 desktop/vendor
 engine/build
 engine/dist
+.vercel
+.env*

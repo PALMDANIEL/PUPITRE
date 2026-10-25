@@ -11,12 +11,17 @@ RUN npx ng build
 FROM ubuntu:24.04
 ARG AUDIVERIS_VERSION=5.11.0
 ENV DEBIAN_FRONTEND=noninteractive
+# Audiveris (paquet Linux) veut ajouter une icône au menu du bureau : sans bureau sur un serveur, on lui prépare
+# le dossier attendu, et s'il échoue malgré tout on ignore ce script d'icône (sans effet sur la lecture).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg python3 python3-venv libglib2.0-0 fontconfig fonts-dejavu-core \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && curl -fsSL -o /tmp/audiveris.deb "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/Audiveris-${AUDIVERIS_VERSION}-ubuntu24.04-x86_64.deb" \
- && apt-get install -y --no-install-recommends /tmp/audiveris.deb \
+ && mkdir -p /etc/xdg/menus/applications-merged /usr/share/applications /usr/share/desktop-directories \
+ && { apt-get install -y --no-install-recommends /tmp/audiveris.deb \
+      || { rm -f /var/lib/dpkg/info/audiveris.postinst && dpkg --configure -a; }; } \
+ && test -x /opt/audiveris/bin/Audiveris \
  && rm -rf /tmp/audiveris.deb /var/lib/apt/lists/*
 
 # Moteur Python (liste complète figée : --no-deps évite PyAudio, inutile)

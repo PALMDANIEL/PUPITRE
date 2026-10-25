@@ -12,3 +12,5 @@ engine/build
 engine/dist
 engine/bench/fixtures
 **/__pycache__
+.env.local
+.vercel
