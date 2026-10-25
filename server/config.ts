@@ -39,6 +39,8 @@ export const config = {
   /** Hébergement sans disque permanent (Vercel) : l'application mobile utilise la lecture directe /api/lire. */
   direct: env.LECTURE_DIRECTE === '1',
   accessPublicKey: env.ACCESS_PUBLIC_KEY_FILE ?? path.join(root, 'licence', 'cle-publique.pem'),
+  /** Registre d'administration (en ligne) : base PostgreSQL, par exemple Neon via Vercel (DATABASE_URL). */
+  adminDatabaseUrl: env.ADMIN_DATABASE_URL ?? env.DATABASE_URL ?? null,
   corsOrigins: (env.CORS_ORIGINS ?? 'https://localhost,capacitor://localhost,http://localhost').split(',').map((o) => o.trim()).filter(Boolean),
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),
   omrTimeoutMs: Number(env.OMR_TIMEOUT_MS ?? 15 * 60_000),

@@ -3,8 +3,9 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AitStore, IssuedItem, readQrPhoto } from '../../core/ait';
 import { frDateShort } from '../../core/dates';
+import { AitDashboard } from './ait-dashboard';
 
-type Tab = 'licence' | 'acces' | 'registre';
+type Tab = 'tableau' | 'licence' | 'acces' | 'registre';
 const SERVER = 'https://pupitre-lecture.vercel.app';
 const DUREES = [
   { v: '1a', l: '1 an' }, { v: '2a', l: '2 ans' }, { v: '6m', l: '6 mois' }, { v: '3m', l: '3 mois' },
@@ -13,7 +14,7 @@ const DUREES = [
 
 @Component({
   selector: 'app-ait-page',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, AitDashboard],
   template: `
     <a routerLink="/a-propos" class="back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>À propos</a>
     <section class="head">
@@ -52,12 +53,14 @@ const DUREES = [
       </form>
     } @else {
       <div class="tabs" role="tablist">
+        <button role="tab" type="button" [attr.aria-selected]="tab() === 'tableau'" (click)="go('tableau')">Tableau de bord</button>
         <button role="tab" type="button" [attr.aria-selected]="tab() === 'licence'" (click)="go('licence')">Licence d’ordinateur</button>
         <button role="tab" type="button" [attr.aria-selected]="tab() === 'acces'" (click)="go('acces')">Code de chorale</button>
         <button role="tab" type="button" [attr.aria-selected]="tab() === 'registre'" (click)="go('registre')">Registre ({{ ait.registry().length }})</button>
         <button type="button" class="lock" (click)="ait.lock()" title="Verrouiller">🔒</button>
       </div>
 
+      @if (tab() === 'tableau') { <app-ait-dashboard /> }
       @if (tab() === 'licence') {
         <form class="glass box" (ngSubmit)="createLicence()">
           <label><span>Client (chorale)</span><input name="client" [(ngModel)]="client" placeholder="Chorale Sainte Cécile" required></label>
@@ -154,7 +157,7 @@ export class AitPage {
   protected readonly durees = DUREES;
   protected readonly server = SERVER;
   protected readonly date = frDateShort;
-  protected readonly tab = signal<Tab>('licence');
+  protected readonly tab = signal<Tab>('tableau');
   protected readonly qr = signal<string | null>(null);
   protected readonly made = signal<IssuedItem | null>(null);
   protected readonly busy = signal(false);

@@ -12,6 +12,12 @@ import { BUSY, UserError, type ScoreMeta, type SourceKind, type Timbre } from '.
 import { buildPack, packFileName } from './pack';
 import { readDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
+import { checkAdmin } from '../licence/admin';
+import { checkLicence, decodeLicence, type LicencePayload } from '../licence/core';
+import * as admin from './admin';
+
+const PHONE = '00226 77 41 91 06';
+const clientIp = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim() || undefined;
 
 const KINDS: Record<string, SourceKind> = {
   '.pdf': 'pdf',
@@ -62,19 +68,101 @@ if (config.online) {
     next();
   });
   // Code d'accès de la chorale : en-tête « Authorization: Pupitre PUPA1… »
-  app.use(['/api', '/files'], (req, res, next) => {
-    if (req.path === '/health') return next();
+  app.use(['/api', '/files'], async (req, res, next) => {
+    // signalement des ordinateurs et administration : leur propre vérification (licence, jeton AIT)
+    if (req.path === '/health' || req.path === '/checkin' || req.path.startsWith('/admin')) return next();
     const header = req.headers.authorization ?? '';
     const token = header.startsWith('Pupitre ') ? header.slice(8) : '';
     if (!token) { res.status(401).json({ error: 'Code d’accès manquant. Saisissez le code de votre chorale dans les réglages.' }); return; }
+    let acc: AccessPayload;
     try {
-      const acc = checkAccess(token, publicKey);
-      res.locals['owner'] = acc.id;
-      res.locals['access'] = acc;
-      next();
+      acc = checkAccess(token, publicKey);
     } catch (e) {
       res.status(401).json({ error: (e as Error).message });
+      return;
     }
+    try {
+      await admin.register('acces', acc);
+      const st = await admin.statusOf(acc.id);
+      if (st?.status === 'revoked') {
+        res.status(401).json({ error: `Le code de « ${acc.client} » a été désactivé par AIT${st.reason ? ` (${st.reason})` : ''}. Contactez AIT au ${PHONE}.` });
+        return;
+      }
+      void admin.touch(acc.id, { ip: clientIp(req), version: String(req.headers['x-pupitre-version'] ?? '') || undefined }).catch(() => undefined);
+    } catch (e) {
+      console.error('Registre d’administration indisponible :', (e as Error).message); // la lecture continue
+    }
+    res.locals['owner'] = acc.id;
+    res.locals['access'] = acc;
+    next();
+  });
+
+  // Signalement des ordinateurs (application de bureau) : licence vérifiée, connexion notée, état renvoyé.
+  app.post('/api/checkin', async (req, res) => {
+    const { licence, machine, version, os } = (req.body ?? {}) as Record<string, string>;
+    let lic: LicencePayload;
+    try {
+      lic = checkLicence(String(licence ?? ''), publicKey, String(machine ?? ''), new Date());
+    } catch (e) {
+      res.json({ status: 'invalid', message: (e as Error).message, serverTime: new Date().toISOString() });
+      return;
+    }
+    let status: 'active' | 'revoked' = 'active';
+    let message: string | null = null;
+    try {
+      await admin.register('licence', lic);
+      await admin.touch(lic.id, { version, os, ip: clientIp(req) });
+      const st = await admin.statusOf(lic.id);
+      if (st?.status === 'revoked') {
+        status = 'revoked';
+        message = `Cette licence (${lic.id}) a été désactivée par AIT${st.reason ? ` : ${st.reason}` : ''}. Contactez AIT au ${PHONE}.`;
+      }
+    } catch (e) {
+      console.error('Registre d’administration indisponible :', (e as Error).message);
+    }
+    res.json({ status, message, serverTime: new Date().toISOString(), managed: admin.adminEnabled() });
+  });
+
+  // Administration AIT : jeton signé par la clé AIT (Espace AIT du téléphone), valable 10 minutes.
+  app.use('/api/admin', (req, res, next) => {
+    const header = req.headers.authorization ?? '';
+    try {
+      checkAdmin(header.startsWith('PupitreAdmin ') ? header.slice(13) : '', publicKey);
+    } catch (e) {
+      res.status(401).json({ error: (e as Error).message });
+      return;
+    }
+    if (!admin.adminEnabled()) { res.status(503).json({ error: 'Aucune base de données reliée au serveur : le tableau de bord n’est pas disponible.' }); return; }
+    next();
+  });
+  app.get('/api/admin/apercu', async (_req, res) => { res.json(await admin.overview()); });
+  app.get('/api/admin/elements', async (_req, res) => { res.json(await admin.listItems()); });
+  app.get('/api/admin/evenements', async (req, res) => { res.json(await admin.listEvents(Number(req.query['limite'] ?? 100))); });
+  app.post('/api/admin/elements/:id/statut', async (req, res) => {
+    const status = req.body?.status === 'revoked' ? 'revoked' : 'active';
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 200) : null;
+    const n = await admin.setStatus(req.params.id, status, reason);
+    if (!n) fail(404, 'Licence ou code introuvable dans le registre.');
+    res.json({ ok: true });
+  });
+  app.post('/api/admin/clients/statut', async (req, res) => {
+    const client = typeof req.body?.client === 'string' ? req.body.client : '';
+    if (!client) fail(400, 'Client manquant.');
+    const status = req.body?.status === 'revoked' ? 'revoked' : 'active';
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 200) : null;
+    res.json({ ok: true, count: await admin.setClientStatus(client, status, reason) });
+  });
+  // Licence ou code créé hors ligne (Mac, téléphone) : inscrit au registre dès que l'administrateur a Internet.
+  app.post('/api/admin/enregistrer', async (req, res) => {
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
+    let n = 0;
+    for (const it of items) {
+      try {
+        if (String(it).startsWith('PUP1.')) { const l = decodeLicence(String(it), publicKey); await admin.register('licence', l); n++; }
+        else if (String(it).startsWith('PUPA1.')) { const a = checkAccess(String(it), publicKey, new Date(0)); await admin.register('acces', a); n++; }
+      } catch { /* texte invalide : ignoré */ }
+    }
+    res.json({ ok: true, count: n });
   });
 }
 
@@ -198,6 +286,8 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
   try {
     const pack = await readDirect(files, title, (e) => send(e));
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
+    const owner = ownerOf(res);
+    if (owner) { void admin.countUse(owner).catch(() => undefined); void admin.event(owner, 'lecture', { title, pages: files.length }).catch(() => undefined); }
   } catch (e) {
     console.error('Lecture directe :', e, (e as { detail?: string }).detail ?? '');
     send({ status: 'failed', error: e instanceof UserError ? e.message : 'La lecture a échoué. Reprenez la photo : page bien à plat, en pleine lumière.' });
