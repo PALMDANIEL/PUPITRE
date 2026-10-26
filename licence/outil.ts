@@ -28,7 +28,7 @@ import { machineId, normalizeMachineId } from './machine';
 
 const HOME = process.env.PUPITRE_AIT_DIR ?? path.join(os.homedir(), '.pupitre-ait');
 const PRIVATE = path.join(HOME, 'licence-privee.pem');
-const PUBLIC = path.join(__dirname, 'cle-publique.pem');
+const PUBLIC = process.env.PUPITRE_CLE_PUBLIQUE ?? path.join(__dirname, 'cle-publique.pem'); // autre clé : essais seulement
 const SALE_PRIVATE = path.join(HOME, 'vente-privee.pem');
 const SALE_PUBLIC = path.join(__dirname, 'cle-vente.pem');
 const ISSUED = path.join(HOME, 'licences');
