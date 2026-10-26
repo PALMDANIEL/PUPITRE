@@ -104,7 +104,7 @@ async function renderScore(id: string) {
   await run(renderCmd, renderArgs, {
     label: 'La création de l’audio',
     // le chant prend bien plus longtemps que le synthétiseur (chaque syllabe est prononcée puis accordée)
-    timeoutMs: meta.timbre === 'chant' ? config.renderTimeoutMs * 4 : config.renderTimeoutMs,
+    timeoutMs: meta.timbre === 'chant' ? config.chantTimeoutMs : config.renderTimeoutMs,
     onLine: (line) => {
       const sung = /^Chant (\d+)\/(\d+)/.exec(line);
       if (sung) { void patchMeta(id, { progress: base + Math.round(((80 - base) * (Number(sung[1]) - 1)) / Number(sung[2])) }).catch(() => undefined); return; }

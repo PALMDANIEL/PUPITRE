@@ -488,6 +488,8 @@ def main():
 
     labels = LABELS.get(len(voices)) or [(f"voix{i+1}", f"Voix {i+1}") for i in range(len(voices))]
     sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else None
+    # paroles saisies : gardées dans le manifeste, pour les retrouver à la prochaine modification
+    typed_lyrics = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
     entries = []
     for i, v in enumerate(voices):
         vid, vname = labels[i]
@@ -508,7 +510,7 @@ def main():
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
         entries.append({"id": vid, "name": vname, "stem": stem, "practice": work,
                         "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)],
-                        "lyrics": lyrics_text(v), "sung": len(v.stripTies().flatten().notes)})
+                        "lyrics": typed_lyrics.get(vid) or lyrics_text(v), "sung": len(v.stripTies().flatten().notes)})
         print(f"Voix {i+1}/{len(voices)} : {vname} ({fr_name(lo)} à {fr_name(hi)})", flush=True)
 
     if sung:

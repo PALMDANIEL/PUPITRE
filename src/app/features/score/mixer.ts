@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreStore } from '../../core/score.store';
 import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
@@ -57,8 +57,12 @@ import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../c
         <a class="btn" [href]="'/api/scores/' + score().id + '/pack'" download>Exporter le pack de répétition</a>
       </section>
 
-      <details>
+      }
+
+      @if (!player() || online()) {
+      <details [open]="player() && busy()">
         <summary>Tempo et sonorité</summary>
+        @if (player()) { <p class="hint">Le chant est recréé par le serveur AIT, puis remplace celui du téléphone (Internet nécessaire).</p> }
         <label class="row">
           <span>Tempo : {{ tempo() }} à la noire</span>
           <input type="range" min="40" max="180" step="2" [value]="tempo()" (input)="tempo.set(num($event))">
@@ -73,7 +77,8 @@ import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../c
             <p class="hint">Chaque note est chantée sur sa syllabe, à sa hauteur exacte. Les paroles viennent de la partition ;
               corrigez-les ici si besoin : une syllabe par note, séparées par des tirets ou des espaces (« Sain-te Ma-ri-e »),
               et « _ » pour tenir la syllabe sur la note suivante. Sans paroles, la voix chante « a ».
-              La création prend quelques minutes ; la première fois, les voix sont téléchargées (environ 140 Mo).</p>
+              @if (player()) { La création prend une à quelques minutes. }
+              @else { La création prend quelques minutes ; la première fois, les voix sont téléchargées (environ 140 Mo). }</p>
             <label class="row">
               <span>Langue des paroles</span>
               <select [value]="langue()" (change)="langue.set($any($event.target).value)">
@@ -90,9 +95,13 @@ import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../c
           </div>
         }
         <button type="button" class="btn" [disabled]="!dirty() || busy()" (click)="regenerate()">
-          {{ busy() ? 'Création de l’audio…' : 'Recréer l’audio' }}
+          {{ busy() ? 'Création de l’audio…' + (progress() !== null ? ' ' + progress() + ' %' : '') : 'Recréer l’audio' }}
         </button>
+        @if (player() && failure()) { <p class="error" role="alert">{{ failure() }}</p> }
       </details>
+      }
+
+      @if (!player()) {
 
       <details>
         <summary>Télécharger pour répéter</summary>
@@ -199,6 +208,12 @@ export class Mixer {
   readonly busy = input(false);
   /** Lecteur mobile : pas de serveur, donc ni recréation de l'audio, ni correction, ni téléchargements. */
   readonly player = input(false);
+  /** Téléphone relié au serveur de lecture AIT : il peut recréer l'audio (sonorité, voix chantées) en ligne. */
+  readonly online = input(false);
+  readonly progress = input<number | null>(null);
+  readonly failure = input<string | null>(null);
+  /** Téléphone : demande de recréation, faite par la page (le serveur AIT renvoie un nouveau pack). */
+  readonly recreate = output<{ tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string> }>();
   protected readonly engine = inject(AudioEngine);
   private readonly store = inject(ScoreStore, { optional: true });
 
@@ -252,7 +267,9 @@ export class Mixer {
     const chant = this.timbre() === 'chant';
     const paroles = chant && Object.keys(this.edits()).length
       ? Object.fromEntries(this.voices().map((v) => [v.id, this.lyricOf(v.id)])) : undefined;
-    void this.store?.render({ tempo: this.tempo(), timbre: this.timbre(), ...(chant ? { langue: this.langue(), ...(paroles ? { paroles } : {}) } : {}) });
+    const opts = { tempo: this.tempo(), timbre: this.timbre(), ...(chant ? { langue: this.langue(), ...(paroles ? { paroles } : {}) } : {}) };
+    if (this.player()) this.recreate.emit(opts);
+    else void this.store?.render(opts);
   }
   protected lyricOf(id: string) {
     return this.edits()[id] ?? this.score().paroles?.[id] ?? this.voices().find((v) => v.id === id)?.lyrics ?? '';

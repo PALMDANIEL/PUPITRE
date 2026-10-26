@@ -5,7 +5,7 @@ import { frDateShort } from '../../core/dates';
 
 const EVENT_LABEL: Record<string, string> = {
   'premiere-connexion': 'Première connexion', connexion: 'Connexion', lecture: 'Photo lue',
-  desactivation: 'Désactivé', reactivation: 'Réactivé',
+  desactivation: 'Désactivé', reactivation: 'Réactivé', 'voix-chantees': 'Voix chantées', recreation: 'Audio recréé',
 };
 const SERVER_KEY = 'pupitre-ait-serveur';
 

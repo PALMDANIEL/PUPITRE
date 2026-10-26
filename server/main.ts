@@ -10,7 +10,7 @@ import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, LANGUES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre } from './types';
 import { buildPack, packFileName } from './pack';
-import { readDirect } from './direct';
+import { readDirect, recreateDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
 import { checkAdmin } from '../licence/admin';
 import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '../licence/core';
@@ -334,6 +334,42 @@ app.delete('/api/scores/:id', async (req, res) => {
  * Lecture directe : photos (ou PDF) → pack de répétition dans la même réponse, sans rien stocker.
  * Réponse en lignes JSON : {"status","progress"} au fil de la lecture, puis {"pack": base64} ou {"error"}.
  */
+/** Téléphone : recréer l'audio d'un chant enregistré (tempo, sonorité, voix chantées) à partir de sa partition. */
+app.post('/api/recreer', upload.single('file'), async (req, res) => {
+  const file = req.file;
+  if (!file || !/\.(musicxml|xml)$/i.test(utf8Name(file.originalname))) fail(400, 'Partition manquante (fichier MusicXML du chant).');
+  const body = (req.body ?? {}) as Record<string, string>;
+  const title = (typeof body.titre === 'string' && body.titre.trim().slice(0, 140)) || 'Chant';
+  const timbre: Timbre = ['piano', 'choeur', 'chant'].includes(body.timbre) ? body.timbre as Timbre : 'choeur';
+  const tempo = body.tempo ? Number(body.tempo) : null;
+  if (tempo !== null && (!Number.isInteger(tempo) || tempo < 30 || tempo > 240)) fail(400, 'Le tempo doit être un entier entre 30 et 240.');
+  const langue: Langue = LANGUES.includes(body.langue as Langue) ? body.langue as Langue : 'fr';
+  let paroles: Record<string, string> | null = null;
+  if (body.paroles) {
+    try {
+      const raw = JSON.parse(body.paroles) as Record<string, unknown>;
+      paroles = Object.fromEntries(Object.entries(raw).filter(([k, v]) => /^[a-z0-9]{1,20}$/.test(k) && typeof v === 'string').map(([k, v]) => [k, (v as string).slice(0, 8000)]));
+    } catch { fail(400, 'Paroles invalides.'); }
+  }
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
+  const ping = setInterval(() => send({ ping: true }), 10_000);
+  try {
+    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles }, (e) => send(e));
+    send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
+    const owner = ownerOf(res);
+    if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);
+  } catch (e) {
+    console.error('Recréation :', e, (e as { detail?: string }).detail ?? '');
+    send({ status: 'failed', error: e instanceof UserError ? e.message : 'La création de l’audio a échoué. Réessayez.' });
+  } finally {
+    clearInterval(ping);
+    res.end();
+  }
+});
+
 app.post('/api/lire', upload.array('file', 12), async (req, res) => {
   const files = ((req.files as Express.Multer.File[] | undefined) ?? []).map((f) => {
     const name = utf8Name(f.originalname);

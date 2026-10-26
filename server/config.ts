@@ -62,6 +62,8 @@ export const config = {
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),
   omrTimeoutMs: Number(env.OMR_TIMEOUT_MS ?? 15 * 60_000),
   renderTimeoutMs: Number(env.RENDER_TIMEOUT_MS ?? 8 * 60_000),
+  /** Voix chantées : chaque syllabe est prononcée puis accordée, bien plus long que le synthétiseur. */
+  chantTimeoutMs: Number(env.CHANT_TIMEOUT_MS ?? 4 * Number(env.RENDER_TIMEOUT_MS ?? 8 * 60_000)),
   /** Voix de synthèse (voix chantées) : téléchargées au premier usage (environ 140 Mo). */
   voixDir: path.resolve(env.VOIX_DIR ?? path.join(home, 'pupitre', 'voix')),
 };
