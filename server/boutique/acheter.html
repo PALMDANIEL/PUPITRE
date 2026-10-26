@@ -39,6 +39,13 @@
     button.primary:disabled { opacity: .6; cursor: wait; }
     button.quiet { font: inherit; font-weight: 700; color: var(--ink); background: none; border: 1px solid var(--hair); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
     .msg { font-size: .92rem; }
+    .numbers { display: grid; gap: 8px; }
+    .number { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--raised); border: 1px solid var(--hair); }
+    .number b { font-size: 1.15rem; font-variant-numeric: tabular-nums; letter-spacing: .02em; white-space: nowrap; }
+    .number { flex-wrap: wrap; }
+    .number .op { flex-basis: 100%; color: var(--soft); font-weight: 600; font-size: .85rem; }
+    .number button { margin-left: auto; }
+    .amount { font-size: 1.6rem; font-weight: 800; }
     .msg.err { color: var(--danger); }
     .ok { color: var(--ok); }
     textarea { font: 12px/1.4 ui-monospace, "SF Mono", Consolas, monospace; color: var(--ink); background: var(--raised); border: 1px solid var(--hair); border-radius: 12px; padding: 10px; width: 100%; height: 7.5rem; resize: none; word-break: break-all; }
@@ -63,7 +70,7 @@
   <!-- Formulaire d'achat -->
   <section id="shop" hidden>
     <h1 id="title">Acheter Pupitre</h1>
-    <p class="lead" id="lead">Payez par Orange Money ou Moov Money. Votre licence est créée tout de suite après le paiement.</p>
+    <p class="lead" id="lead">Payez par Orange Money ou Moov Money. Votre licence est créée dès que le paiement est reçu.</p>
   </section>
   <form id="form" class="card" hidden novalidate>
     <fieldset class="plans" id="plans"><legend>Formule</legend></fieldset>
@@ -78,7 +85,8 @@
       <input type="tel" id="contact" autocomplete="tel" inputmode="tel" placeholder="70 00 00 00" maxlength="20" required>
       <span class="hint">Celui d’Orange Money ou de Moov Money ; AIT peut vous appeler en cas de problème.</span>
     </label>
-    <label class="field">E-mail <span class="hint">(facultatif, pour recevoir le reçu)</span>
+    <fieldset class="plans" id="methods" hidden><legend>Moyen de paiement</legend></fieldset>
+    <label class="field" id="emailField">E-mail <span class="hint">(facultatif, pour recevoir le reçu)</span>
       <input type="email" id="email" autocomplete="email" inputmode="email" maxlength="120">
     </label>
     <button class="primary" type="submit" id="pay">Payer</button>
@@ -131,12 +139,22 @@
       $('plans').append(row);
     }
     $('machine').value = params.get('machine') || '';
+    // deux moyens : LigdiCash (automatique) et transfert direct au numéro d'AIT (confirmé par AIT)
+    const both = data.methods?.ligdicash && data.methods?.direct;
+    if (both) {
+      $('methods').hidden = false;
+      $('methods').insertAdjacentHTML('beforeend', `
+        <label class="plan"><input type="radio" name="moyen" value="ligdicash" checked><span>Paiement en ligne immédiat<br><span class="hint">Orange Money ou Moov Money, par LigdiCash</span></span></label>
+        <label class="plan"><input type="radio" name="moyen" value="direct"><span>Transfert au numéro d’AIT<br><span class="hint">Vous envoyez l’argent ; AIT confirme, en général en moins d’une heure</span></span></label>`);
+    }
+    const method = () => (both ? document.querySelector('input[name=moyen]:checked')?.value : data.methods?.ligdicash ? 'ligdicash' : 'direct');
     const sync = () => {
       const sel = document.querySelector('input[name=plan]:checked');
       $('machineField').hidden = !!renew || sel?.dataset.kind !== 'licence' || !!params.get('machine');
-      $('pay').textContent = sel ? `Payer ${fcfa(sel.dataset.amount)}` : 'Payer';
+      $('emailField').hidden = method() !== 'ligdicash';
+      $('pay').textContent = sel ? `${method() === 'direct' ? 'Continuer' : 'Payer'} · ${fcfa(sel.dataset.amount)}` : 'Payer';
     };
-    $('plans').addEventListener('change', sync); sync();
+    $('plans').addEventListener('change', sync); $('methods').addEventListener('change', sync); sync();
     $('form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const sel = document.querySelector('input[name=plan]:checked');
@@ -145,7 +163,7 @@
       try {
         const r = await api('/api/paiement/commande', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product: sel?.value, client: $('client').value, contact: $('contact').value, email: $('email').value, machine: $('machine').value, renouveler: renew || undefined }),
+          body: JSON.stringify({ product: sel?.value, client: $('client').value, contact: $('contact').value, email: $('email').value, machine: $('machine').value, renouveler: renew || undefined, moyen: method() }),
         });
         location.href = r.url;
       } catch (err) {
@@ -180,13 +198,57 @@
       return true;
     }
     if (o.status === 'failed') {
-      box.innerHTML = `<h1>Paiement non abouti</h1><p>Aucune somme n’a été retenue pour cette commande. Vous pouvez recommencer.</p>
+      box.innerHTML = o.direct
+        ? `<h1>Paiement non confirmé</h1><p class="reason"></p><p>Si vous avez bien envoyé l’argent, appelez AIT au 00226 77 41 91 06 avec la référence du transfert.</p>`
+        : `<h1>Paiement non abouti</h1><p>Aucune somme n’a été retenue pour cette commande. Vous pouvez recommencer.</p>
         <p><a href="/acheter" style="color:var(--accent2)">Recommencer</a> · ou appelez AIT au 00226 77 41 91 06.</p>`;
+      if (o.direct) box.querySelector('.reason').textContent = `AIT n’a pas pu confirmer ce paiement${o.reason ? ` : ${o.reason}` : ''}.`;
       return true;
+    }
+    if (o.direct && !o.declared) { renderTransfer(o); return true; }
+    if (o.direct) {
+      box.innerHTML = `<div style="display:flex;gap:12px;align-items:center"><span class="spinner" aria-hidden="true"></span><h1>AIT vérifie votre paiement…</h1></div>
+        <p></p><p>Dès qu’AIT confirme, votre ${o.kind === 'licence' ? 'licence' : 'code'} apparaît ici${o.kind === 'licence' ? ' et s’installe tout seul sur l’ordinateur' : ''}. En général moins d’une heure, de 7 h à 21 h. Vous pouvez fermer cette page et revenir plus tard avec le même lien.</p>`;
+      box.querySelectorAll('p')[0].textContent = `${o.operator ?? ''} · référence ${o.reference ?? ''} · ${fcfa(o.amount)}`;
+      return false;
     }
     box.innerHTML = `<div style="display:flex;gap:12px;align-items:center"><span class="spinner" aria-hidden="true"></span><h1>Paiement en cours…</h1></div>
       <p>Validez le paiement sur votre téléphone si on vous le demande (code secret Orange Money ou Moov Money). Cette page se met à jour toute seule.</p>`;
     return false;
+  }
+
+  /** Paiement direct : numéro d'AIT, montant exact, puis référence du transfert reçue par SMS. */
+  function renderTransfer(o) {
+    const box = $('order');
+    const rows = [['orange', 'Orange Money', o.numbers?.orange], ['moov', 'Moov Money', o.numbers?.moov]].filter((r) => r[2]);
+    box.innerHTML = `<h1>Envoyez le paiement à AIT</h1>
+      <p>Faites un <b>transfert d’argent</b> depuis votre téléphone, du montant exact :</p>
+      <p class="amount">${fcfa(o.amount)}</p>
+      <div class="numbers">${rows.map(([op, name, num]) => `<div class="number"><span class="op">${name}</span><b>${num}</b><button class="quiet" type="button" data-num="${num.replace(/\s/g, '')}">Copier</button></div>`).join('')}</div>
+      <p class="hint">Bénéficiaire : PALM Romeo Daratagnan (AIT). Gardez le SMS de confirmation de votre opérateur.</p>
+      <form id="declare" class="card" style="padding:14px" novalidate>
+        <fieldset class="plans"><legend>Vous avez payé par</legend>
+          ${rows.map(([op, name], i) => `<label class="plan"><input type="radio" name="op" value="${op}" ${i === 0 ? 'checked' : ''}><span>${name}</span></label>`).join('')}
+        </fieldset>
+        <label class="field">Référence du transfert (dans le SMS reçu)
+          <input type="text" id="reference" autocomplete="off" spellcheck="false" maxlength="40" placeholder="ex. CI241026.1530.A12345" required>
+        </label>
+        <button class="primary" type="submit">J’ai payé</button>
+        <p class="msg" id="declareMsg" role="alert"></p>
+      </form>`;
+    box.querySelectorAll('button[data-num]').forEach((b) => { b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.num); b.textContent = 'Copié ✓'; } catch { /* sélection manuelle */ } }; });
+    $('declare').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('declare').querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        await api(`/api/paiement/commande/${o.id}/declarer`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reference: $('reference').value, operateur: document.querySelector('input[name=op]:checked')?.value }) });
+        followOrder(o.id);
+      } catch (err) {
+        $('declareMsg').className = 'msg err'; $('declareMsg').textContent = err.message; btn.disabled = false;
+      }
+    });
   }
 
   async function followOrder(id) {
@@ -195,19 +257,21 @@
       $('order').innerHTML = `<h1>Paiement annulé</h1><p>Rien n’a été payé. <a href="/acheter" style="color:var(--accent2)">Recommencer</a></p>`;
     }
     const started = Date.now();
+    let lastDirect = false;
     for (;;) {
       try {
         const o = await api(`/api/paiement/commande/${id}`);
+        lastDirect = o.direct;
         if (!params.get('annule') || o.status === 'paid') { if (render(o)) return; }
         else return;
       } catch (err) {
         $('order').hidden = false; $('order').innerHTML = `<h1>Commande introuvable</h1><p></p>`; $('order').querySelector('p').textContent = err.message; return;
       }
-      if (Date.now() - started > 15 * 60_000) {
+      if (Date.now() - started > (lastDirect ? 6 * 3600_000 : 15 * 60_000)) {
         $('order').insertAdjacentHTML('beforeend', '<p>Toujours en attente. Si vous avez payé, gardez cette page : rechargez-la dans quelques minutes, ou appelez AIT.</p>');
         return;
       }
-      await new Promise((r) => setTimeout(r, 4000));
+      await new Promise((r) => setTimeout(r, lastDirect ? 10000 : 4000));
     }
   }
 

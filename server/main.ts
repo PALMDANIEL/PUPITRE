@@ -16,7 +16,7 @@ import { checkAdmin } from '../licence/admin';
 import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '../licence/core';
 import * as admin from './admin';
 import * as pay from './paiement';
-import { monerooSignatureOk } from './passerelles';
+import { directNumbers as paymentNumbers } from './passerelles';
 
 const PHONE = '00226 77 41 91 06';
 const clientIp = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim() || undefined;
@@ -52,8 +52,7 @@ const assertIdle = (m: ScoreMeta) => { if (BUSY.includes(m.status)) fail(409, 'U
 
 const app = express();
 app.disable('x-powered-by');
-// corps brut gardé : signature des rappels de paiement (Moneroo)
-app.use(express.json({ limit: '100kb', verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } }));
+app.use(express.json({ limit: '100kb' }));
 
 if (config.online) {
   const publicKey = fsSync.readFileSync(config.accessPublicKey, 'utf8');
@@ -140,7 +139,7 @@ if (config.online) {
 
   // Vente en ligne (LigdiCash) : sans code d'accès, la page d'achat est publique.
   app.get('/api/paiement/tarifs', async (_req, res) => {
-    res.json({ open: pay.salesEnabled(), prices: pay.salesEnabled() ? (await pay.listPrices()).map(({ product, kind, duration, label, amount }) => ({ product, kind, duration, label, amount })) : [] });
+    res.json({ open: pay.salesEnabled(), methods: pay.paymentMethods(), prices: pay.salesEnabled() ? (await pay.listPrices()).map(({ product, kind, duration, label, amount }) => ({ product, kind, duration, label, amount })) : [] });
   });
   app.post('/api/paiement/commande', async (req, res) => { res.json(await pay.createOrder((req.body ?? {}) as Record<string, string>)); });
   app.get('/api/paiement/commande/:id', async (req, res) => {
@@ -148,13 +147,18 @@ if (config.online) {
     if (!o) fail(404, 'Commande introuvable.');
     // le texte d'un code de chorale renouvelé n'est pas montré ici : il arrive tout seul sur les téléphones de la chorale
     const showText = o!.status === 'paid' && !(o!.kind === 'acces' && o!.renew_id);
+    const direct = o!.gateway === 'direct';
     res.json({ id: o!.id, status: o!.status, kind: o!.kind, product: o!.product, amount: o!.amount, client: o!.client, renewal: !!o!.renew_id,
-      itemId: o!.item_id, expires: o!.expires, text: showText ? o!.text : null });
+      itemId: o!.item_id, expires: o!.expires, text: showText ? o!.text : null,
+      direct, numbers: direct ? paymentNumbers() : null, declared: direct && !!o!.declared_at, reference: direct ? o!.invoice_token : null, operator: direct ? o!.operator : null,
+      reason: o!.status === 'failed' && direct ? ((o as unknown as { detail?: { reason?: string } }).detail?.reason ?? null) : null });
+  });
+  app.post('/api/paiement/commande/:id/declarer', async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/.test(req.params.id)) fail(404, 'Commande introuvable.');
+    await pay.declareDirect(req.params.id, (req.body ?? {}) as Record<string, string>);
+    res.json({ ok: true });
   });
   app.post('/api/paiement/rappel', express.urlencoded({ extended: true }), async (req, res) => {
-    if (req.headers['x-moneroo-signature'] !== undefined || config.paymentGateway === 'moneroo' && req.body?.event) {
-      if (!monerooSignatureOk((req as Request & { rawBody?: Buffer }).rawBody, String(req.headers['x-moneroo-signature'] ?? ''))) { res.status(403).json({ error: 'Signature invalide.' }); return; }
-    }
     try { await pay.onCallback((req.body ?? {}) as Record<string, unknown>); } catch (e) { console.error('Rappel LigdiCash :', (e as Error).message); }
     res.json({ ok: true });
   });
@@ -181,6 +185,11 @@ if (config.online) {
     res.json({ ok: true, prices: await pay.listPrices(true) });
   });
   app.get('/api/admin/ventes', async (req, res) => { res.json(await pay.listOrders(Number(req.query['limite'] ?? 100))); });
+  app.post('/api/admin/ventes/:id/confirmer', async (req, res) => { await pay.confirmDirect(req.params.id); res.json({ ok: true }); });
+  app.post('/api/admin/ventes/:id/refuser', async (req, res) => {
+    await pay.refuseDirect(req.params.id, typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 200) : null);
+    res.json({ ok: true });
+  });
   app.get('/api/admin/elements', async (_req, res) => { res.json(await admin.listItems()); });
   app.get('/api/admin/evenements', async (req, res) => { res.json(await admin.listEvents(Number(req.query['limite'] ?? 100))); });
   app.post('/api/admin/elements/:id/statut', async (req, res) => {

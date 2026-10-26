@@ -42,14 +42,11 @@ export const config = {
   /** Clé de vente : licences et codes payés en ligne, signés par le serveur (clé publique dans l'application). */
   salePublicKey: env.SALE_PUBLIC_KEY_FILE ?? path.join(root, 'licence', 'cle-vente.pem'),
   salePrivateKey: env.VENTE_CLE_PRIVEE ? Buffer.from(env.VENTE_CLE_PRIVEE, 'base64').toString('utf8') : null,
-  /** Agrégateur des nouvelles commandes : moneroo ou ligdicash (par défaut Moneroo dès que sa clé est présente). */
-  paymentGateway: (env.PAIEMENT ?? (env.MONEROO_SECRET_KEY ? 'moneroo' : 'ligdicash')) as 'moneroo' | 'ligdicash',
-  /** Moneroo : clé secrète du tableau de bord (clé de test ou clé réelle), secret du webhook pour signer les rappels. */
-  moneroo: {
-    secretKey: env.MONEROO_SECRET_KEY ?? null,
-    webhookSecret: env.MONEROO_WEBHOOK_SECRET ?? null,
-    baseUrl: env.MONEROO_URL ?? 'https://api.moneroo.io/v1/',
-    methods: (env.MONEROO_METHODES ?? 'orange_bf,moov_bf').split(',').map((m) => m.trim()).filter(Boolean),
+  /** Paiement direct au numéro d'AIT (confirmé à la main dans le tableau de bord) ; PAIEMENT_DIRECT=0 pour le fermer. */
+  directPay: {
+    enabled: env.PAIEMENT_DIRECT !== '0',
+    orange: env.PAIEMENT_DIRECT_ORANGE ?? '77 41 91 06',
+    moov: env.PAIEMENT_DIRECT_MOOV ?? '73 63 08 82',
   },
   /** Paiement en ligne LigdiCash (Orange Money, Moov Money) ; LIGDICASH_MODE=live pour encaisser pour de vrai. */
   ligdicash: {

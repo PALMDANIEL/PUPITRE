@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ADMIN_SERVER, AitStore, Overview, ServerEvent, ServerItem } from '../../core/ait';
 import { frDateShort } from '../../core/dates';
@@ -10,7 +10,25 @@ const EVENT_LABEL: Record<string, string> = {
 const SERVER_KEY = 'pupitre-ait-serveur';
 
 interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean }
-interface SaleOrder { id: string; created_at: string; product: string; amount: number; client: string; status: string; item_id: string | null; renew_id: string | null }
+interface SaleOrder {
+  id: string; created_at: string; gateway: string | null; product: string; amount: number; client: string; contact: string | null; status: string;
+  item_id: string | null; renew_id: string | null; operator: string | null; reference: string | null; declared_at: string | null; reason: string | null;
+}
+const SOUND_KEY = 'pupitre-ait-alerte';
+
+/** Petit carillon (trois notes montantes), sans fichier son : Web Audio. */
+function chime(ctx: AudioContext) {
+  const t = ctx.currentTime;
+  [784, 988, 1319].forEach((f, i) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t + i * 0.18);
+    g.gain.exponentialRampToValueAtTime(0.35, t + i * 0.18 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.18 + 0.5);
+    o.connect(g).connect(ctx.destination);
+    o.start(t + i * 0.18); o.stop(t + i * 0.18 + 0.55);
+  });
+}
 
 /** Tableau de bord AIT : qui est connecté, état des licences et des codes, désactivation à distance. */
 @Component({
@@ -22,6 +40,30 @@ interface SaleOrder { id: string; created_at: string; product: string; amount: n
       <input class="search" type="search" placeholder="Rechercher un client, un numéro…" [(ngModel)]="query" name="q">
     </div>
     @if (error()) { <p class="error banner" role="alert">{{ error() }}</p> }
+
+    @if (toConfirm().length) {
+      <section class="glass confirm" aria-live="polite">
+        <h3>Paiements à confirmer ({{ toConfirm().length }})</h3>
+        <p class="small">Vérifiez le SMS de votre opérateur (montant et référence) avant de confirmer : la licence part aussitôt chez le client.</p>
+        <ul>
+          @for (o of toConfirm(); track o.id) {
+            <li class="pay">
+              <div class="line"><b class="sum">{{ money(o.amount) }}</b> · {{ o.operator }} · réf. <b>{{ o.reference }}</b></div>
+              <span class="small">{{ o.client }} · {{ o.contact }} · {{ productLabel(o.product) }}{{ o.renew_id ? ' (renouvellement ' + o.renew_id + ')' : '' }} · {{ when(o.declared_at ?? o.created_at) }}</span>
+              <div class="line">
+                <button type="button" class="act on" (click)="confirmPay(o)">Confirmer, j’ai reçu</button>
+                <button type="button" class="act off" (click)="refusePay(o)">Refuser</button>
+              </div>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+    <p class="small sound">
+      <label><input type="checkbox" [checked]="soundOn()" (change)="toggleSound()"> Alerte sonore pour les nouveaux paiements</label>
+      · <button type="button" class="link" (click)="testSound()">Tester le son</button>
+      <span class="hint"> (le tableau de bord vérifie toutes les 20 secondes tant qu’il est ouvert)</span>
+    </p>
 
     @if (stats(); as s) {
       <div class="tiles">
@@ -90,7 +132,7 @@ interface SaleOrder { id: string; created_at: string; product: string; amount: n
       @if (orders().length) {
         <ul>
           @for (o of orders(); track o.id) {
-            <li class="order"><span class="when">{{ when(o.created_at) }}</span> <b>{{ money(o.amount) }}</b> · {{ o.client }} · {{ o.item_id ?? o.renew_id ?? o.product }}
+            <li class="order"><span class="when">{{ when(o.created_at) }}</span> <b>{{ money(o.amount) }}</b> · {{ o.gateway === 'direct' ? 'Transfert' : 'LigdiCash' }} · {{ o.client }} · {{ o.item_id ?? o.renew_id ?? o.product }}
               <span class="pill" [class.ok]="o.status === 'paid'" [class.failed]="o.status === 'failed'">{{ orderLabel(o.status) }}</span></li>
           }
         </ul>
@@ -150,6 +192,12 @@ interface SaleOrder { id: string; created_at: string; product: string; amount: n
     .amount { border-radius: 10px; border: 1px solid var(--hair); background: var(--raised); color: var(--ink); padding: .4rem .6rem; font: inherit; text-align: right; }
     .prices .btn { justify-self: start; }
     .order { font-size: .82rem; display: block; }
+    .confirm { padding: 1rem 1.1rem; margin-bottom: 1rem; display: grid; gap: .5rem; border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+    .confirm h3 { font-size: 1.1rem; color: var(--ok); }
+    .pay { gap: .35rem; }
+    .sum { font-size: 1.1rem; }
+    .sound { margin: 0 0 1rem; }
+    .sound .link { background: none; border: 0; color: var(--accent-2); font: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
     .banner { padding: .7rem 1rem; border-radius: 12px; border: 1px solid var(--hair); background: var(--raised); margin-bottom: 1rem; }
   `],
 })
@@ -180,7 +228,61 @@ export class AitDashboard {
     return [...map.entries()].map(([client, items]) => ({ client, items, allRevoked: items.every((i) => i.status === 'revoked') }));
   });
 
-  constructor() { void this.refresh(); }
+  protected readonly toConfirm = computed(() => this.orders().filter((o) => o.gateway === 'direct' && o.status === 'pending'));
+  protected readonly soundOn = signal((() => { try { return localStorage.getItem(SOUND_KEY) !== '0'; } catch { return true; } })());
+  private audio: AudioContext | null = null;
+  private known: Set<string> | null = null;
+
+  constructor() {
+    void this.refresh();
+    // nouveaux paiements directs : vérification toutes les 20 s tant que le tableau de bord est ouvert
+    const timer = setInterval(() => void this.watchPayments(), 20_000);
+    inject(DestroyRef).onDestroy(() => { clearInterval(timer); void this.audio?.close(); });
+  }
+
+  private async watchPayments() {
+    try {
+      const v = await this.ait.admin<{ orders: SaleOrder[]; total: number; month: number; count: number }>('/ventes?limite=30', {}, this.base);
+      this.orders.set(v.orders); this.sales.set({ total: v.total, month: v.month, count: v.count });
+      this.alertNew();
+    } catch { /* hors ligne : on réessaiera */ }
+  }
+
+  /** Carillon et vibration pour chaque paiement direct qu'on n'avait pas encore vu (et à l'ouverture s'il y en a). */
+  private alertNew() {
+    const ids = this.toConfirm().map((o) => o.id);
+    const fresh = this.known === null ? ids : ids.filter((id) => !this.known!.has(id));
+    this.known = new Set(ids);
+    if (!fresh.length) return;
+    if (this.soundOn()) this.ring();
+    try { navigator.vibrate?.([250, 120, 250]); } catch { /* pas de vibreur */ }
+  }
+
+  private ring() {
+    try {
+      this.audio ??= new AudioContext();
+      void this.audio.resume().then(() => chime(this.audio!));
+    } catch { /* son indisponible */ }
+  }
+  protected testSound() { this.ring(); }
+  protected toggleSound() {
+    this.soundOn.update((v) => !v);
+    try { localStorage.setItem(SOUND_KEY, this.soundOn() ? '1' : '0'); } catch { /* idem */ }
+    if (this.soundOn()) this.ring();
+  }
+
+  protected async confirmPay(o: SaleOrder) {
+    if (!confirm(`Avez-vous bien reçu ${this.money(o.amount)} par ${o.operator}, référence ${o.reference} ?\nLa ${o.product.startsWith('licence') ? 'licence' : 'code'} sera envoyé(e) aussitôt à ${o.client}.`)) return;
+    try { await this.ait.admin(`/ventes/${o.id}/confirmer`, { method: 'POST', body: {} }, this.base); await this.refresh(); }
+    catch (e) { this.error.set((e as Error).message); }
+  }
+  protected async refusePay(o: SaleOrder) {
+    const reason = prompt(`Refuser le paiement de ${o.client} (réf. ${o.reference}) ? Motif montré au client :`, 'Paiement non reçu');
+    if (reason === null) return;
+    try { await this.ait.admin(`/ventes/${o.id}/refuser`, { method: 'POST', body: { reason } }, this.base); await this.refresh(); }
+    catch (e) { this.error.set((e as Error).message); }
+  }
+  protected productLabel(product: string) { return this.prices().find((p) => p.product === product)?.label ?? product; }
 
   protected saveServer() { try { localStorage.setItem(SERVER_KEY, this.server.trim().replace(/\/+$/, '')); } catch { /* idem */ } }
   private get base() { return this.server.trim().replace(/\/+$/, '') || ADMIN_SERVER; }
@@ -204,6 +306,7 @@ export class AitDashboard {
       ]);
       this.prices.set(tarifs.prices); this.salesOpen.set(tarifs.open);
       this.orders.set(ventes.orders); this.sales.set({ total: ventes.total, month: ventes.month, count: ventes.count });
+      this.alertNew();
     } catch (e) {
       this.error.set((e as Error).message);
     } finally {

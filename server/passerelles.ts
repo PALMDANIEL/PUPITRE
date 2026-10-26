@@ -1,12 +1,11 @@
 /**
- * Agrégateurs de paiement (Orange Money, Moov Money) : Moneroo ou LigdiCash, au choix du serveur (variable PAIEMENT).
- * Chacun crée une page de paiement et dit où en est un paiement ; le reste de la vente (paiement.ts) ne dépend pas d'eux.
+ * Moyens de paiement (Orange Money, Moov Money) : LigdiCash (automatique, compte marchand) et paiement direct au numéro d'AIT.
+ * L'agrégateur crée une page de paiement et dit où en est un paiement ; le reste de la vente (paiement.ts) ne dépend pas de lui.
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from './config';
 import { UserError } from './types';
 
-export type GatewayName = 'moneroo' | 'ligdicash';
+export type GatewayName = 'ligdicash' | 'direct';
 export interface Checkout { ref: string; url: string }
 export interface PaymentState { state: 'paid' | 'pending' | 'failed'; amount: number | null; currency: string | null; operator: string | null; detail?: unknown }
 export interface CheckoutRequest {
@@ -31,45 +30,6 @@ async function call<T>(url: string, init: RequestInit, headers: Record<string, s
   }
   return { status: res.status, body: await res.json().catch(() => null) as T };
 }
-
-/** Moneroo (moneroo.io) : Orange Burkina (orange_bf), Moov Burkina (moov_bf), carte bancaire. */
-const moneroo: Gateway = {
-  name: 'moneroo',
-  configured: () => !!config.moneroo.secretKey,
-  async create(r) {
-    const digits = r.contact.replace(/\D/g, '');
-    const { status, body } = await call<{ message?: string; data?: { id?: string; checkout_url?: string }; errors?: unknown }>(
-      `${config.moneroo.baseUrl}payments/initialize`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          amount: r.amount, currency: 'XOF', description: r.description, return_url: r.returnUrl,
-          customer: {
-            // Moneroo exige une adresse e-mail : à défaut, une adresse de commande (le reçu reste visible sur la page)
-            email: r.email || `commande-${r.order.slice(0, 8)}@clients.pupitre.bf`,
-            first_name: r.client.slice(0, 50), last_name: 'Pupitre', phone: digits.length === 8 ? `226${digits}` : digits, country: 'BF',
-          },
-          metadata: { commande: r.order },
-          methods: config.moneroo.methods,
-        }),
-      },
-      { Authorization: `Bearer ${config.moneroo.secretKey}` });
-    if (status >= 300 || !body?.data?.id || !body.data.checkout_url) {
-      fail(502, `Le service de paiement a refusé la commande${body?.message ? ` : ${body.message}` : ''}.`);
-    }
-    return { ref: body!.data!.id!, url: body!.data!.checkout_url! };
-  },
-  async check(ref) {
-    const { status, body } = await call<{ data?: { id?: string; status?: string; amount?: number; currency?: { code?: string }; capture?: { method?: { name?: string } | string; gateway?: { name?: string } | string } } }>(
-      `${config.moneroo.baseUrl}payments/${encodeURIComponent(ref)}/verify`, { method: 'GET' }, { Authorization: `Bearer ${config.moneroo.secretKey}` });
-    const d = body?.data;
-    if (status >= 300 || !d || d.id !== ref) return { state: 'pending', amount: null, currency: null, operator: null };
-    const method = d.capture?.method;
-    const operator = typeof method === 'string' ? method : method?.name ?? null;
-    const state = d.status === 'success' ? 'paid' : d.status === 'failed' || d.status === 'cancelled' ? 'failed' : 'pending';
-    return { state, amount: typeof d.amount === 'number' ? d.amount : null, currency: d.currency?.code ?? null, operator, detail: { status: d.status } };
-  },
-};
 
 /** LigdiCash (ligdicash.com) : Orange Money et Moov Money ; compte marchand avec IFU et RCCM. */
 const ligdicash: Gateway = {
@@ -109,21 +69,16 @@ const ligdicash: Gateway = {
   },
 };
 
-const GATEWAYS: Record<GatewayName, Gateway> = { moneroo, ligdicash };
+/** Agrégateur automatique (LigdiCash), s'il est configuré sur le serveur. */
+export const activeGateway = (): Gateway | null => (ligdicash.configured() ? ligdicash : null);
+export const gatewayOf = (_name: string | null): Gateway => ligdicash;
 
-/** Agrégateur des nouvelles commandes ; une commande en cours garde celui avec lequel elle a été créée. */
-export const activeGateway = (): Gateway | null => {
-  const g = GATEWAYS[config.paymentGateway];
-  return g?.configured() ? g : null;
+/**
+ * Paiement direct : le client envoie l'argent par Orange Money ou Moov Money au numéro d'AIT, donne la référence
+ * reçue par SMS, et AIT confirme depuis le tableau de bord (rien ne passe par un agrégateur, aucune commission).
+ */
+export interface DirectNumbers { orange: string | null; moov: string | null }
+export const directNumbers = (): DirectNumbers | null => {
+  const { orange, moov } = config.directPay;
+  return config.directPay.enabled && (orange || moov) ? { orange, moov } : null;
 };
-export const gatewayOf = (name: string | null): Gateway => GATEWAYS[(name as GatewayName) ?? 'ligdicash'] ?? ligdicash;
-
-/** Rappel Moneroo : signature HMAC-SHA256 (hexadécimal) du corps brut avec le secret du webhook. */
-export function monerooSignatureOk(raw: Buffer | undefined, signature: string | undefined): boolean {
-  const secret = config.moneroo.webhookSecret;
-  if (!secret) return true; // sans secret, on se fie seulement à la vérification auprès de Moneroo (toujours faite)
-  if (!raw || !signature) return false;
-  const expected = createHmac('sha256', secret).update(raw).digest('hex');
-  const a = Buffer.from(expected), b = Buffer.from(signature.trim().toLowerCase());
-  return a.length === b.length && timingSafeEqual(a, b);
-}
