@@ -3,7 +3,7 @@
  * Un code par chorale : « PUPA1.<contenu>.<signature> », signé par AIT, avec une date de fin.
  * Le serveur ne garde aucune liste de comptes : il vérifie la signature et range les partitions par code.
  */
-import { decodeToken, frDate, LicenceError, signToken } from './core';
+import { decodeToken, frDate, LicenceError, signToken, type PublicKeys } from './core';
 
 export const ACCESS_PREFIX = 'PUPA1';
 
@@ -21,11 +21,11 @@ export function signAccess(payload: AccessPayload, privatePem: string): string {
   return signToken(ACCESS_PREFIX, payload, privatePem);
 }
 
-export function checkAccess(text: string, publicPem: string, now = new Date()): AccessPayload {
+export function checkAccess(text: string, publicPem: PublicKeys, now = new Date()): AccessPayload {
   const acc = decodeToken<AccessPayload>(ACCESS_PREFIX, text, publicPem, 'un code d’accès Pupitre');
-  if (acc.kind !== 'acces' || !/^ACC-\d{4}-T?\d{4}$/.test(acc.id)) throw new LicenceError('format', 'Ce texte n’est pas un code d’accès Pupitre.');
+  if (acc.kind !== 'acces' || !/^ACC-\d{4}-[TV]?\d{4}$/.test(acc.id)) throw new LicenceError('format', 'Ce texte n’est pas un code d’accès Pupitre.');
   if (acc.expires && now.toISOString().slice(0, 10) > acc.expires) {
-    throw new LicenceError('expired', `Le code d’accès de « ${acc.client} » a expiré le ${frDate(acc.expires)}. Contactez AIT pour le renouveler.`);
+    throw new LicenceError('expired', `Le code d’accès de « ${acc.client} » a expiré le ${frDate(acc.expires)}. Renouvelez-le en ligne ou contactez AIT.`);
   }
   return acc;
 }

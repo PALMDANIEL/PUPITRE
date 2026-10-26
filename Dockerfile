@@ -40,6 +40,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY server ./server
 COPY licence ./licence
+COPY src/app/core/duree.ts ./src/app/core/duree.ts
 COPY engine ./engine
 COPY --from=web /app/dist ./dist
 

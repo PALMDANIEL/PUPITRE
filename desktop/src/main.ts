@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { daysLeft, frDate } from '../../licence/core';
 import { CREDITS } from '../../src/app/core/credits';
-import { checkIn, currentStatus, install, type LicenceStatus } from './licence-state';
+import { checkIn, currentStatus, install, shopUrl, type LicenceStatus } from './licence-state';
 
 const DEV = !app.isPackaged;
 // Développement et tests : données de Pupitre (licence, réglages) dans un autre dossier
@@ -100,10 +100,11 @@ function buildMenu() {
     const { response } = await dialog.showMessageBox({
       type: status.ok ? 'info' : 'warning', title: 'Licence', message: status.ok ? 'Pupitre est activé' : 'Licence à renouveler',
       detail: status.ok ? licenceText(status) : status.message,
-      buttons: ['Fermer', 'Copier l’identifiant de l’ordinateur', 'Saisir une nouvelle licence…'], defaultId: 0, cancelId: 0,
+      buttons: ['Fermer', 'Renouveler en ligne…', 'Copier l’identifiant de l’ordinateur', 'Saisir une nouvelle licence…'], defaultId: 0, cancelId: 0,
     });
-    if (response === 1) clipboard.writeText(status.machine);
-    if (response === 2) openActivation(status);
+    if (response === 1) void shell.openExternal(shopUrl());
+    if (response === 2) clipboard.writeText(status.machine);
+    if (response === 3) openActivation(status);
   };
   const library = () => shell.openPath(process.env.STORAGE_DIR ?? app.getPath('documents'));
   const mac = process.platform === 'darwin';
@@ -176,7 +177,7 @@ async function openMain() {
 function openActivation(status: LicenceStatus) {
   if (activation) { activation.focus(); return; }
   activation = new BrowserWindow({
-    width: 620, height: 720, resizable: false, backgroundColor: BG, title: 'Activer Pupitre', show: false,
+    width: 620, height: 860, minHeight: 600, resizable: true, backgroundColor: BG, title: 'Activer Pupitre', show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: false },
   });
   activation.removeMenu();
@@ -208,6 +209,7 @@ ipcMain.handle('licence:install', async (_e, text: string) => {
   return afterCheck(installed.ok ? await checkIn() : installed);
 });
 ipcMain.handle('licence:retry', async () => afterCheck(await checkIn()));
+ipcMain.handle('licence:shop', async () => { await shell.openExternal(shopUrl()); return true; });
 
 /** Vérification auprès d'AIT toutes les 10 minutes : « en ligne » au tableau de bord, désactivation appliquée. */
 function watchLicence() {
@@ -232,10 +234,12 @@ app.whenReady().then(async () => {
   await openMain();
   const left = daysLeft(status.licence, new Date());
   if (left !== null && left <= 30) {
-    void dialog.showMessageBox(mainWindow!, {
+    const { response } = await dialog.showMessageBox(mainWindow!, {
       type: 'warning', title: 'Licence', message: `Votre licence expire dans ${left} jour${left === 1 ? '' : 's'}.`,
-      detail: `Elle est valable jusqu’au ${frDate(status.licence.expires!)} inclus. Contactez AIT pour la renouveler : ${CREDITS.phones.map((p) => p.label).join(' · ')}`,
+      detail: `Elle est valable jusqu’au ${frDate(status.licence.expires!)} inclus. Renouvelez-la en ligne (Orange Money, Moov Money) : la nouvelle date s’installe toute seule. Ou contactez AIT : ${CREDITS.phones.map((p) => p.label).join(' · ')}`,
+      buttons: ['Plus tard', 'Renouveler en ligne…'], defaultId: 1, cancelId: 0,
     });
+    if (response === 1) void shell.openExternal(shopUrl());
   }
 }).catch((e) => {
   dialog.showErrorBox('Pupitre ne peut pas démarrer', String(e?.message ?? e));

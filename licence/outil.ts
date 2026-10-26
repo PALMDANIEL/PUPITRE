@@ -8,6 +8,8 @@
  *   npm run licence -- liste                     registre des licences émises
  *   npm run licence -- acces --client "Chorale Sainte Cécile" --duree 1a
  *        code d'accès au serveur de lecture en ligne (photo de partition depuis le téléphone)
+ *   npm run licence -- cle-vente                 clé de vente du serveur (licences payées en ligne, LigdiCash) :
+ *        clé publique dans licence/cle-vente.pem, clé privée dans ~/.pupitre-ait/vente-privee.pem
  *   npm run licence -- machine                   identifiant de cet ordinateur
  *   npm run licence -- export-mobile             QR code à photographier dans Pupitre mobile › Espace AIT
  *        (pour créer les licences depuis votre téléphone ; la clé y est ensuite chiffrée par votre code PIN)
@@ -27,6 +29,8 @@ import { machineId, normalizeMachineId } from './machine';
 const HOME = process.env.PUPITRE_AIT_DIR ?? path.join(os.homedir(), '.pupitre-ait');
 const PRIVATE = path.join(HOME, 'licence-privee.pem');
 const PUBLIC = path.join(__dirname, 'cle-publique.pem');
+const SALE_PRIVATE = path.join(HOME, 'vente-privee.pem');
+const SALE_PUBLIC = path.join(__dirname, 'cle-vente.pem');
 const ISSUED = path.join(HOME, 'licences');
 const REGISTRY = path.join(HOME, 'registre.csv');
 const ACCESS_DIR = path.join(HOME, 'acces');
@@ -81,6 +85,16 @@ switch (command) {
     console.log(`  ✓ Clé publique : ${PUBLIC}  (intégrée à l’application)\n`);
     break;
   }
+  case 'cle-vente': {
+    if (fs.existsSync(SALE_PRIVATE)) fail(`Une clé de vente existe déjà : ${SALE_PRIVATE}`);
+    fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
+    const { privatePem, publicPem } = generateKeys();
+    fs.writeFileSync(SALE_PRIVATE, privatePem, { mode: 0o600 });
+    fs.writeFileSync(SALE_PUBLIC, publicPem);
+    console.log(`\n  ✓ Clé de vente créée : ${SALE_PRIVATE}  (à donner au seul serveur en ligne, variable VENTE_CLE_PRIVEE en base64)`);
+    console.log(`  ✓ Clé publique : ${SALE_PUBLIC}  (intégrée à l’application et au serveur)\n`);
+    break;
+  }
   case 'creer': {
     if (!fs.existsSync(PRIVATE)) fail('Aucune clé privée. Lancez d’abord : npm run licence -- init');
     const client = named['client'];
@@ -113,7 +127,7 @@ switch (command) {
     const input = positional[0] ?? fail('Donnez un fichier .licence ou le texte de la licence.');
     const text = fs.existsSync(input) ? fs.readFileSync(input, 'utf8') : input;
     try {
-      const pub = fs.readFileSync(PUBLIC, 'utf8');
+      const pub = [PUBLIC, SALE_PUBLIC].filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f, 'utf8'));
       const lic = named['machine'] ? checkLicence(text, pub, normalizeMachineId(named['machine']) ?? '', new Date()) : decodeLicence(text, pub);
       console.log('\n  ✓ Licence authentique\n');
       describe(lic);

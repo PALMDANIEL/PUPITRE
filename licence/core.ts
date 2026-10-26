@@ -38,14 +38,22 @@ export function signToken(prefix: string, payload: object, privatePem: string): 
   return `${body}.${b64(sign(null, Buffer.from(body), createPrivateKey(privatePem)))}`;
 }
 
+/** Clés publiques acceptées : clé AIT, et éventuellement clé de vente du serveur (licences payées en ligne). */
+export type PublicKeys = string | readonly string[];
+
+/** Vrai si le texte est signé par cette clé (et non par une autre clé acceptée). */
+export function signedWith(text: string, publicPem: string): boolean {
+  const parts = text.replace(/\s+/g, '').split('.');
+  if (parts.length !== 3) return false;
+  try { return verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), createPublicKey(publicPem), unb64(parts[2])); } catch { return false; }
+}
+
 /** Lit un texte signé collé par l'utilisateur (espaces et retours à la ligne tolérés). */
-export function decodeToken<T>(prefix: string, text: string, publicPem: string, what: string): T {
+export function decodeToken<T>(prefix: string, text: string, publicPem: PublicKeys, what: string): T {
   const clean = text.replace(/\s+/g, '');
   const parts = clean.split('.');
   if (parts.length !== 3 || parts[0] !== prefix) throw new LicenceError('format', `Ce texte n’est pas ${what}.`);
-  const body = `${parts[0]}.${parts[1]}`;
-  let ok = false;
-  try { ok = verify(null, Buffer.from(body), createPublicKey(publicPem), unb64(parts[2])); } catch { ok = false; }
+  const ok = (typeof publicPem === 'string' ? [publicPem] : publicPem).some((pem) => signedWith(clean, pem));
   if (!ok) throw new LicenceError('signature', `Ce texte n’est pas valide (il a été modifié ou ne vient pas d’AIT).`);
   try {
     return JSON.parse(unb64(parts[1]).toString('utf8')) as T;
@@ -58,7 +66,7 @@ export function signLicence(payload: LicencePayload, privatePem: string): string
   return signToken(PREFIX, payload, privatePem);
 }
 
-export function decodeLicence(text: string, publicPem: string): LicencePayload {
+export function decodeLicence(text: string, publicPem: PublicKeys): LicencePayload {
   return decodeToken<LicencePayload>(PREFIX, text, publicPem, 'une licence Pupitre');
 }
 
@@ -75,7 +83,7 @@ const day = (d: Date) => d.toISOString().slice(0, 10);
  * lastSeen : dernier jour où l'application a fonctionné ; si l'horloge revient en arrière de plus d'un jour,
  * c'est qu'on a reculé la date pour prolonger une licence expirée.
  */
-export function checkLicence(text: string, publicPem: string, machine: string, now: Date, lastSeen?: string | null): LicencePayload {
+export function checkLicence(text: string, publicPem: PublicKeys, machine: string, now: Date, lastSeen?: string | null): LicencePayload {
   const lic = decodeLicence(text, publicPem);
   if (lic.machine !== machine) {
     throw new LicenceError('machine', `Cette licence a été délivrée pour un autre ordinateur (${lic.machine}).`);
@@ -85,7 +93,7 @@ export function checkLicence(text: string, publicPem: string, machine: string, n
     throw new LicenceError('clock', 'La date de cet ordinateur semble avoir été reculée. Remettez-la à l’heure pour utiliser Pupitre.');
   }
   if (lic.expires && today > lic.expires) {
-    throw new LicenceError('expired', `Votre licence a expiré le ${frDate(lic.expires)}. Contactez AIT pour la renouveler.`);
+    throw new LicenceError('expired', `Votre licence a expiré le ${frDate(lic.expires)}. Renouvelez-la en ligne (bouton « Renouveler ») ou contactez AIT.`);
   }
   return lic;
 }

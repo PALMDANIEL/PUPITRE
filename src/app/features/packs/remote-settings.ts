@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { frDateShort } from '../../core/dates';
 import { AccessInfo, RemoteReader } from '../../core/remote';
+import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
 
 @Component({
   selector: 'app-remote-settings',
@@ -30,6 +31,7 @@ import { AccessInfo, RemoteReader } from '../../core/remote';
         <p class="ok" role="status">✓ Code valable pour <b>{{ i.client }}</b>{{ i.issued ? ', du ' + date(i.issued) : '' }}{{ i.expires ? ' au ' + date(i.expires) + ' inclus' : ' (sans date de fin)' }}.</p>
       }
     </form>
+    <p class="hint">Pas encore de code ? <a [href]="buy" [target]="shopTarget" rel="noopener">Acheter un code pour la chorale</a> (Orange Money, Moov Money).</p>
     <p class="hint">L’écoute des chants déjà enregistrés n’a jamais besoin d’Internet.</p>
   `,
   styles: [`
@@ -55,6 +57,8 @@ export class RemoteSettingsPage {
   private readonly router = inject(Router);
   protected url = this.remote.settings().url;
   protected code = this.remote.settings().code;
+  protected readonly shopTarget = SHOP_TARGET;
+  protected readonly buy = shopUrl({ produit: 'acces' }, this.remote.settings().url || SHOP_SERVER);
   protected readonly checking = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly info = signal<AccessInfo | null>(this.remote.settings().info ?? null);

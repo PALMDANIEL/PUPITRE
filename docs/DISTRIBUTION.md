@@ -95,6 +95,29 @@ Sur votre téléphone : *Espace AIT* → onglet **Tableau de bord** (la clé AIT
 - Chez le client, Pupitre se signale au démarrage puis toutes les 10 minutes (`POST /api/checkin`).
   Désactivé : il se ferme et affiche le motif. **Sans Internet pendant 30 jours** : il demande une connexion de quelques secondes.
 
+## Vente en ligne (Orange Money, Moov Money)
+Le client paie lui-même sur **https://pupitre-lecture.vercel.app/acheter** ; la licence ou le code est créé et remis aussitôt.
+- **Ordinateur** : fenêtre d'activation › *Acheter une licence* (l'identifiant de l'ordinateur est déjà rempli) ;
+  la licence s'installe toute seule dès le paiement reçu. *Renouveler en ligne* : menu *Licence…*, page *À propos*,
+  ou l'alerte 30 jours avant la fin ; la nouvelle date arrive à la prochaine vérification (10 min au plus).
+- **Téléphone** : *Réglages du serveur de lecture* › *Acheter un code pour la chorale* ; sous « Mes chants », *Renouveler* :
+  les téléphones de la chorale reçoivent le code prolongé tout seuls.
+- Un renouvellement prolonge à partir de la fin actuelle (ou d'aujourd'hui si elle est passée). Numéros vendus : `AIT-2026-V0001`, `ACC-2026-V0001`.
+- **Tarifs** : Espace AIT › *Tableau de bord* › *Ventes en ligne* (une formule cochée avec un prix apparaît sur la page d'achat). Ventes du mois et total au même endroit.
+- **Clé de vente** (`npm run licence -- cle-vente`) : distincte de la clé AIT, elle ne sert qu'à signer ce qui est payé ; clé publique
+  `licence/cle-vente.pem` dans l'application, clé privée `~/.pupitre-ait/vente-privee.pem` et sur le serveur (`VENTE_CLE_PRIVEE`, en base64).
+  Le serveur refuse tout texte signé par elle qu'il n'a pas vendu, et elle ne permet pas d'administrer.
+- **Deux moyens de paiement**, au choix du client sur la page d'achat :
+  - **Transfert au numéro d'AIT** (gratuit, sans agrégateur) : la page affiche le montant exact et les numéros
+    (`PAIEMENT_DIRECT_ORANGE`, par défaut 77 41 91 06 ; `PAIEMENT_DIRECT_MOOV`, par défaut 73 63 08 82 ; `PAIEMENT_DIRECT=0` pour fermer),
+    le client envoie l'argent puis recopie la **référence du SMS**. Au tableau de bord, *Paiements à confirmer* : comparez avec le SMS
+    de votre opérateur, puis **Confirmer** (la licence ou le code part aussitôt) ou **Refuser** (motif montré au client).
+    Une référence ne peut servir qu'une fois. **Alerte sonore** (carillon) et vibration à chaque nouveau paiement, tant que le tableau
+    de bord est ouvert (vérification toutes les 20 secondes) ; case à cocher et bouton *Tester le son*.
+  - **LigdiCash** (automatique, compte marchand avec IFU et RCCM) : `LIGDICASH_API_KEY`, `LIGDICASH_AUTH_TOKEN`, `LIGDICASH_MODE=live`
+    pour encaisser pour de vrai. Le serveur redemande toujours l'état de la facture à LigdiCash (montant vérifié) avant de remettre quoi que ce soit.
+- Dans tous les cas : `VENTE_CLE_PRIVEE` sur le serveur. Sans moyen de paiement, la page d'achat affiche « bientôt disponible ».
+
 ## Codes d'accès au serveur de lecture (photos depuis le téléphone)
 
 ```bash

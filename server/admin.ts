@@ -43,13 +43,56 @@ const SCHEMA = `
     detail jsonb
   );
   CREATE INDEX IF NOT EXISTS ait_events_at ON ait_events (at DESC);
+  ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS text text;
+  CREATE TABLE IF NOT EXISTS ait_prices (
+    product text PRIMARY KEY,
+    kind text NOT NULL,
+    duration text NOT NULL,
+    label text NOT NULL,
+    amount integer,
+    active boolean NOT NULL DEFAULT false,
+    sort integer NOT NULL DEFAULT 0
+  );
+  INSERT INTO ait_prices (product, kind, duration, label, sort) VALUES
+    ('licence-1m', 'licence', '1m', 'Licence d’ordinateur · 1 mois', 1),
+    ('licence-6m', 'licence', '6m', 'Licence d’ordinateur · 6 mois', 2),
+    ('licence-1a', 'licence', '1a', 'Licence d’ordinateur · 1 an', 3),
+    ('acces-1m', 'acces', '1m', 'Code de chorale · 1 mois', 4),
+    ('acces-6m', 'acces', '6m', 'Code de chorale · 6 mois', 5),
+    ('acces-1a', 'acces', '1a', 'Code de chorale · 1 an', 6)
+  ON CONFLICT (product) DO NOTHING;
+  CREATE TABLE IF NOT EXISTS ait_orders (
+    id text PRIMARY KEY,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    product text NOT NULL,
+    kind text NOT NULL,
+    duration text NOT NULL,
+    amount integer NOT NULL,
+    client text NOT NULL,
+    contact text,
+    machine text,
+    renew_id text,
+    status text NOT NULL DEFAULT 'created',
+    invoice_token text,
+    operator text,
+    item_id text,
+    expires date,
+    text text,
+    paid_at timestamptz,
+    detail jsonb
+  );
+  CREATE INDEX IF NOT EXISTS ait_orders_machine ON ait_orders (machine) WHERE status = 'paid';
+  CREATE INDEX IF NOT EXISTS ait_orders_token ON ait_orders (invoice_token);
+  CREATE TABLE IF NOT EXISTS ait_counters (name text PRIMARY KEY, n integer NOT NULL);
+  ALTER TABLE ait_orders ADD COLUMN IF NOT EXISTS gateway text;
+  ALTER TABLE ait_orders ADD COLUMN IF NOT EXISTS declared_at timestamptz;
 `;
 
 let pool: pg.Pool | null = null;
 let ready: Promise<void> | null = null;
 
 /** Connexion paresseuse : la base n'est contactée qu'à la première requête qui en a besoin. */
-async function db(): Promise<pg.Pool | null> {
+export async function db(): Promise<pg.Pool | null> {
   if (!config.online || !config.adminDatabaseUrl) return null;
   if (!pool) {
     pool = new pg.Pool({ connectionString: config.adminDatabaseUrl, max: 3, idleTimeoutMillis: 20_000 });

@@ -6,9 +6,13 @@ import { app, net } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkLicence, frDate, LicenceError, type LicencePayload } from '../../licence/core';
+import { checkLicence, decodeLicence, frDate, LicenceError, type LicencePayload } from '../../licence/core';
 import { machineId } from '../../licence/machine';
 import PUBLIC_KEY from '../../licence/cle-publique.pem';
+import SALE_KEY from '../../licence/cle-vente.pem';
+
+/** Clé AIT, et clé de vente du serveur (licences achetées et renouvelées en ligne). */
+const KEYS = [PUBLIC_KEY, SALE_KEY];
 
 export const SERVER = process.env.PUPITRE_SERVEUR ?? 'https://pupitre-lecture.vercel.app';
 export const OFFLINE_DAYS = 30;
@@ -50,7 +54,7 @@ export function currentStatus(now = new Date()): LicenceStatus {
   if (!state.licence) return { ok: false, problem: 'missing', message: 'Pupitre n’est pas encore activé sur cet ordinateur.', machine };
   let licence: LicencePayload;
   try {
-    licence = checkLicence(state.licence, PUBLIC_KEY, machine, now, state.lastSeen);
+    licence = checkLicence(state.licence, KEYS, machine, now, state.lastSeen);
   } catch (e) {
     const err = e as LicenceError;
     return { ok: false, problem: err.problem ?? 'format', message: err.message, machine };
@@ -73,7 +77,7 @@ export function install(text: string, now = new Date()): LicenceStatus {
   const machine = machineId();
   const state = load();
   try {
-    checkLicence(text, PUBLIC_KEY, machine, now, state.lastSeen);
+    checkLicence(text, KEYS, machine, now, state.lastSeen);
   } catch (e) {
     const err = e as LicenceError;
     return { ok: false, problem: err.problem ?? 'format', message: err.message, machine };
@@ -84,24 +88,55 @@ export function install(text: string, now = new Date()): LicenceStatus {
 
 const osName = () => `${process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux'} ${os.release()}`;
 
+async function post<T>(route: string, body: object, timeoutMs: number): Promise<T | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const res = await net.fetch(`${SERVER}${route}`, {
+    method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).finally(() => clearTimeout(timer));
+  return res.ok ? await res.json() as T : null;
+}
+
+/** Page d'achat en ligne (LigdiCash) : licence pour cet ordinateur, ou renouvellement de la licence installée. */
+export function shopUrl(): string {
+  const state = load();
+  let id: string | null = null;
+  try { id = state.licence ? decodeLicence(state.licence, KEYS).id : null; } catch { id = null; }
+  const q = new URLSearchParams({ machine: machineId(), ...(id ? { renouveler: id } : { produit: 'licence' }) });
+  return `${SERVER}/acheter?${q}`;
+}
+
+/** Installe une licence reçue du serveur (achat ou renouvellement payé en ligne) si elle est valable ici. */
+function adopt(text: string | null | undefined) {
+  if (!text) return;
+  const state = load();
+  try {
+    const lic = checkLicence(text, KEYS, machineId(), new Date(), state.lastSeen);
+    let current: string | null = null;
+    try { current = state.licence ? decodeLicence(state.licence, KEYS).expires : null; } catch { current = null; }
+    if (state.licence && current !== null && (lic.expires === null ? false : lic.expires <= current)) return;
+    save({ ...state, licence: text.replace(/\s+/g, ''), installedAt: state.installedAt ?? new Date().toISOString(), revoked: null });
+  } catch { /* licence reçue non valable sur cet ordinateur : ignorée */ }
+}
+
 /**
- * Se signale au serveur AIT (si Internet est disponible) : note la vérification, ou la désactivation décidée par AIT.
- * Sans réseau, ne change rien. Renvoie l'état de la licence après coup.
+ * Se signale au serveur AIT (si Internet est disponible) : note la vérification, ou la désactivation décidée par AIT,
+ * et récupère une licence achetée ou renouvelée en ligne. Sans réseau, ne change rien. Renvoie l'état après coup.
  */
 export async function checkIn(timeoutMs = 8000): Promise<LicenceStatus> {
   const state = load();
-  if (!state.licence) return currentStatus();
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await net.fetch(`${SERVER}/api/checkin`, {
-      method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ licence: state.licence, machine: machineId(), version: app.getVersion(), os: osName() }),
-    }).finally(() => clearTimeout(timer));
-    if (res.ok) {
-      const r = await res.json() as { status: 'active' | 'revoked' | 'invalid'; message: string | null };
+    if (!state.licence) {
+      const r = await post<{ licence: string | null }>('/api/paiement/recuperer', { machine: machineId() }, timeoutMs);
+      adopt(r?.licence);
+      if (!load().licence) return currentStatus();
+    }
+    const r = await post<{ status: 'active' | 'revoked' | 'invalid'; message: string | null; renewal?: string | null }>(
+      '/api/checkin', { licence: load().licence, machine: machineId(), version: app.getVersion(), os: osName() }, timeoutMs);
+    if (r) {
+      adopt(r.renewal);
       const fresh = load();
-      if (r.status === 'active') save({ ...fresh, lastCheck: new Date().toISOString(), revoked: null });
+      if (r.status === 'active' || (r.status === 'invalid' && r.renewal)) save({ ...fresh, lastCheck: new Date().toISOString(), revoked: null });
       if (r.status === 'revoked') save({ ...fresh, revoked: r.message ?? 'Cette licence a été désactivée par AIT.' });
     }
   } catch { /* hors ligne ou serveur injoignable : on réessaiera */ }

@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ADMIN_SERVER, AitStore, Overview, ServerEvent, ServerItem } from '../../core/ait';
 import { frDateShort } from '../../core/dates';
@@ -8,6 +8,27 @@ const EVENT_LABEL: Record<string, string> = {
   desactivation: 'Désactivé', reactivation: 'Réactivé',
 };
 const SERVER_KEY = 'pupitre-ait-serveur';
+
+interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean }
+interface SaleOrder {
+  id: string; created_at: string; gateway: string | null; product: string; amount: number; client: string; contact: string | null; status: string;
+  item_id: string | null; renew_id: string | null; operator: string | null; reference: string | null; declared_at: string | null; reason: string | null;
+}
+const SOUND_KEY = 'pupitre-ait-alerte';
+
+/** Petit carillon (trois notes montantes), sans fichier son : Web Audio. */
+function chime(ctx: AudioContext) {
+  const t = ctx.currentTime;
+  [784, 988, 1319].forEach((f, i) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t + i * 0.18);
+    g.gain.exponentialRampToValueAtTime(0.35, t + i * 0.18 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.18 + 0.5);
+    o.connect(g).connect(ctx.destination);
+    o.start(t + i * 0.18); o.stop(t + i * 0.18 + 0.55);
+  });
+}
 
 /** Tableau de bord AIT : qui est connecté, état des licences et des codes, désactivation à distance. */
 @Component({
@@ -19,6 +40,30 @@ const SERVER_KEY = 'pupitre-ait-serveur';
       <input class="search" type="search" placeholder="Rechercher un client, un numéro…" [(ngModel)]="query" name="q">
     </div>
     @if (error()) { <p class="error banner" role="alert">{{ error() }}</p> }
+
+    @if (toConfirm().length) {
+      <section class="glass confirm" aria-live="polite">
+        <h3>Paiements à confirmer ({{ toConfirm().length }})</h3>
+        <p class="small">Vérifiez le SMS de votre opérateur (montant et référence) avant de confirmer : la licence part aussitôt chez le client.</p>
+        <ul>
+          @for (o of toConfirm(); track o.id) {
+            <li class="pay">
+              <div class="line"><b class="sum">{{ money(o.amount) }}</b> · {{ o.operator }} · réf. <b>{{ o.reference }}</b></div>
+              <span class="small">{{ o.client }} · {{ o.contact }} · {{ productLabel(o.product) }}{{ o.renew_id ? ' (renouvellement ' + o.renew_id + ')' : '' }} · {{ when(o.declared_at ?? o.created_at) }}</span>
+              <div class="line">
+                <button type="button" class="act on" (click)="confirmPay(o)">Confirmer, j’ai reçu</button>
+                <button type="button" class="act off" (click)="refusePay(o)">Refuser</button>
+              </div>
+            </li>
+          }
+        </ul>
+      </section>
+    }
+    <p class="small sound">
+      <label><input type="checkbox" [checked]="soundOn()" (change)="toggleSound()"> Alerte sonore pour les nouveaux paiements</label>
+      · <button type="button" class="link" (click)="testSound()">Tester le son</button>
+      <span class="hint"> (le tableau de bord vérifie toutes les 20 secondes tant qu’il est ouvert)</span>
+    </p>
 
     @if (stats(); as s) {
       <div class="tiles">
@@ -65,6 +110,35 @@ const SERVER_KEY = 'pupitre-ait-serveur';
     }
     @if (loaded() && !groups().length) { <p class="hint">Aucune licence ni aucun code dans le registre du serveur pour l’instant.</p> }
 
+    <section class="glass sales">
+      <h3>Ventes en ligne</h3>
+      @if (sales(); as v) {
+        <p class="small"><b>{{ money(v.month) }}</b> ce mois-ci · {{ money(v.total) }} au total · {{ v.count }} vente(s)</p>
+      }
+      @if (salesOpen() === false) {
+        <p class="small warn">Paiement en ligne fermé : il manque les clés LigdiCash sur le serveur. Les tarifs restent modifiables.</p>
+      }
+      <form class="prices" (ngSubmit)="savePrices()">
+        @for (p of prices(); track p.product) {
+          <label class="price">
+            <input type="checkbox" [(ngModel)]="p.active" [name]="'on-' + p.product" [attr.aria-label]="'Proposer ' + p.label">
+            <span>{{ p.label }}</span>
+            <input class="amount" type="number" inputmode="numeric" min="0" step="100" [(ngModel)]="p.amount" [name]="'px-' + p.product" placeholder="FCFA">
+          </label>
+        }
+        <button class="btn" type="submit">Enregistrer les tarifs</button>
+        <span class="small">Une formule cochée et avec un prix apparaît sur la page d’achat.</span>
+      </form>
+      @if (orders().length) {
+        <ul>
+          @for (o of orders(); track o.id) {
+            <li class="order"><span class="when">{{ when(o.created_at) }}</span> <b>{{ money(o.amount) }}</b> · {{ o.gateway === 'direct' ? 'Transfert' : 'LigdiCash' }} · {{ o.client }} · {{ o.item_id ?? o.renew_id ?? o.product }}
+              <span class="pill" [class.ok]="o.status === 'paid'" [class.failed]="o.status === 'failed'">{{ orderLabel(o.status) }}</span></li>
+          }
+        </ul>
+      }
+    </section>
+
     @if (events().length) {
       <section class="glass journal">
         <h3>Journal</h3>
@@ -110,6 +184,20 @@ const SERVER_KEY = 'pupitre-ait-serveur';
     .server { margin-top: 1rem; font-size: .82rem; color: var(--ink-soft); }
     .server input { width: 100%; margin-top: .4rem; border-radius: 10px; border: 1px solid var(--hair); background: var(--raised); color: var(--ink); padding: .5rem .7rem; font: inherit; }
     .hint { color: var(--ink-soft); }
+    .sales { padding: 1rem 1.1rem; margin-top: 1rem; display: grid; gap: .6rem; }
+    .sales h3 { font-size: 1.05rem; }
+    .warn { color: var(--danger); }
+    .prices { display: grid; gap: .45rem; }
+    .price { display: grid; grid-template-columns: auto 1fr 7.5rem; gap: .6rem; align-items: center; font-size: .88rem; }
+    .amount { border-radius: 10px; border: 1px solid var(--hair); background: var(--raised); color: var(--ink); padding: .4rem .6rem; font: inherit; text-align: right; }
+    .prices .btn { justify-self: start; }
+    .order { font-size: .82rem; display: block; }
+    .confirm { padding: 1rem 1.1rem; margin-bottom: 1rem; display: grid; gap: .5rem; border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+    .confirm h3 { font-size: 1.1rem; color: var(--ok); }
+    .pay { gap: .35rem; }
+    .sum { font-size: 1.1rem; }
+    .sound { margin: 0 0 1rem; }
+    .sound .link { background: none; border: 0; color: var(--accent-2); font: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
     .banner { padding: .7rem 1rem; border-radius: 12px; border: 1px solid var(--hair); background: var(--raised); margin-bottom: 1rem; }
   `],
 })
@@ -121,6 +209,10 @@ export class AitDashboard {
   protected readonly loading = signal(false);
   protected readonly loaded = signal(false);
   protected readonly error = signal<string | null>(null);
+  protected readonly prices = signal<Price[]>([]);
+  protected readonly salesOpen = signal<boolean | null>(null);
+  protected readonly orders = signal<SaleOrder[]>([]);
+  protected readonly sales = signal<{ total: number; month: number; count: number } | null>(null);
   protected readonly date = frDateShort;
   protected query = '';
   protected server = (() => { try { return localStorage.getItem(SERVER_KEY) || ADMIN_SERVER; } catch { return ADMIN_SERVER; } })();
@@ -136,7 +228,61 @@ export class AitDashboard {
     return [...map.entries()].map(([client, items]) => ({ client, items, allRevoked: items.every((i) => i.status === 'revoked') }));
   });
 
-  constructor() { void this.refresh(); }
+  protected readonly toConfirm = computed(() => this.orders().filter((o) => o.gateway === 'direct' && o.status === 'pending'));
+  protected readonly soundOn = signal((() => { try { return localStorage.getItem(SOUND_KEY) !== '0'; } catch { return true; } })());
+  private audio: AudioContext | null = null;
+  private known: Set<string> | null = null;
+
+  constructor() {
+    void this.refresh();
+    // nouveaux paiements directs : vérification toutes les 20 s tant que le tableau de bord est ouvert
+    const timer = setInterval(() => void this.watchPayments(), 20_000);
+    inject(DestroyRef).onDestroy(() => { clearInterval(timer); void this.audio?.close(); });
+  }
+
+  private async watchPayments() {
+    try {
+      const v = await this.ait.admin<{ orders: SaleOrder[]; total: number; month: number; count: number }>('/ventes?limite=30', {}, this.base);
+      this.orders.set(v.orders); this.sales.set({ total: v.total, month: v.month, count: v.count });
+      this.alertNew();
+    } catch { /* hors ligne : on réessaiera */ }
+  }
+
+  /** Carillon et vibration pour chaque paiement direct qu'on n'avait pas encore vu (et à l'ouverture s'il y en a). */
+  private alertNew() {
+    const ids = this.toConfirm().map((o) => o.id);
+    const fresh = this.known === null ? ids : ids.filter((id) => !this.known!.has(id));
+    this.known = new Set(ids);
+    if (!fresh.length) return;
+    if (this.soundOn()) this.ring();
+    try { navigator.vibrate?.([250, 120, 250]); } catch { /* pas de vibreur */ }
+  }
+
+  private ring() {
+    try {
+      this.audio ??= new AudioContext();
+      void this.audio.resume().then(() => chime(this.audio!));
+    } catch { /* son indisponible */ }
+  }
+  protected testSound() { this.ring(); }
+  protected toggleSound() {
+    this.soundOn.update((v) => !v);
+    try { localStorage.setItem(SOUND_KEY, this.soundOn() ? '1' : '0'); } catch { /* idem */ }
+    if (this.soundOn()) this.ring();
+  }
+
+  protected async confirmPay(o: SaleOrder) {
+    if (!confirm(`Avez-vous bien reçu ${this.money(o.amount)} par ${o.operator}, référence ${o.reference} ?\nLa ${o.product.startsWith('licence') ? 'licence' : 'code'} sera envoyé(e) aussitôt à ${o.client}.`)) return;
+    try { await this.ait.admin(`/ventes/${o.id}/confirmer`, { method: 'POST', body: {} }, this.base); await this.refresh(); }
+    catch (e) { this.error.set((e as Error).message); }
+  }
+  protected async refusePay(o: SaleOrder) {
+    const reason = prompt(`Refuser le paiement de ${o.client} (réf. ${o.reference}) ? Motif montré au client :`, 'Paiement non reçu');
+    if (reason === null) return;
+    try { await this.ait.admin(`/ventes/${o.id}/refuser`, { method: 'POST', body: { reason } }, this.base); await this.refresh(); }
+    catch (e) { this.error.set((e as Error).message); }
+  }
+  protected productLabel(product: string) { return this.prices().find((p) => p.product === product)?.label ?? product; }
 
   protected saveServer() { try { localStorage.setItem(SERVER_KEY, this.server.trim().replace(/\/+$/, '')); } catch { /* idem */ } }
   private get base() { return this.server.trim().replace(/\/+$/, '') || ADMIN_SERVER; }
@@ -154,6 +300,13 @@ export class AitDashboard {
       ]);
       this.stats.set(stats); this.items.set(items); this.events.set(events);
       this.loaded.set(true);
+      const [tarifs, ventes] = await Promise.all([
+        this.ait.admin<{ open: boolean; prices: Price[] }>('/tarifs', {}, this.base),
+        this.ait.admin<{ orders: SaleOrder[]; total: number; month: number; count: number }>('/ventes?limite=30', {}, this.base),
+      ]);
+      this.prices.set(tarifs.prices); this.salesOpen.set(tarifs.open);
+      this.orders.set(ventes.orders); this.sales.set({ total: ventes.total, month: ventes.month, count: ventes.count });
+      this.alertNew();
     } catch (e) {
       this.error.set((e as Error).message);
     } finally {
@@ -174,6 +327,16 @@ export class AitDashboard {
     try { await this.ait.admin('/clients/statut', { method: 'POST', body: { client, status, reason } }, this.base); await this.refresh(); }
     catch (e) { this.error.set((e as Error).message); }
   }
+
+  protected async savePrices() {
+    try {
+      const r = await this.ait.admin<{ prices: Price[] }>('/tarifs', { method: 'POST', body: { prices: this.prices().map(({ product, amount, active }) => ({ product, amount, active })) } }, this.base);
+      this.prices.set(r.prices);
+      this.error.set(null);
+    } catch (e) { this.error.set((e as Error).message); }
+  }
+  protected money(n: number) { return `${Number(n).toLocaleString('fr-FR')} FCFA`; }
+  protected orderLabel(s: string) { return ({ paid: 'Payée', pending: 'En attente', created: 'Créée', failed: 'Échouée' } as Record<string, string>)[s] ?? s; }
 
   protected online(i: ServerItem) { return !!i.last_seen && Date.now() - Date.parse(i.last_seen) < 15 * 60_000; }
   protected seen(i: ServerItem) {

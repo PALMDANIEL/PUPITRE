@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acheter Pupitre</title>
+  <meta name="robots" content="noindex">
+  <style>
+    :root {
+      --bg: #070b1a; --surface: rgba(255,255,255,.05); --raised: rgba(255,255,255,.08); --hair: rgba(140,170,255,.18);
+      --ink: #eef2ff; --soft: #a6b0d3; --accent: #3d7bff; --accent2: #22d3ee; --ok: #35d9a8; --danger: #ff6b81;
+      --soprano: #F4B740; --alto: #F2679F; --tenor: #35D9A8; --basse: #7F96FF;
+      color-scheme: dark;
+    }
+    @media (prefers-color-scheme: light) {
+      :root { --bg: #f5f7ff; --surface: #fff; --raised: #eef2ff; --hair: rgba(30,50,120,.14); --ink: #0d1430; --soft: #56608a; --ok: #0f9d76; --danger: #d0334d; color-scheme: light; }
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body { min-height: 100vh; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background-image: radial-gradient(60rem 30rem at 80% -10%, rgba(61,123,255,.22), transparent 60%), radial-gradient(40rem 24rem at -10% 110%, rgba(34,211,238,.12), transparent 60%); }
+    main { max-width: 34rem; margin: 0 auto; padding: 28px 16px 48px; display: grid; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .01em; }
+    .brand svg { width: 30px; height: 22px; fill: none; stroke-width: 2.2; stroke-linecap: round; }
+    .brand span { color: var(--soft); font-weight: 600; }
+    h1 { font-size: 1.6rem; line-height: 1.2; }
+    .lead { color: var(--soft); }
+    .card { background: var(--surface); border: 1px solid var(--hair); border-radius: 18px; padding: 18px; display: grid; gap: 14px; backdrop-filter: blur(8px); }
+    label.field { display: grid; gap: 6px; font-weight: 600; font-size: .92rem; }
+    input[type=text], input[type=tel], input[type=email] { font: inherit; color: var(--ink); background: var(--raised); border: 1px solid var(--hair); border-radius: 12px; padding: 11px 13px; width: 100%; }
+    input:focus-visible, button:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+    .hint { font-size: .84rem; color: var(--soft); font-weight: 400; }
+    .plans { display: grid; gap: 8px; border: 0; padding: 0; }
+    .plans legend { font-weight: 600; font-size: .92rem; margin-bottom: 6px; }
+    .plan { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--hair); border-radius: 14px; cursor: pointer; background: var(--raised); }
+    .plan:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .plan input { accent-color: var(--accent); width: 18px; height: 18px; }
+    .plan b { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    button.primary { font: inherit; font-weight: 800; color: #fff; background: linear-gradient(135deg, var(--accent), #2a5bd8); border: 0; border-radius: 999px; padding: 13px 20px; cursor: pointer; }
+    button.primary:disabled { opacity: .6; cursor: wait; }
+    button.quiet { font: inherit; font-weight: 700; color: var(--ink); background: none; border: 1px solid var(--hair); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
+    .msg { font-size: .92rem; }
+    .numbers { display: grid; gap: 8px; }
+    .number { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--raised); border: 1px solid var(--hair); }
+    .number b { font-size: 1.15rem; font-variant-numeric: tabular-nums; letter-spacing: .02em; white-space: nowrap; }
+    .number { flex-wrap: wrap; }
+    .number .op { flex-basis: 100%; color: var(--soft); font-weight: 600; font-size: .85rem; }
+    .number button { margin-left: auto; }
+    .amount { font-size: 1.6rem; font-weight: 800; }
+    .msg.err { color: var(--danger); }
+    .ok { color: var(--ok); }
+    textarea { font: 12px/1.4 ui-monospace, "SF Mono", Consolas, monospace; color: var(--ink); background: var(--raised); border: 1px solid var(--hair); border-radius: 12px; padding: 10px; width: 100%; height: 7.5rem; resize: none; word-break: break-all; }
+    .big { font-size: 1.25rem; font-weight: 800; }
+    ol { padding-left: 1.2rem; display: grid; gap: 4px; }
+    .spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--hair); border-top-color: var(--accent2); animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+    footer { font-size: .82rem; color: var(--soft); text-align: center; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <svg viewBox="0 0 30 22" aria-hidden="true">
+      <path d="M1 2.5h28" stroke="#F4B740"/><path d="M1 8.2h28" stroke="#F2679F"/><path d="M1 13.8h28" stroke="#35D9A8"/><path d="M1 19.5h28" stroke="#7F96FF"/>
+    </svg>
+    Pupitre <span>par AIT</span>
+  </div>
+
+  <!-- Formulaire d'achat -->
+  <section id="shop" hidden>
+    <h1 id="title">Acheter Pupitre</h1>
+    <p class="lead" id="lead">Payez par Orange Money ou Moov Money. Votre licence est créée dès que le paiement est reçu.</p>
+  </section>
+  <form id="form" class="card" hidden novalidate>
+    <fieldset class="plans" id="plans"><legend>Formule</legend></fieldset>
+    <label class="field" id="clientField">Nom de la chorale ou du client
+      <input type="text" id="client" autocomplete="organization" maxlength="80" required>
+    </label>
+    <label class="field" id="machineField">Identifiant de l’ordinateur
+      <input type="text" id="machine" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH-JKMN-PQRS" maxlength="19">
+      <span class="hint">Affiché par Pupitre sur l’ordinateur, dans la fenêtre d’activation.</span>
+    </label>
+    <label class="field">Votre numéro de téléphone
+      <input type="tel" id="contact" autocomplete="tel" inputmode="tel" placeholder="70 00 00 00" maxlength="20" required>
+      <span class="hint">Celui d’Orange Money ou de Moov Money ; AIT peut vous appeler en cas de problème.</span>
+    </label>
+    <fieldset class="plans" id="methods" hidden><legend>Moyen de paiement</legend></fieldset>
+    <label class="field" id="emailField">E-mail <span class="hint">(facultatif, pour recevoir le reçu)</span>
+      <input type="email" id="email" autocomplete="email" inputmode="email" maxlength="120">
+    </label>
+    <button class="primary" type="submit" id="pay">Payer</button>
+    <p class="msg" id="formMsg" role="alert"></p>
+  </form>
+
+  <!-- Commande en cours ou terminée -->
+  <section id="order" class="card" hidden aria-live="polite"></section>
+
+  <!-- Vente fermée -->
+  <section id="closed" class="card" hidden>
+    <h1>Paiement en ligne bientôt disponible</h1>
+    <p class="lead">En attendant, contactez AIT au <b>00226 77 41 91 06</b> ou au <b>00226 73 63 08 82</b> pour obtenir ou renouveler votre licence.</p>
+  </section>
+
+  <footer>AIT – Artificial Intelligence &amp; Technology · Ouagadougou, Burkina Faso<br>00226 77 41 91 06 · 00226 73 63 08 82</footer>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fcfa = (n) => `${Number(n).toLocaleString('fr-FR')} FCFA`;
+  const frDate = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const params = new URLSearchParams(location.search);
+  const orderMatch = /\/acheter\/commande\/([0-9a-f-]{36})/.exec(location.pathname);
+
+  async function api(path, init) {
+    const res = await fetch(path, init);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `Erreur (${res.status}). Réessayez.`);
+    return body;
+  }
+
+  async function showShop() {
+    const renew = (params.get('renouveler') || '').toUpperCase();
+    const kind = renew ? (renew.startsWith('ACC-') ? 'acces' : 'licence') : (params.get('produit') === 'acces' ? 'acces' : params.get('produit') === 'licence' ? 'licence' : null);
+    let data;
+    try { data = await api('/api/paiement/tarifs'); } catch { data = { open: false, prices: [] }; }
+    const prices = data.prices.filter((p) => !kind || p.kind === kind);
+    if (!data.open || !prices.length) { $('closed').hidden = false; return; }
+    $('shop').hidden = false; $('form').hidden = false;
+    if (renew) {
+      $('title').textContent = kind === 'acces' ? 'Renouveler le code de la chorale' : 'Renouveler la licence';
+      $('lead').textContent = `${renew} · la nouvelle période commence à la fin de l’actuelle. ${kind === 'acces' ? 'Les téléphones de la chorale la reçoivent tout seuls.' : 'L’ordinateur la reçoit tout seul.'}`;
+      $('clientField').hidden = true;
+    }
+    for (const [i, p] of prices.entries()) {
+      const row = document.createElement('label');
+      row.className = 'plan';
+      row.innerHTML = `<input type="radio" name="plan" value="${p.product}" data-kind="${p.kind}" data-amount="${p.amount}" ${i === 0 ? 'checked' : ''}><span></span><b>${fcfa(p.amount)}</b>`;
+      row.querySelector('span').textContent = p.label;
+      $('plans').append(row);
+    }
+    $('machine').value = params.get('machine') || '';
+    // deux moyens : LigdiCash (automatique) et transfert direct au numéro d'AIT (confirmé par AIT)
+    const both = data.methods?.ligdicash && data.methods?.direct;
+    if (both) {
+      $('methods').hidden = false;
+      $('methods').insertAdjacentHTML('beforeend', `
+        <label class="plan"><input type="radio" name="moyen" value="ligdicash" checked><span>Paiement en ligne immédiat<br><span class="hint">Orange Money ou Moov Money, par LigdiCash</span></span></label>
+        <label class="plan"><input type="radio" name="moyen" value="direct"><span>Transfert au numéro d’AIT<br><span class="hint">Vous envoyez l’argent ; AIT confirme, en général en moins d’une heure</span></span></label>`);
+    }
+    const method = () => (both ? document.querySelector('input[name=moyen]:checked')?.value : data.methods?.ligdicash ? 'ligdicash' : 'direct');
+    const sync = () => {
+      const sel = document.querySelector('input[name=plan]:checked');
+      $('machineField').hidden = !!renew || sel?.dataset.kind !== 'licence' || !!params.get('machine');
+      $('emailField').hidden = method() !== 'ligdicash';
+      $('pay').textContent = sel ? `${method() === 'direct' ? 'Continuer' : 'Payer'} · ${fcfa(sel.dataset.amount)}` : 'Payer';
+    };
+    $('plans').addEventListener('change', sync); $('methods').addEventListener('change', sync); sync();
+    $('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sel = document.querySelector('input[name=plan]:checked');
+      $('formMsg').className = 'msg'; $('formMsg').textContent = 'Préparation du paiement…';
+      $('pay').disabled = true;
+      try {
+        const r = await api('/api/paiement/commande', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product: sel?.value, client: $('client').value, contact: $('contact').value, email: $('email').value, machine: $('machine').value, renouveler: renew || undefined, moyen: method() }),
+        });
+        location.href = r.url;
+      } catch (err) {
+        $('formMsg').className = 'msg err'; $('formMsg').textContent = err.message; $('pay').disabled = false;
+      }
+    });
+  }
+
+  function render(o) {
+    const box = $('order');
+    box.hidden = false;
+    if (o.status === 'paid') {
+      const name = o.kind === 'licence' ? 'licence' : 'code de chorale';
+      const until = o.expires ? `jusqu’au <b>${frDate(o.expires)}</b> inclus` : 'sans date de fin';
+      box.innerHTML = `<h1 class="ok">Paiement reçu, merci !</h1>
+        <p class="big"></p><p>Valable ${until}.</p>`;
+      box.querySelector('.big').textContent = `${o.renewal ? 'Renouvellement' : 'Votre ' + name} · ${o.itemId}`;
+      if (o.kind === 'licence') {
+        box.insertAdjacentHTML('beforeend', `<p>Sur l’ordinateur, Pupitre l’installe tout seul en moins d’une minute (fenêtre d’activation ouverte) : vous pouvez fermer cette page.
+          Si l’ordinateur n’a pas Internet, collez-la à la main dans la fenêtre d’activation :</p>`);
+      } else if (o.renewal) {
+        box.insertAdjacentHTML('beforeend', `<p>Les téléphones de la chorale reçoivent la nouvelle date tout seuls, à leur prochaine connexion. Rien d’autre à faire.</p>`);
+      } else {
+        box.insertAdjacentHTML('beforeend', `<p>Copiez ce code et envoyez-le aux téléphones de la chorale. Dans Pupitre : <b>Mes chants › Réglages du serveur de lecture</b>, collez-le dans « Code d’accès ».</p>`);
+      }
+      if (o.text) {
+        box.insertAdjacentHTML('beforeend', `<textarea readonly aria-label="Texte à copier"></textarea><button class="quiet" type="button">Copier</button>`);
+        box.querySelector('textarea').value = o.text;
+        const btn = box.querySelector('button');
+        btn.onclick = async () => { try { await navigator.clipboard.writeText(o.text); } catch { box.querySelector('textarea').select(); document.execCommand('copy'); } btn.textContent = 'Copié ✓'; };
+      }
+      return true;
+    }
+    if (o.status === 'failed') {
+      box.innerHTML = o.direct
+        ? `<h1>Paiement non confirmé</h1><p class="reason"></p><p>Si vous avez bien envoyé l’argent, appelez AIT au 00226 77 41 91 06 avec la référence du transfert.</p>`
+        : `<h1>Paiement non abouti</h1><p>Aucune somme n’a été retenue pour cette commande. Vous pouvez recommencer.</p>
+        <p><a href="/acheter" style="color:var(--accent2)">Recommencer</a> · ou appelez AIT au 00226 77 41 91 06.</p>`;
+      if (o.direct) box.querySelector('.reason').textContent = `AIT n’a pas pu confirmer ce paiement${o.reason ? ` : ${o.reason}` : ''}.`;
+      return true;
+    }
+    if (o.direct && !o.declared) { renderTransfer(o); return true; }
+    if (o.direct) {
+      box.innerHTML = `<div style="display:flex;gap:12px;align-items:center"><span class="spinner" aria-hidden="true"></span><h1>AIT vérifie votre paiement…</h1></div>
+        <p></p><p>Dès qu’AIT confirme, votre ${o.kind === 'licence' ? 'licence' : 'code'} apparaît ici${o.kind === 'licence' ? ' et s’installe tout seul sur l’ordinateur' : ''}. En général moins d’une heure, de 7 h à 21 h. Vous pouvez fermer cette page et revenir plus tard avec le même lien.</p>`;
+      box.querySelectorAll('p')[0].textContent = `${o.operator ?? ''} · référence ${o.reference ?? ''} · ${fcfa(o.amount)}`;
+      return false;
+    }
+    box.innerHTML = `<div style="display:flex;gap:12px;align-items:center"><span class="spinner" aria-hidden="true"></span><h1>Paiement en cours…</h1></div>
+      <p>Validez le paiement sur votre téléphone si on vous le demande (code secret Orange Money ou Moov Money). Cette page se met à jour toute seule.</p>`;
+    return false;
+  }
+
+  /** Paiement direct : numéro d'AIT, montant exact, puis référence du transfert reçue par SMS. */
+  function renderTransfer(o) {
+    const box = $('order');
+    const rows = [['orange', 'Orange Money', o.numbers?.orange], ['moov', 'Moov Money', o.numbers?.moov]].filter((r) => r[2]);
+    box.innerHTML = `<h1>Envoyez le paiement à AIT</h1>
+      <p>Faites un <b>transfert d’argent</b> depuis votre téléphone, du montant exact :</p>
+      <p class="amount">${fcfa(o.amount)}</p>
+      <div class="numbers">${rows.map(([op, name, num]) => `<div class="number"><span class="op">${name}</span><b>${num}</b><button class="quiet" type="button" data-num="${num.replace(/\s/g, '')}">Copier</button></div>`).join('')}</div>
+      <p class="hint">Bénéficiaire : PALM Romeo Daratagnan (AIT). Gardez le SMS de confirmation de votre opérateur.</p>
+      <form id="declare" class="card" style="padding:14px" novalidate>
+        <fieldset class="plans"><legend>Vous avez payé par</legend>
+          ${rows.map(([op, name], i) => `<label class="plan"><input type="radio" name="op" value="${op}" ${i === 0 ? 'checked' : ''}><span>${name}</span></label>`).join('')}
+        </fieldset>
+        <label class="field">Référence du transfert (dans le SMS reçu)
+          <input type="text" id="reference" autocomplete="off" spellcheck="false" maxlength="40" placeholder="ex. CI241026.1530.A12345" required>
+        </label>
+        <button class="primary" type="submit">J’ai payé</button>
+        <p class="msg" id="declareMsg" role="alert"></p>
+      </form>`;
+    box.querySelectorAll('button[data-num]').forEach((b) => { b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.num); b.textContent = 'Copié ✓'; } catch { /* sélection manuelle */ } }; });
+    $('declare').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('declare').querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        await api(`/api/paiement/commande/${o.id}/declarer`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reference: $('reference').value, operateur: document.querySelector('input[name=op]:checked')?.value }) });
+        followOrder(o.id);
+      } catch (err) {
+        $('declareMsg').className = 'msg err'; $('declareMsg').textContent = err.message; btn.disabled = false;
+      }
+    });
+  }
+
+  async function followOrder(id) {
+    if (params.get('annule')) {
+      $('order').hidden = false;
+      $('order').innerHTML = `<h1>Paiement annulé</h1><p>Rien n’a été payé. <a href="/acheter" style="color:var(--accent2)">Recommencer</a></p>`;
+    }
+    const started = Date.now();
+    let lastDirect = false;
+    for (;;) {
+      try {
+        const o = await api(`/api/paiement/commande/${id}`);
+        lastDirect = o.direct;
+        if (!params.get('annule') || o.status === 'paid') { if (render(o)) return; }
+        else return;
+      } catch (err) {
+        $('order').hidden = false; $('order').innerHTML = `<h1>Commande introuvable</h1><p></p>`; $('order').querySelector('p').textContent = err.message; return;
+      }
+      if (Date.now() - started > (lastDirect ? 6 * 3600_000 : 15 * 60_000)) {
+        $('order').insertAdjacentHTML('beforeend', '<p>Toujours en attente. Si vous avez payé, gardez cette page : rechargez-la dans quelques minutes, ou appelez AIT.</p>');
+        return;
+      }
+      await new Promise((r) => setTimeout(r, lastDirect ? 10000 : 4000));
+    }
+  }
+
+  if (orderMatch) followOrder(orderMatch[1]); else showShop();
+</script>
+</body>
+</html>
