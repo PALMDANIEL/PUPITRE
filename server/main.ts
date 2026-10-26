@@ -13,8 +13,9 @@ import { buildPack, packFileName } from './pack';
 import { readDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
 import { checkAdmin } from '../licence/admin';
-import { checkLicence, decodeLicence, type LicencePayload } from '../licence/core';
+import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '../licence/core';
 import * as admin from './admin';
+import * as pay from './paiement';
 
 const PHONE = '00226 77 41 91 06';
 const clientIp = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim() || undefined;
@@ -54,6 +55,10 @@ app.use(express.json({ limit: '100kb' }));
 
 if (config.online) {
   const publicKey = fsSync.readFileSync(config.accessPublicKey, 'utf8');
+  // Clé AIT + clé de vente du serveur (licences et codes payés en ligne) ; l'administration n'accepte que la clé AIT.
+  const keys = [publicKey, ...(fsSync.existsSync(config.salePublicKey) ? [fsSync.readFileSync(config.salePublicKey, 'utf8')] : [])];
+  /** Signé par la clé de vente mais jamais vendu par ce serveur : faux (clé de vente dérobée). */
+  const forgedSale = async (text: string) => !signedWith(text, publicKey) && !(await pay.isKnownSale(text));
   // Application mobile (Capacitor) : autre origine que le serveur
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -70,13 +75,14 @@ if (config.online) {
   // Code d'accès de la chorale : en-tête « Authorization: Pupitre PUPA1… »
   app.use(['/api', '/files'], async (req, res, next) => {
     // signalement des ordinateurs et administration : leur propre vérification (licence, jeton AIT)
-    if (req.path === '/health' || req.path === '/checkin' || req.path.startsWith('/admin')) return next();
+    if (req.path === '/health' || req.path === '/checkin' || req.path.startsWith('/admin') || req.path.startsWith('/paiement')) return next();
     const header = req.headers.authorization ?? '';
     const token = header.startsWith('Pupitre ') ? header.slice(8) : '';
     if (!token) { res.status(401).json({ error: 'Code d’accès manquant. Saisissez le code de votre chorale dans les réglages.' }); return; }
     let acc: AccessPayload;
     try {
-      acc = checkAccess(token, publicKey);
+      acc = checkAccess(token, keys);
+      if (await forgedSale(token)) throw new Error('Ce code d’accès n’a pas été délivré par AIT.');
     } catch (e) {
       res.status(401).json({ error: (e as Error).message });
       return;
@@ -100,16 +106,23 @@ if (config.online) {
   // Signalement des ordinateurs (application de bureau) : licence vérifiée, connexion notée, état renvoyé.
   app.post('/api/checkin', async (req, res) => {
     const { licence, machine, version, os } = (req.body ?? {}) as Record<string, string>;
+    // licence renouvelée en ligne : renvoyée même si celle de l'ordinateur a déjà expiré
+    const peek = pay.peekLicence(String(licence ?? ''), keys);
+    const renewal = peek && peek.machine === String(machine ?? '') ? await pay.renewalOf(peek.id, peek.expires).catch(() => null) : null;
     let lic: LicencePayload;
     try {
-      lic = checkLicence(String(licence ?? ''), publicKey, String(machine ?? ''), new Date());
+      lic = checkLicence(String(licence ?? ''), keys, String(machine ?? ''), new Date());
     } catch (e) {
-      res.json({ status: 'invalid', message: (e as Error).message, serverTime: new Date().toISOString() });
+      res.json({ status: 'invalid', message: (e as Error).message, renewal, serverTime: new Date().toISOString() });
       return;
     }
     let status: 'active' | 'revoked' = 'active';
     let message: string | null = null;
     try {
+      if (await forgedSale(String(licence))) {
+        res.json({ status: 'revoked', message: `Cette licence n’a pas été délivrée par AIT. Contactez AIT au ${PHONE}.`, renewal: null, serverTime: new Date().toISOString() });
+        return;
+      }
       await admin.register('licence', lic);
       await admin.touch(lic.id, { version, os, ip: clientIp(req) });
       const st = await admin.statusOf(lic.id);
@@ -120,8 +133,28 @@ if (config.online) {
     } catch (e) {
       console.error('Registre d’administration indisponible :', (e as Error).message);
     }
-    res.json({ status, message, serverTime: new Date().toISOString(), managed: admin.adminEnabled() });
+    res.json({ status, message, renewal: status === 'active' ? renewal : null, serverTime: new Date().toISOString(), managed: admin.adminEnabled() });
   });
+
+  // Vente en ligne (LigdiCash) : sans code d'accès, la page d'achat est publique.
+  app.get('/api/paiement/tarifs', async (_req, res) => {
+    res.json({ open: pay.salesEnabled(), prices: pay.salesEnabled() ? (await pay.listPrices()).map(({ product, kind, duration, label, amount }) => ({ product, kind, duration, label, amount })) : [] });
+  });
+  app.post('/api/paiement/commande', async (req, res) => { res.json(await pay.createOrder((req.body ?? {}) as Record<string, string>)); });
+  app.get('/api/paiement/commande/:id', async (req, res) => {
+    const o = /^[0-9a-f-]{36}$/.test(req.params.id) ? await pay.refreshOrder(req.params.id) : null;
+    if (!o) fail(404, 'Commande introuvable.');
+    // le texte d'un code de chorale renouvelé n'est pas montré ici : il arrive tout seul sur les téléphones de la chorale
+    const showText = o!.status === 'paid' && !(o!.kind === 'acces' && o!.renew_id);
+    res.json({ id: o!.id, status: o!.status, kind: o!.kind, product: o!.product, amount: o!.amount, client: o!.client, renewal: !!o!.renew_id,
+      itemId: o!.item_id, expires: o!.expires, text: showText ? o!.text : null });
+  });
+  app.post('/api/paiement/rappel', express.urlencoded({ extended: true }), async (req, res) => {
+    try { await pay.onCallback((req.body ?? {}) as Record<string, unknown>); } catch (e) { console.error('Rappel LigdiCash :', (e as Error).message); }
+    res.json({ ok: true });
+  });
+  app.post('/api/paiement/recuperer', async (req, res) => { res.json({ licence: await pay.licenceForMachine(String(req.body?.machine ?? '')).catch(() => null) }); });
+  app.post('/api/paiement/renouvellement', async (req, res) => { res.json({ code: await pay.renewalForCode(String(req.body?.code ?? ''), keys).catch(() => null) }); });
 
   // Administration AIT : jeton signé par la clé AIT (Espace AIT du téléphone), valable 10 minutes.
   app.use('/api/admin', (req, res, next) => {
@@ -136,6 +169,13 @@ if (config.online) {
     next();
   });
   app.get('/api/admin/apercu', async (_req, res) => { res.json(await admin.overview()); });
+  app.get('/api/admin/tarifs', async (_req, res) => { res.json({ open: pay.salesEnabled(), prices: await pay.listPrices(true) }); });
+  app.post('/api/admin/tarifs', async (req, res) => {
+    const prices = Array.isArray(req.body?.prices) ? req.body.prices.slice(0, 50) : [];
+    await pay.setPrices(prices);
+    res.json({ ok: true, prices: await pay.listPrices(true) });
+  });
+  app.get('/api/admin/ventes', async (req, res) => { res.json(await pay.listOrders(Number(req.query['limite'] ?? 100))); });
   app.get('/api/admin/elements', async (_req, res) => { res.json(await admin.listItems()); });
   app.get('/api/admin/evenements', async (req, res) => { res.json(await admin.listEvents(Number(req.query['limite'] ?? 100))); });
   app.post('/api/admin/elements/:id/statut', async (req, res) => {
@@ -158,8 +198,8 @@ if (config.online) {
     let n = 0;
     for (const it of items) {
       try {
-        if (String(it).startsWith('PUP1.')) { const l = decodeLicence(String(it), publicKey); await admin.register('licence', l); n++; }
-        else if (String(it).startsWith('PUPA1.')) { const a = checkAccess(String(it), publicKey, new Date(0)); await admin.register('acces', a); n++; }
+        if (String(it).startsWith('PUP1.')) { const l = decodeLicence(String(it), keys); await admin.register('licence', l); n++; }
+        else if (String(it).startsWith('PUPA1.')) { const a = checkAccess(String(it), keys, new Date(0)); await admin.register('acces', a); n++; }
       } catch { /* texte invalide : ignoré */ }
     }
     res.json({ ok: true, count: n });
@@ -320,6 +360,11 @@ app.get('/files/:id/:folder/:file', async (req, res) => {
 });
 
 app.use('/api', (_req: Request, res: Response) => { res.status(404).json({ error: 'Adresse inconnue.' }); });
+// Page d'achat en ligne (serveur AIT) : hors de l'application, ouverte dans le navigateur du client.
+if (config.online) {
+  const shopPage = path.join(process.env.PUPITRE_ROOT ?? process.cwd(), 'server', 'boutique', 'acheter.html');
+  app.get(['/acheter', '/acheter/commande/:id'], (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.sendFile(shopPage); });
+}
 app.use(express.static(config.webDir, { index: 'index.html', maxAge: '1h' }));
 app.get('/{*splat}', (_req, res) => { res.sendFile(path.join(config.webDir, 'index.html')); });
 

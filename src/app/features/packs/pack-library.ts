@@ -5,6 +5,7 @@ import { PackStore, PackSummary } from '../../core/packs';
 import { RemoteReader } from '../../core/remote';
 import { frDateShort } from '../../core/dates';
 import { voiceColor } from '../../core/api';
+import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
 
 @Component({
   selector: 'app-pack-library',
@@ -42,6 +43,7 @@ import { voiceColor } from '../../core/api';
       <p class="access" [class.warn]="soon(i.expires)">
         Abonnement de <b>{{ i.client }}</b> : {{ i.issued ? 'du ' + date(i.issued) + ' ' : '' }}{{ i.expires ? 'au ' + date(i.expires) + ' inclus' : 'sans date de fin' }}
         @if (left(i.expires); as n) { · {{ n }} jour{{ n === 1 ? '' : 's' }} restant{{ n === 1 ? '' : 's' }} }
+        @if (i.expires) { · <a [href]="renew(i.id)" [target]="shopTarget" rel="noopener">Renouveler</a> }
       </p>
     }
     <p class="settings"><a routerLink="/reglages">Réglages du serveur de lecture</a></p>
@@ -129,6 +131,8 @@ export class PackLibrary {
   private readonly router = inject(Router);
   protected readonly over = signal(false);
   protected readonly color = voiceColor;
+  protected readonly shopTarget = SHOP_TARGET;
+  protected renew(id: string) { return shopUrl({ renouveler: id }, this.remote.settings().url || SHOP_SERVER); }
   protected readonly date = frDateShort;
   protected left(expires: string | null): number | null {
     if (!expires) return null;

@@ -39,6 +39,17 @@ export const config = {
   /** Hébergement sans disque permanent (Vercel) : l'application mobile utilise la lecture directe /api/lire. */
   direct: env.LECTURE_DIRECTE === '1',
   accessPublicKey: env.ACCESS_PUBLIC_KEY_FILE ?? path.join(root, 'licence', 'cle-publique.pem'),
+  /** Clé de vente : licences et codes payés en ligne, signés par le serveur (clé publique dans l'application). */
+  salePublicKey: env.SALE_PUBLIC_KEY_FILE ?? path.join(root, 'licence', 'cle-vente.pem'),
+  salePrivateKey: env.VENTE_CLE_PRIVEE ? Buffer.from(env.VENTE_CLE_PRIVEE, 'base64').toString('utf8') : null,
+  /** Paiement en ligne LigdiCash (Orange Money, Moov Money) ; LIGDICASH_MODE=live pour encaisser pour de vrai. */
+  ligdicash: {
+    apiKey: env.LIGDICASH_API_KEY ?? null,
+    authToken: env.LIGDICASH_AUTH_TOKEN ?? null,
+    baseUrl: env.LIGDICASH_URL ?? (env.LIGDICASH_MODE === 'live' ? 'https://app.ligdicash.com/pay/v01/' : 'https://test.ligdicash.com/pay/v01/'),
+  },
+  /** Adresse publique du serveur (liens de retour après paiement). */
+  publicUrl: (env.PUBLIC_URL ?? 'https://pupitre-lecture.vercel.app').replace(/\/+$/, ''),
   /** Registre d'administration (en ligne) : base PostgreSQL, par exemple Neon via Vercel (DATABASE_URL). */
   adminDatabaseUrl: env.ADMIN_DATABASE_URL ?? env.DATABASE_URL ?? null,
   corsOrigins: (env.CORS_ORIGINS ?? 'https://localhost,capacitor://localhost,http://localhost').split(',').map((o) => o.trim()).filter(Boolean),

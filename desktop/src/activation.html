@@ -55,8 +55,17 @@
     <button class="primary" id="retry" type="button" hidden style="margin-top:12px">Réessayer la vérification</button>
   </div>
 
+  <section class="card buy">
+    <div class="eyebrow">Le plus simple · Payer en ligne</div>
+    <p>Orange Money ou Moov Money, par LigdiCash. La licence s’installe toute seule après le paiement.</p>
+    <div class="actions">
+      <button class="primary" id="shop" type="button">Acheter une licence</button>
+      <button class="quiet" id="paid" type="button" hidden>J’ai payé : vérifier</button>
+    </div>
+  </section>
+
   <section class="card">
-    <div class="eyebrow">1 · Envoyez cet identifiant à AIT</div>
+    <div class="eyebrow">Ou · 1 · Envoyez cet identifiant à AIT</div>
     <div class="machine">
       <code id="machine">…</code>
       <button class="quiet" id="copy" type="button">Copier</button>
@@ -82,6 +91,7 @@
     const status = JSON.parse(new URLSearchParams(location.search).get('status') || '{}');
     $('machine').textContent = status.machine || '';
     if (status.problem && status.problem !== 'missing') $('reason').textContent = status.message;
+    if (status.problem === 'expired') $('shop').textContent = 'Renouveler en ligne';
     if (status.problem === 'offline' || status.problem === 'revoked') {
       $('retry').hidden = false;
       if (status.problem === 'offline') document.querySelector('h1').textContent = 'Vérification de la licence';
@@ -93,6 +103,25 @@
       const msg = $('msg');
       if (res.ok) { msg.className = 'message ok'; msg.textContent = 'Licence vérifiée. Ouverture de Pupitre…'; }
       else { msg.className = 'message err'; msg.textContent = res.problem === 'offline' ? 'Toujours pas de connexion à Internet. Vérifiez le Wi-Fi ou les données mobiles, puis réessayez.' : res.message; }
+    };
+    // Après l'achat, la page de paiement s'ouvre dans le navigateur : on vérifie toutes les 15 secondes.
+    let waiting = null;
+    async function lookForPurchase() {
+      const res = await window.pupitre.retry();
+      if (res.ok) { clearInterval(waiting); $('msg').className = 'message ok'; $('msg').textContent = 'Paiement reçu. Ouverture de Pupitre…'; }
+      return res;
+    }
+    $('shop').onclick = async () => {
+      await window.pupitre.shop();
+      $('paid').hidden = false;
+      $('msg').className = 'message'; $('msg').textContent = 'Terminez le paiement dans le navigateur : Pupitre s’ouvrira tout seul ensuite.';
+      clearInterval(waiting); waiting = setInterval(lookForPurchase, 15000);
+    };
+    $('paid').onclick = async () => {
+      $('paid').disabled = true; $('paid').textContent = 'Vérification…';
+      const res = await lookForPurchase();
+      $('paid').disabled = false; $('paid').textContent = 'J’ai payé : vérifier';
+      if (!res.ok) { $('msg').className = 'message err'; $('msg').textContent = 'Paiement pas encore reçu. Si vous venez de valider, attendez une minute et réessayez.'; }
     };
     window.pupitre.credits().then((c) => {
       $('contact').innerHTML = `Contact : <b>${c.company}</b> · ${c.companyLong} · ${c.city}, ${c.country}<br>Téléphone : <b>${c.phones.map((p) => p.label).join('</b> · <b>')}</b>`;

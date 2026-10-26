@@ -9,6 +9,9 @@ const EVENT_LABEL: Record<string, string> = {
 };
 const SERVER_KEY = 'pupitre-ait-serveur';
 
+interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean }
+interface SaleOrder { id: string; created_at: string; product: string; amount: number; client: string; status: string; item_id: string | null; renew_id: string | null }
+
 /** Tableau de bord AIT : qui est connecté, état des licences et des codes, désactivation à distance. */
 @Component({
   selector: 'app-ait-dashboard',
@@ -65,6 +68,35 @@ const SERVER_KEY = 'pupitre-ait-serveur';
     }
     @if (loaded() && !groups().length) { <p class="hint">Aucune licence ni aucun code dans le registre du serveur pour l’instant.</p> }
 
+    <section class="glass sales">
+      <h3>Ventes en ligne</h3>
+      @if (sales(); as v) {
+        <p class="small"><b>{{ money(v.month) }}</b> ce mois-ci · {{ money(v.total) }} au total · {{ v.count }} vente(s)</p>
+      }
+      @if (salesOpen() === false) {
+        <p class="small warn">Paiement en ligne fermé : il manque les clés LigdiCash sur le serveur. Les tarifs restent modifiables.</p>
+      }
+      <form class="prices" (ngSubmit)="savePrices()">
+        @for (p of prices(); track p.product) {
+          <label class="price">
+            <input type="checkbox" [(ngModel)]="p.active" [name]="'on-' + p.product" [attr.aria-label]="'Proposer ' + p.label">
+            <span>{{ p.label }}</span>
+            <input class="amount" type="number" inputmode="numeric" min="0" step="100" [(ngModel)]="p.amount" [name]="'px-' + p.product" placeholder="FCFA">
+          </label>
+        }
+        <button class="btn" type="submit">Enregistrer les tarifs</button>
+        <span class="small">Une formule cochée et avec un prix apparaît sur la page d’achat.</span>
+      </form>
+      @if (orders().length) {
+        <ul>
+          @for (o of orders(); track o.id) {
+            <li class="order"><span class="when">{{ when(o.created_at) }}</span> <b>{{ money(o.amount) }}</b> · {{ o.client }} · {{ o.item_id ?? o.renew_id ?? o.product }}
+              <span class="pill" [class.ok]="o.status === 'paid'" [class.failed]="o.status === 'failed'">{{ orderLabel(o.status) }}</span></li>
+          }
+        </ul>
+      }
+    </section>
+
     @if (events().length) {
       <section class="glass journal">
         <h3>Journal</h3>
@@ -110,6 +142,14 @@ const SERVER_KEY = 'pupitre-ait-serveur';
     .server { margin-top: 1rem; font-size: .82rem; color: var(--ink-soft); }
     .server input { width: 100%; margin-top: .4rem; border-radius: 10px; border: 1px solid var(--hair); background: var(--raised); color: var(--ink); padding: .5rem .7rem; font: inherit; }
     .hint { color: var(--ink-soft); }
+    .sales { padding: 1rem 1.1rem; margin-top: 1rem; display: grid; gap: .6rem; }
+    .sales h3 { font-size: 1.05rem; }
+    .warn { color: var(--danger); }
+    .prices { display: grid; gap: .45rem; }
+    .price { display: grid; grid-template-columns: auto 1fr 7.5rem; gap: .6rem; align-items: center; font-size: .88rem; }
+    .amount { border-radius: 10px; border: 1px solid var(--hair); background: var(--raised); color: var(--ink); padding: .4rem .6rem; font: inherit; text-align: right; }
+    .prices .btn { justify-self: start; }
+    .order { font-size: .82rem; display: block; }
     .banner { padding: .7rem 1rem; border-radius: 12px; border: 1px solid var(--hair); background: var(--raised); margin-bottom: 1rem; }
   `],
 })
@@ -121,6 +161,10 @@ export class AitDashboard {
   protected readonly loading = signal(false);
   protected readonly loaded = signal(false);
   protected readonly error = signal<string | null>(null);
+  protected readonly prices = signal<Price[]>([]);
+  protected readonly salesOpen = signal<boolean | null>(null);
+  protected readonly orders = signal<SaleOrder[]>([]);
+  protected readonly sales = signal<{ total: number; month: number; count: number } | null>(null);
   protected readonly date = frDateShort;
   protected query = '';
   protected server = (() => { try { return localStorage.getItem(SERVER_KEY) || ADMIN_SERVER; } catch { return ADMIN_SERVER; } })();
@@ -154,6 +198,12 @@ export class AitDashboard {
       ]);
       this.stats.set(stats); this.items.set(items); this.events.set(events);
       this.loaded.set(true);
+      const [tarifs, ventes] = await Promise.all([
+        this.ait.admin<{ open: boolean; prices: Price[] }>('/tarifs', {}, this.base),
+        this.ait.admin<{ orders: SaleOrder[]; total: number; month: number; count: number }>('/ventes?limite=30', {}, this.base),
+      ]);
+      this.prices.set(tarifs.prices); this.salesOpen.set(tarifs.open);
+      this.orders.set(ventes.orders); this.sales.set({ total: ventes.total, month: ventes.month, count: ventes.count });
     } catch (e) {
       this.error.set((e as Error).message);
     } finally {
@@ -174,6 +224,16 @@ export class AitDashboard {
     try { await this.ait.admin('/clients/statut', { method: 'POST', body: { client, status, reason } }, this.base); await this.refresh(); }
     catch (e) { this.error.set((e as Error).message); }
   }
+
+  protected async savePrices() {
+    try {
+      const r = await this.ait.admin<{ prices: Price[] }>('/tarifs', { method: 'POST', body: { prices: this.prices().map(({ product, amount, active }) => ({ product, amount, active })) } }, this.base);
+      this.prices.set(r.prices);
+      this.error.set(null);
+    } catch (e) { this.error.set((e as Error).message); }
+  }
+  protected money(n: number) { return `${Number(n).toLocaleString('fr-FR')} FCFA`; }
+  protected orderLabel(s: string) { return ({ paid: 'Payée', pending: 'En attente', created: 'Créée', failed: 'Échouée' } as Record<string, string>)[s] ?? s; }
 
   protected online(i: ServerItem) { return !!i.last_seen && Date.now() - Date.parse(i.last_seen) < 15 * 60_000; }
   protected seen(i: ServerItem) {

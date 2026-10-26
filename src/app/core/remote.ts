@@ -55,6 +55,10 @@ export class RemoteReader {
     const s = this.settings();
     if (!s.url || !s.code) return;
     try {
+      // code renouvelé en ligne (même expiré) : le serveur renvoie le nouveau texte, installé à la place de l'ancien
+      const r = await fetch(`${s.url}/api/paiement/renouvellement`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: s.code }) })
+        .then((res) => (res.ok ? res.json() as Promise<{ code: string | null }> : null)).catch(() => null);
+      if (r?.code) { s.code = r.code; this.save(s); }
       const info = await this.check(s);
       if (info.client) this.save({ ...s, direct: !!info.direct, info });
     } catch { /* hors ligne ou code refusé : on garde les dernières dates connues */ }

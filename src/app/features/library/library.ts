@@ -4,6 +4,7 @@ import { Router, RouterLink } from '@angular/router';
 import { LibraryStore } from '../../core/library.store';
 import { LicenceService } from '../../core/licence';
 import { frDateShort } from '../../core/dates';
+import { shopUrl } from '../../core/shop';
 import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/api';
 
 @Component({
@@ -26,7 +27,7 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
 
     @if (licence.info(); as l) {
       @if (l.daysLeft !== null && l.daysLeft <= 30) {
-        <p class="renew" role="status">Votre licence se termine le <b>{{ date(l.expires!) }}</b> ({{ l.daysLeft }} jour{{ l.daysLeft === 1 ? '' : 's' }}). <a routerLink="/a-propos">Voir la licence</a></p>
+        <p class="renew" role="status">Votre licence se termine le <b>{{ date(l.expires!) }}</b> ({{ l.daysLeft }} jour{{ l.daysLeft === 1 ? '' : 's' }}). <a [href]="shop(l.id, l.machine)" target="_blank" rel="noopener">Renouveler en ligne</a> · <a routerLink="/a-propos">Voir la licence</a></p>
       }
     }
     <label class="drop glass" [class.over]="over()" [class.sending]="store.uploading()"
@@ -169,6 +170,7 @@ export class Library {
   protected readonly store = inject(LibraryStore);
   protected readonly licence = inject(LicenceService);
   protected readonly date = frDateShort;
+  protected shop(id: string, machine: string) { return shopUrl({ renouveler: id, machine }); }
   private readonly router = inject(Router);
   protected readonly over = signal(false);
   protected readonly accept = ACCEPT;

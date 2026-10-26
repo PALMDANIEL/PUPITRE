@@ -95,6 +95,22 @@ Sur votre téléphone : *Espace AIT* → onglet **Tableau de bord** (la clé AIT
 - Chez le client, Pupitre se signale au démarrage puis toutes les 10 minutes (`POST /api/checkin`).
   Désactivé : il se ferme et affiche le motif. **Sans Internet pendant 30 jours** : il demande une connexion de quelques secondes.
 
+## Vente en ligne (LigdiCash : Orange Money, Moov Money)
+Le client paie lui-même sur **https://pupitre-lecture.vercel.app/acheter** ; la licence ou le code est créé et remis aussitôt.
+- **Ordinateur** : fenêtre d'activation › *Acheter une licence* (l'identifiant de l'ordinateur est déjà rempli) ;
+  la licence s'installe toute seule dès le paiement reçu. *Renouveler en ligne* : menu *Licence…*, page *À propos*,
+  ou l'alerte 30 jours avant la fin ; la nouvelle date arrive à la prochaine vérification (10 min au plus).
+- **Téléphone** : *Réglages du serveur de lecture* › *Acheter un code pour la chorale* ; sous « Mes chants », *Renouveler* :
+  les téléphones de la chorale reçoivent le code prolongé tout seuls.
+- Un renouvellement prolonge à partir de la fin actuelle (ou d'aujourd'hui si elle est passée). Numéros vendus : `AIT-2026-V0001`, `ACC-2026-V0001`.
+- **Tarifs** : Espace AIT › *Tableau de bord* › *Ventes en ligne* (une formule cochée avec un prix apparaît sur la page d'achat). Ventes du mois et total au même endroit.
+- **Clé de vente** (`npm run licence -- cle-vente`) : distincte de la clé AIT, elle ne sert qu'à signer ce qui est payé ; clé publique
+  `licence/cle-vente.pem` dans l'application, clé privée `~/.pupitre-ait/vente-privee.pem` et sur le serveur (`VENTE_CLE_PRIVEE`, en base64).
+  Le serveur refuse tout texte signé par elle qu'il n'a pas vendu, et elle ne permet pas d'administrer.
+- Variables du serveur : `LIGDICASH_API_KEY`, `LIGDICASH_AUTH_TOKEN` (projet API du compte marchand LigdiCash), `LIGDICASH_MODE=live`
+  pour encaisser pour de vrai (sinon plateforme de test), `VENTE_CLE_PRIVEE`. Sans elles, la page d'achat affiche « bientôt disponible ».
+- Le paiement n'est jamais cru sur parole : à chaque retour ou rappel, le serveur redemande l'état de la facture à LigdiCash.
+
 ## Codes d'accès au serveur de lecture (photos depuis le téléphone)
 
 ```bash

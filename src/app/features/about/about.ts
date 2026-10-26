@@ -5,6 +5,7 @@ import { CREDITS } from '../../core/credits';
 import { frDateShort } from '../../core/dates';
 import { LicenceService } from '../../core/licence';
 import { IS_PLAYER } from '../../core/platform';
+import { SHOP_TARGET, shopUrl } from '../../core/shop';
 
 @Component({
   selector: 'app-about',
@@ -37,7 +38,10 @@ import { IS_PLAYER } from '../../core/platform';
           }
           <div><dt>Ordinateur</dt><dd class="mono">{{ l.machine }}</dd></div>
         </dl>
-        <p class="note">Pour renouveler : menu <b>Licence…</b> › <b>Saisir une nouvelle licence</b>, ou contactez AIT au {{ credits.phones[0].label }}.</p>
+        @if (l.expires) {
+          <p class="note"><a class="btn" [href]="shop(l.id, l.machine)" [target]="shopTarget" rel="noopener">Renouveler en ligne</a>
+            Orange Money ou Moov Money ; la nouvelle date s’installe toute seule. Ou contactez AIT au {{ credits.phones[0].label }}.</p>
+        }
       </section>
     }
 
@@ -146,6 +150,8 @@ export class About {
   protected readonly licence = inject(LicenceService);
   protected readonly date = frDateShort;
   protected readonly player = IS_PLAYER;
+  protected readonly shopTarget = SHOP_TARGET;
+  protected shop(id: string, machine: string) { return shopUrl({ renouveler: id, machine }); }
   protected readonly ait = inject(AitStore);
   private readonly router = inject(Router);
   private taps: number[] = [];

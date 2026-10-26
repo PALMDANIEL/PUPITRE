@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('pupitre', {
   openFile: () => ipcRenderer.invoke('licence:open-file'),
   install: (text: string) => ipcRenderer.invoke('licence:install', text),
   retry: () => ipcRenderer.invoke('licence:retry'),
+  shop: () => ipcRenderer.invoke('licence:shop'),
   credits: () => ipcRenderer.invoke('credits'),
 });
