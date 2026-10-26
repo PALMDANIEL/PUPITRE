@@ -1,6 +1,6 @@
 /**
  * Vente en ligne (serveur AIT) : licences d'ordinateur et codes de chorale payés par Orange Money ou Moov Money
- * via LigdiCash, puis signés par la clé de vente du serveur et remis automatiquement.
+ * via un agrégateur (Moneroo ou LigdiCash, voir passerelles.ts), puis signés par la clé de vente du serveur et remis automatiquement.
  * La clé AIT principale ne quitte jamais le Mac et le téléphone d'AIT : le serveur n'a que la clé de vente,
  * et il ne reconnaît une licence signée par elle que s'il l'a lui-même vendue (voir isKnownSale).
  */
@@ -11,11 +11,12 @@ import { normalizeMachineId } from '../licence/machine';
 import { addDuration } from '../src/app/core/duree';
 import { db, event } from './admin';
 import { config } from './config';
+import { activeGateway, gatewayOf } from './passerelles';
 import { UserError } from './types';
 
 export interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean; sort: number }
 export interface Order {
-  id: string; created_at: string; product: string; kind: 'licence' | 'acces'; duration: string; amount: number;
+  id: string; created_at: string; gateway: string | null; product: string; kind: 'licence' | 'acces'; duration: string; amount: number;
   client: string; contact: string | null; machine: string | null; renew_id: string | null;
   status: 'created' | 'pending' | 'paid' | 'failed'; invoice_token: string | null; operator: string | null;
   item_id: string | null; expires: string | null; text: string | null; paid_at: string | null;
@@ -25,7 +26,7 @@ const fail = (status: number, message: string): never => { throw Object.assign(n
 const today = () => new Date().toISOString().slice(0, 10);
 const nextDay = (iso: string) => new Date(Date.parse(`${iso}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
-export const salesEnabled = () => !!(config.salePrivateKey && config.ligdicash.apiKey && config.ligdicash.authToken && config.online && config.adminDatabaseUrl);
+export const salesEnabled = () => !!(config.salePrivateKey && activeGateway() && config.online && config.adminDatabaseUrl);
 
 async function pool() {
   const d = await db();
@@ -62,26 +63,8 @@ async function renewable(id: string, machine: string | null) {
   return item;
 }
 
-interface LigdiResponse { response_code: string; token?: string; response_text?: string; description?: string; status?: string; montant?: number | string; amount?: number | string; operator_name?: string; custom_data?: unknown }
-
-async function ligdicash(route: string, init: RequestInit = {}): Promise<LigdiResponse> {
-  const { apiKey, authToken, baseUrl } = config.ligdicash;
-  let res: Response;
-  try {
-    res = await fetch(baseUrl + route, {
-      ...init,
-      headers: { Apikey: apiKey ?? '', Authorization: `Bearer ${authToken ?? ''}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-  } catch {
-    return fail(502, 'Le service de paiement ne répond pas. Réessayez dans quelques minutes.');
-  }
-  if (!res.ok) fail(502, `Le service de paiement a refusé la demande (${res.status}).`);
-  return await res.json() as LigdiResponse;
-}
-
-/** Crée la commande et la facture LigdiCash ; renvoie l'adresse de la page de paiement. */
-export async function createOrder(input: { product?: string; client?: string; contact?: string; machine?: string; renouveler?: string }) {
+/** Crée la commande et la facture chez l'agrégateur ; renvoie l'adresse de la page de paiement. */
+export async function createOrder(input: { product?: string; client?: string; contact?: string; email?: string; machine?: string; renouveler?: string }) {
   if (!salesEnabled()) fail(503, 'Le paiement en ligne n’est pas encore ouvert. Contactez AIT au 00226 77 41 91 06.');
   const d = await pool();
   const { rows } = await d.query<Price>('SELECT * FROM ait_prices WHERE product = $1 AND active AND amount > 0', [String(input.product ?? '')]);
@@ -102,33 +85,26 @@ export async function createOrder(input: { product?: string; client?: string; co
       if (!machine) fail(400, 'Identifiant d’ordinateur invalide : 16 caractères, ex. ABCD-EFGH-JKMN-PQRS (affiché par Pupitre sur l’ordinateur).');
     }
   }
+  const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(input.email ?? '').trim()) ? String(input.email).trim().slice(0, 120) : null;
+  const gateway = activeGateway()!;
   const id = randomUUID();
   await d.query(
-    `INSERT INTO ait_orders (id, product, kind, duration, amount, client, contact, machine, renew_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [id, price.product, price.kind, price.duration, price.amount, client, contact, machine, renewId]);
+    `INSERT INTO ait_orders (id, gateway, product, kind, duration, amount, client, contact, machine, renew_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [id, gateway.name, price.product, price.kind, price.duration, price.amount, client, contact, machine, renewId]);
   const back = `${config.publicUrl}/acheter/commande/${id}`;
-  const r = await ligdicash('redirect/checkout-invoice/create', {
-    method: 'POST',
-    body: JSON.stringify({
-      commande: {
-        invoice: {
-          items: [{ name: price.label, description: renewId ? `Renouvellement ${renewId}` : client, quantity: 1, unit_price: price.amount, total_price: price.amount }],
-          total_amount: price.amount, devise: 'XOF', description: `Pupitre · ${price.label}${renewId ? ` · ${renewId}` : ''}`,
-          customer: '', customer_firstname: client, customer_lastname: '', customer_email: '', external_id: id, otp: '',
-        },
-        store: { name: 'Pupitre par AIT', website_url: config.publicUrl },
-        actions: { cancel_url: `${back}?annule=1`, return_url: back, callback_url: `${config.publicUrl}/api/paiement/rappel` },
-        custom_data: { commande: id },
-      },
-    }),
-  });
-  if (r.response_code !== '00' || !r.token || !r.response_text) {
-    await d.query(`UPDATE ait_orders SET status = 'failed', detail = $2 WHERE id = $1`, [id, JSON.stringify(r)]);
-    fail(502, `Le service de paiement a refusé la commande${r.description ? ` : ${r.description}` : ''}.`);
+  let checkout;
+  try {
+    checkout = await gateway.create({
+      order: id, amount: price.amount!, label: price.label, description: `Pupitre · ${price.label}${renewId ? ` · ${renewId}` : ''}`,
+      client, contact, email, returnUrl: back, cancelUrl: `${back}?annule=1`, callbackUrl: `${config.publicUrl}/api/paiement/rappel`,
+    });
+  } catch (e) {
+    await d.query(`UPDATE ait_orders SET status = 'failed', detail = $2 WHERE id = $1`, [id, JSON.stringify({ error: (e as Error).message })]);
+    throw e;
   }
-  await d.query(`UPDATE ait_orders SET status = 'pending', invoice_token = $2 WHERE id = $1`, [id, r.token]);
+  await d.query(`UPDATE ait_orders SET status = 'pending', invoice_token = $2 WHERE id = $1`, [id, checkout.ref]);
   await event(renewId, 'commande', { order: id, product: price.product, amount: price.amount, client });
-  return { id, url: r.response_text! };
+  return { id, url: checkout.url };
 }
 
 async function nextNumber(kind: 'licence' | 'acces', year: string) {
@@ -189,29 +165,32 @@ async function fulfil(order: Order, operator: string | null): Promise<void> {
   }
 }
 
-/** État d'une commande ; tant qu'elle n'est pas réglée, demande à LigdiCash où en est le paiement. */
+/** État d'une commande ; tant qu'elle n'est pas réglée, demande à l'agrégateur où en est le paiement. */
 export async function refreshOrder(id: string): Promise<Order | null> {
   const d = await pool();
   const get = async () => (await d.query<Order>(`SELECT *, to_char(expires, 'YYYY-MM-DD') AS expires FROM ait_orders WHERE id = $1`, [id])).rows[0] ?? null;
   const order = await get();
   if (!order || order.status !== 'pending' || !order.invoice_token) return order;
-  const r = await ligdicash(`redirect/checkout-invoice/confirm/?invoiceToken=${encodeURIComponent(order.invoice_token)}`);
-  const paid = Number(r.montant ?? r.amount ?? 0);
-  if (r.response_code === '00' && r.status === 'completed') {
-    if (paid && paid < order.amount) {
-      await d.query(`UPDATE ait_orders SET status = 'failed', detail = $2 WHERE id = $1`, [id, JSON.stringify({ reason: 'montant', paid })]);
+  const r = await gatewayOf(order.gateway).check(order.invoice_token);
+  if (r.state === 'paid') {
+    if ((r.amount !== null && r.amount < order.amount) || (r.currency && r.currency !== 'XOF')) {
+      await d.query(`UPDATE ait_orders SET status = 'failed', detail = $2 WHERE id = $1`, [id, JSON.stringify({ reason: 'montant', amount: r.amount, currency: r.currency })]);
     } else {
-      await fulfil(order, r.operator_name ?? null);
+      await fulfil(order, r.operator);
     }
-  } else if (r.status === 'nocompleted') {
-    await d.query(`UPDATE ait_orders SET status = 'failed', detail = $2 WHERE id = $1`, [id, JSON.stringify({ status: r.status })]);
+  } else if (r.state === 'failed') {
+    await d.query(`UPDATE ait_orders SET status = 'failed', detail = $2 WHERE id = $1`, [id, JSON.stringify(r.detail ?? {})]);
   }
   return get();
 }
 
-/** Rappel de LigdiCash : on ne croit pas son contenu, on revérifie la facture auprès de LigdiCash. */
+/** Rappel de l'agrégateur : on ne croit pas son contenu, on revérifie le paiement auprès de lui. */
 export async function onCallback(body: Record<string, unknown>) {
   const d = await pool();
+  // Moneroo : { event, data: { id, metadata } } ; LigdiCash : { token, external_id, custom_data }
+  const data = (body['data'] ?? {}) as Record<string, unknown>;
+  const meta = (data['metadata'] ?? {}) as Record<string, string>;
+  if (data['id']) { body = { ...body, token: data['id'], external_id: meta['commande'] ?? body['external_id'] }; }
   const token = String(body['token'] ?? body['invoiceToken'] ?? '');
   const custom = body['custom_data'];
   const fromCustom = Array.isArray(custom)

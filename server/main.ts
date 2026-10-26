@@ -16,6 +16,7 @@ import { checkAdmin } from '../licence/admin';
 import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '../licence/core';
 import * as admin from './admin';
 import * as pay from './paiement';
+import { monerooSignatureOk } from './passerelles';
 
 const PHONE = '00226 77 41 91 06';
 const clientIp = (req: Request) => String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim() || undefined;
@@ -51,7 +52,8 @@ const assertIdle = (m: ScoreMeta) => { if (BUSY.includes(m.status)) fail(409, 'U
 
 const app = express();
 app.disable('x-powered-by');
-app.use(express.json({ limit: '100kb' }));
+// corps brut gardé : signature des rappels de paiement (Moneroo)
+app.use(express.json({ limit: '100kb', verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } }));
 
 if (config.online) {
   const publicKey = fsSync.readFileSync(config.accessPublicKey, 'utf8');
@@ -150,6 +152,9 @@ if (config.online) {
       itemId: o!.item_id, expires: o!.expires, text: showText ? o!.text : null });
   });
   app.post('/api/paiement/rappel', express.urlencoded({ extended: true }), async (req, res) => {
+    if (req.headers['x-moneroo-signature'] !== undefined || config.paymentGateway === 'moneroo' && req.body?.event) {
+      if (!monerooSignatureOk((req as Request & { rawBody?: Buffer }).rawBody, String(req.headers['x-moneroo-signature'] ?? ''))) { res.status(403).json({ error: 'Signature invalide.' }); return; }
+    }
     try { await pay.onCallback((req.body ?? {}) as Record<string, unknown>); } catch (e) { console.error('Rappel LigdiCash :', (e as Error).message); }
     res.json({ ok: true });
   });

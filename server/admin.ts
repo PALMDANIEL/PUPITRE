@@ -84,6 +84,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS ait_orders_machine ON ait_orders (machine) WHERE status = 'paid';
   CREATE INDEX IF NOT EXISTS ait_orders_token ON ait_orders (invoice_token);
   CREATE TABLE IF NOT EXISTS ait_counters (name text PRIMARY KEY, n integer NOT NULL);
+  ALTER TABLE ait_orders ADD COLUMN IF NOT EXISTS gateway text;
 `;
 
 let pool: pg.Pool | null = null;
