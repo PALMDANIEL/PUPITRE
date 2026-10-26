@@ -1,7 +1,7 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreStore } from '../../core/score.store';
-import { ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
+import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
 
 @Component({
   selector: 'app-mixer',
@@ -66,7 +66,29 @@ import { ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
         <div class="seg" role="radiogroup" aria-label="Sonorité">
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'choeur'" (click)="timbre.set('choeur')">Voix de chœur</button>
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'piano'" (click)="timbre.set('piano')">Piano</button>
+          <button type="button" role="radio" [attr.aria-checked]="timbre() === 'chant'" (click)="timbre.set('chant')">Voix chantées <small>essai</small></button>
         </div>
+        @if (timbre() === 'chant') {
+          <div class="lyrics">
+            <p class="hint">Chaque note est chantée sur sa syllabe, à sa hauteur exacte. Les paroles viennent de la partition ;
+              corrigez-les ici si besoin : une syllabe par note, séparées par des tirets ou des espaces (« Sain-te Ma-ri-e »),
+              et « _ » pour tenir la syllabe sur la note suivante. Sans paroles, la voix chante « a ».
+              La création prend quelques minutes ; la première fois, les voix sont téléchargées (environ 140 Mo).</p>
+            <label class="row">
+              <span>Langue des paroles</span>
+              <select [value]="langue()" (change)="langue.set($any($event.target).value)">
+                @for (l of langues; track l.id) { <option [value]="l.id">{{ l.label }}</option> }
+              </select>
+            </label>
+            @for (v of voices(); track v.id) {
+              <label class="verse">
+                <span><i class="dot" [style.background]="color(v.id)"></i>{{ v.name }}
+                  <em [class.off]="count(v.id) !== (v.sung ?? v.notes)">{{ count(v.id) }} syllabe{{ count(v.id) > 1 ? 's' : '' }} pour {{ v.sung ?? v.notes }} notes</em></span>
+                <textarea rows="2" spellcheck="false" [value]="lyricOf(v.id)" (input)="setLyric(v.id, $event)" placeholder="Glo-ri-a in ex-cel-sis De-o"></textarea>
+              </label>
+            }
+          </div>
+        }
         <button type="button" class="btn" [disabled]="!dirty() || busy()" (click)="regenerate()">
           {{ busy() ? 'Création de l’audio…' : 'Recréer l’audio' }}
         </button>
@@ -148,6 +170,16 @@ import { ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
     .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; background: var(--raised); }
     .seg button { border: 0; background: none; padding: .38rem .85rem; border-radius: 999px; cursor: pointer; font-weight: 700; font-size: .88rem; color: var(--ink-soft); }
     .seg button[aria-checked="true"] { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+    .seg small { font-size: .68rem; font-weight: 700; opacity: .75; text-transform: uppercase; letter-spacing: .06em; margin-left: .2rem; }
+    .lyrics { display: grid; gap: .7rem; margin: .4rem 0 .2rem; }
+    .lyrics select { border-radius: 10px; border: 1px solid var(--rule); background: var(--raised); color: var(--ink); padding: .35rem .6rem; font: inherit; }
+    .verse { display: grid; gap: .3rem; }
+    .verse span { display: flex; align-items: center; gap: .45rem; font-weight: 700; font-size: .88rem; }
+    .verse em { margin-left: auto; font-style: normal; font-weight: 600; font-size: .78rem; color: var(--ink-soft); }
+    .verse em.off { color: var(--accent-2); }
+    .verse .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+    .verse textarea { width: 100%; border-radius: 10px; border: 1px solid var(--rule); background: var(--raised); color: var(--ink);
+                      padding: .5rem .65rem; font: inherit; font-size: 14px; line-height: 1.45; resize: vertical; }
     .hint { font-size: .88rem; color: var(--ink-soft); }
     .downloads { list-style: none; padding: 0; margin: 0; display: grid; gap: .45rem; }
     .downloads li { display: flex; gap: .9rem; align-items: baseline; flex-wrap: wrap; font-size: .9rem; }
@@ -174,12 +206,18 @@ export class Mixer {
   protected readonly focus = signal<string>('all');
   protected readonly tempo = signal(90);
   protected readonly timbre = signal<Timbre>('choeur');
+  protected readonly langue = signal<Langue>('fr');
+  protected readonly langues = LANGUES;
+  /** Paroles modifiées dans l'éditeur (par voix) ; les autres viennent de la partition. */
+  protected readonly edits = signal<Record<string, string>>({});
   protected readonly color = voiceColor;
   protected readonly url = fileUrl;
   private readonly key = computed(() => `${this.score().id}:${this.score().revision}`);
   protected readonly dirty = computed(() => {
     const m = this.score().manifest;
-    return !!m && (this.tempo() !== m.tempo || this.timbre() !== m.timbre);
+    if (!m) return false;
+    const sung = this.timbre() === 'chant' && (this.langue() !== (m.langue ?? 'fr') || Object.keys(this.edits()).length > 0);
+    return this.tempo() !== m.tempo || this.timbre() !== m.timbre || sung;
   });
 
   constructor() {
@@ -191,6 +229,8 @@ export class Mixer {
         if (!m) return;
         this.tempo.set(m.tempo);
         this.timbre.set(m.timbre);
+        this.langue.set(s.langue ?? m.langue ?? 'fr');
+        this.edits.set({});
         void this.engine.load(m.voices.map((v) => ({ id: v.id, url: fileUrl(s, 'audio', v.stem) })));
       });
     });
@@ -208,7 +248,18 @@ export class Mixer {
   }
   protected seek(e: Event) { this.engine.seek(this.num(e)); }
   protected num(e: Event) { return Number((e.target as HTMLInputElement).value); }
-  protected regenerate() { void this.store?.render({ tempo: this.tempo(), timbre: this.timbre() }); }
+  protected regenerate() {
+    const chant = this.timbre() === 'chant';
+    const paroles = chant && Object.keys(this.edits()).length
+      ? Object.fromEntries(this.voices().map((v) => [v.id, this.lyricOf(v.id)])) : undefined;
+    void this.store?.render({ tempo: this.tempo(), timbre: this.timbre(), ...(chant ? { langue: this.langue(), ...(paroles ? { paroles } : {}) } : {}) });
+  }
+  protected lyricOf(id: string) {
+    return this.edits()[id] ?? this.score().paroles?.[id] ?? this.voices().find((v) => v.id === id)?.lyrics ?? '';
+  }
+  protected setLyric(id: string, e: Event) { this.edits.update((x) => ({ ...x, [id]: (e.target as HTMLTextAreaElement).value })); }
+  /** Syllabes saisies (comme le moteur les compte : tirets et espaces séparent, « _ » compte pour une note). */
+  protected count(id: string) { return this.lyricOf(id).split(/[\s-]+/).filter(Boolean).length; }
   protected correct(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];

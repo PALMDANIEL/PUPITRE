@@ -1,6 +1,7 @@
 """
 Moteur de rendu : MusicXML -> une piste audio par voix.
-Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72] [--timbre choeur|piano]
+Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72] [--timbre choeur|piano|chant]
+        [--langue fr|la|en|mos|dyu] [--paroles paroles.json]   (chant : voix chantées avec les paroles, essai)
 """
 import argparse, copy, json, os, pathlib, re, shutil, statistics, subprocess, sys, zipfile
 from fractions import Fraction
@@ -351,6 +352,43 @@ def synth():
 SFID = 0  # première (et seule) banque chargée
 
 
+def encode_mp3(pcm, base: pathlib.Path):
+    """PCM flottant (mono ou stéréo entrelacé) → MP3 160 kb/s."""
+    import lameenc, numpy as np
+    pcm = np.clip(pcm, -1, 1)
+    enc = lameenc.Encoder()
+    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(2)
+    if pcm.ndim == 1:
+        pcm = np.repeat(pcm, 2)
+    mp3 = base.with_suffix(".mp3")
+    mp3.write_bytes(enc.encode((pcm * 32767).astype("<i2").tobytes()) + enc.flush())
+    return mp3.name
+
+
+def lyrics_text(part):
+    """Paroles d'une voix sous la forme « Sain-te Ma-ri-e _ » (« _ » : la note tient la syllabe précédente)."""
+    words, current, seen = [], "", False
+    for n in part.stripTies().flatten().notes:
+        lyr = n.lyrics[0] if getattr(n, "lyrics", None) else None
+        if lyr is None or not lyr.text:
+            if current:          # note tenue au milieu d'un mot : « ex-cel-_-sis »
+                current += "_-"
+            elif seen:
+                words.append("_")
+            continue
+        seen = True
+        current += lyr.text
+        if lyr.syllabic in ("begin", "middle"):
+            current += "-"
+        else:
+            words.append(current); current = ""
+    if current:
+        words.append(current)
+    while words and words[-1] == "_":
+        words.pop()
+    return " ".join(words)
+
+
 def to_mp3(sc, base: pathlib.Path):
     """Joue la partition note par note dans le synthétiseur (tempo exact, sans fichier MIDI intermédiaire)."""
     import lameenc, numpy as np
@@ -381,12 +419,7 @@ def to_mp3(sc, base: pathlib.Path):
             s.noteon(chan, key, vel)
         elif kind == 0:
             s.noteoff(chan, key)
-    pcm = np.clip(np.concatenate(chunks) if chunks else np.zeros(2, np.float32), -1, 1)
-    enc = lameenc.Encoder()
-    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(2)
-    mp3 = base.with_suffix(".mp3")
-    mp3.write_bytes(enc.encode((pcm * 32767).astype("<i2").tobytes()) + enc.flush())
-    return mp3.name
+    return encode_mp3(np.concatenate(chunks) if chunks else np.zeros(2, np.float32), base)
 
 
 def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
@@ -405,11 +438,41 @@ def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
         shutil.copy(src, dst)
 
 
+def mix(tracks):
+    """Mélange de voix chantées (gain par voix), sans saturation."""
+    import numpy as np
+    n = max(len(t) for t, _ in tracks)
+    out = np.zeros(n, np.float32)
+    for t, g in tracks:
+        out[: len(t)] += t * g
+    peak = float(np.max(np.abs(out))) or 1.0
+    return out / peak * 0.85
+
+
+def sing_voices(voices, labels, tempo_qpm, a):
+    """Voix chantées : voix de femme pour les voix hautes, d'homme pour les voix basses ; paroles saisies ou de la partition."""
+    import chant
+    missing = chant.missing_voices()
+    if missing:
+        sys.exit(f"Voix de synthèse introuvables dans {chant.voice_dir()} : {', '.join(missing)}")
+    typed = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
+    sung = []
+    for i, v in enumerate(voices):
+        vid, vname = labels[i]
+        midis = [p.midi for n in v.recurse().notes for p in n.pitches]
+        kind = "femme" if statistics.mean(midis) >= 60 else "homme"
+        print(f"Chant {i+1}/{len(voices)} : {vname} (voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
+        sung.append(chant.chorus(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid))))
+    return sung
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src"); ap.add_argument("out")
     ap.add_argument("--tempo", type=int, default=0)
-    ap.add_argument("--timbre", choices=["choeur", "piano"], default="choeur")
+    ap.add_argument("--timbre", choices=["choeur", "piano", "chant"], default="choeur")
+    ap.add_argument("--langue", choices=["fr", "la", "en", "mos", "dyu"], default="fr")
+    ap.add_argument("--paroles", help="fichier JSON { id de voix : paroles } saisies par l'utilisateur")
     ap.add_argument("--omr", action="store_true", help="partition lue par Audiveris : ignorer les noms de portées")
     ap.add_argument("--sans-travail", action="store_true", help="pas de pistes de travail (lecture directe pour le mobile, qui mixe lui-même)")
     a = ap.parse_args()
@@ -424,28 +487,40 @@ def main():
         sys.exit("Aucune note n’a été reconnue dans la partition.")
 
     labels = LABELS.get(len(voices)) or [(f"voix{i+1}", f"Voix {i+1}") for i in range(len(voices))]
+    sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else None
     entries = []
     for i, v in enumerate(voices):
         vid, vname = labels[i]
-        stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
+        if sung:
+            stem = encode_mp3(sung[i], out / vid)
+        else:
+            stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
         work = ""
         if not a.sans_travail:
-            practice = stream.Score()
-            for j, other in enumerate(voices):
-                practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 38))
-            work = to_mp3(practice, out / f"{vid}_travail")
+            if sung:
+                work = encode_mp3(mix([(x, 1.0 if i == j else 0.34) for j, x in enumerate(sung)]), out / f"{vid}_travail")
+            else:
+                practice = stream.Score()
+                for j, other in enumerate(voices):
+                    practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 38))
+                work = to_mp3(practice, out / f"{vid}_travail")
         pitches = [p for n in v.recurse().notes for p in n.pitches]
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
         entries.append({"id": vid, "name": vname, "stem": stem, "practice": work,
-                        "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)]})
+                        "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)],
+                        "lyrics": lyrics_text(v), "sung": len(v.stripTies().flatten().notes)})
         print(f"Voix {i+1}/{len(voices)} : {vname} ({fr_name(lo)} à {fr_name(hi)})", flush=True)
 
-    tutti = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre) for v in voices]), out / "tutti")
+    if sung:
+        tutti = encode_mp3(mix([(x, 1.0) for x in sung]), out / "tutti")
+    else:
+        tutti = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre) for v in voices]), out / "tutti")
     export_musicxml(pathlib.Path(a.src), out / "score.musicxml", score)
     ts = next(iter(score.recurse().getElementsByClass(meter.TimeSignature)), None)
     ks = score.analyze("key")
     manifest = {
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
+        **({"langue": a.langue} if a.timbre == "chant" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),
         "timeSignature": ts.ratioString if ts else None,
         "key": f"{fr_name(ks.tonic, octave=False)} {'majeur' if ks.mode == 'major' else 'mineur'}",

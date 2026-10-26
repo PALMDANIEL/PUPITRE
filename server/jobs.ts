@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config, engineCommand } from './config';
+import { ensureVoices } from './voix';
 import { dirOf, listMetas, patchMeta, readMeta } from './store';
 import { BUSY, UserError, type Job, type Manifest } from './types';
 
@@ -88,14 +89,28 @@ async function renderScore(id: string) {
 
   const args = [path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
   if (meta.tempo) args.push('--tempo', String(meta.tempo));
+  if (meta.timbre === 'chant') {
+    // voix chantées : voix de synthèse téléchargées au premier usage, paroles saisies passées au moteur
+    await ensureVoices((done, total) => void patchMeta(id, { progress: base + Math.round((5 * done) / total) }).catch(() => undefined));
+    args.push('--langue', meta.langue ?? 'fr');
+    if (meta.paroles && Object.values(meta.paroles).some((t) => t.trim())) {
+      const file = path.join(dir, 'paroles.json');
+      await fs.writeFile(file, JSON.stringify(meta.paroles));
+      args.push('--paroles', file);
+    }
+  }
   if (meta.source === 'pdf' || meta.source === 'image') args.push('--omr');
   const [renderCmd, renderArgs] = engineCommand('render', args);
   await run(renderCmd, renderArgs, {
     label: 'La création de l’audio',
-    timeoutMs: config.renderTimeoutMs,
+    // le chant prend bien plus longtemps que le synthétiseur (chaque syllabe est prononcée puis accordée)
+    timeoutMs: meta.timbre === 'chant' ? config.renderTimeoutMs * 4 : config.renderTimeoutMs,
     onLine: (line) => {
+      const sung = /^Chant (\d+)\/(\d+)/.exec(line);
+      if (sung) { void patchMeta(id, { progress: base + Math.round(((80 - base) * (Number(sung[1]) - 1)) / Number(sung[2])) }).catch(() => undefined); return; }
       const m = /(?:progress:voice:|Voix )(\d+)\/(\d+)/.exec(line);
-      if (m) void patchMeta(id, { progress: base + Math.round(((95 - base) * Number(m[1])) / Number(m[2])) }).catch(() => undefined);
+      const from = meta.timbre === 'chant' ? 80 : base;
+      if (m) void patchMeta(id, { progress: from + Math.round(((95 - from) * Number(m[1])) / Number(m[2])) }).catch(() => undefined);
     },
   });
 

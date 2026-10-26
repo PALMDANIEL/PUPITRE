@@ -8,7 +8,7 @@ import path from 'node:path';
 import { checkSetup, config } from './config';
 import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
-import { BUSY, UserError, type ScoreMeta, type SourceKind, type Timbre } from './types';
+import { BUSY, LANGUES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre } from './types';
 import { buildPack, packFileName } from './pack';
 import { readDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
@@ -284,8 +284,19 @@ app.post('/api/scores/:id/render', async (req, res) => {
   if (!meta.partitionFile) fail(409, 'La partition n’a pas encore été lue.');
   const tempo = req.body?.tempo == null ? meta.tempo : Number(req.body.tempo);
   if (tempo !== null && (!Number.isInteger(tempo) || tempo < 30 || tempo > 240)) fail(400, 'Le tempo doit être un entier entre 30 et 240.');
-  const timbre: Timbre = req.body?.timbre === 'piano' || req.body?.timbre === 'choeur' ? req.body.timbre : meta.timbre;
-  const next = await patchMeta(meta.id, { tempo, timbre, status: 'queued', progress: 0, error: null });
+  const timbre: Timbre = ['piano', 'choeur', 'chant'].includes(req.body?.timbre) ? req.body.timbre : meta.timbre;
+  if (timbre === 'chant' && config.direct) fail(400, 'Les voix chantées se créent sur l’ordinateur (version de bureau).');
+  const langue: Langue | null = LANGUES.includes(req.body?.langue) ? req.body.langue : meta.langue ?? null;
+  // paroles saisies : { id de voix : « Sain-te Ma-ri-e » } ; absentes = celles de la partition
+  let paroles = meta.paroles ?? null;
+  if (req.body?.paroles !== undefined) {
+    const raw = req.body.paroles;
+    if (raw !== null && (typeof raw !== 'object' || Array.isArray(raw))) fail(400, 'Paroles invalides.');
+    paroles = raw === null ? null : Object.fromEntries(Object.entries(raw as Record<string, unknown>)
+      .filter(([k, v]) => /^[a-z0-9]{1,20}$/.test(k) && typeof v === 'string')
+      .map(([k, v]) => [k, (v as string).slice(0, 8000)]));
+  }
+  const next = await patchMeta(meta.id, { tempo, timbre, langue, paroles, status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: 'render' });
   res.status(202).json(next);
 });

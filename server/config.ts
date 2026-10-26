@@ -62,9 +62,12 @@ export const config = {
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),
   omrTimeoutMs: Number(env.OMR_TIMEOUT_MS ?? 15 * 60_000),
   renderTimeoutMs: Number(env.RENDER_TIMEOUT_MS ?? 8 * 60_000),
+  /** Voix de synthèse (voix chantées) : téléchargées au premier usage (environ 140 Mo). */
+  voixDir: path.resolve(env.VOIX_DIR ?? path.join(home, 'pupitre', 'voix')),
 };
 
 process.env.AUDIVERIS_BIN ??= config.audiveris;
+process.env.VOIX_DIR ??= config.voixDir;
 process.env.OMR_TIMEOUT_S ??= String(Math.round(config.omrTimeoutMs / 1000));
 
 if (!env.SOUNDFONT) {

@@ -61,6 +61,7 @@ function configureEnvironment() {
   env.STORE = 'files';
   env.HOST = '127.0.0.1';
   env.STORAGE_DIR = path.join(app.getPath('documents'), 'Pupitre');
+  env.VOIX_DIR = path.join(app.getPath('userData'), 'voix'); // voix chantées, téléchargées au premier usage
   env.PUPITRE_ROOT = RES;
   if (DEV) {
     env.WEB_DIR = path.join(REPO, 'dist', 'pupitre', 'browser');
