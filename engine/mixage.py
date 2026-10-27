@@ -119,7 +119,10 @@ def deess(x: np.ndarray, split: float = 4500.0, margin_db: float = -4.0) -> np.n
     e_hi = np.sqrt(_moving(hi ** 2, 0.008 * RATE)) + 1e-9
     e_lo = np.sqrt(_moving(lo ** 2, 0.008 * RATE)) + 1e-9
     excess = 20 * np.log10(e_hi / e_lo) - margin_db
-    gain = 10 ** (-np.clip(_moving(np.maximum(excess, 0), 0.012 * RATE), 0, 18) / 20)
+    # plafond absolu : un « sss » seul (sans médium à comparer) ne dépasse jamais −12 dB sous le niveau de la voix
+    ceiling = active_rms(x) * 10 ** (-12 / 20)
+    excess = np.maximum(excess, 20 * np.log10(e_hi / ceiling))
+    gain = 10 ** (-np.clip(_moving(np.maximum(excess, 0), 0.012 * RATE), 0, 24) / 20)
     return (lo + hi * gain).astype(np.float32)
 
 

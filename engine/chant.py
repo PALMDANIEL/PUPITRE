@@ -197,6 +197,69 @@ def _sustain(region: np.ndarray, period: int, length: int) -> np.ndarray:
     return out[:length]
 
 
+def _harmonic_clean(vowel: np.ndarray, sr: int, f0: float) -> np.ndarray:
+    """
+    Nettoyage du souffle : la voix de synthèse parlée porte un voile de bruit dans les aigus (62 % de l'énergie
+    au-dessus de 2 kHz tombe entre les harmoniques), entendu comme un sifflement sur les voyelles tenues.
+    La hauteur est ici exactement celle de la note : on garde les harmoniques et on atténue le reste (−26 dB
+    au-dessus de 1 kHz, −18 dB en dessous, où cela retire aussi les sous-harmoniques d'une voix éraillée), par transformée de Fourier à court terme (fenêtres de Hann, reconstruction exacte).
+    """
+    n = len(vowel)
+    win = 2048 if sr <= 24000 else 4096  # ~93 ms : la hauteur est fixe ici, on peut séparer finement
+    if n < win:
+        return vowel
+    hop = win // 4
+    w = np.hanning(win)
+    pad = np.concatenate([np.zeros(win), vowel, np.zeros(win)])
+    fr = np.fft.rfftfreq(win, 1 / sr)
+    h = np.round(fr / f0)
+    dist = np.abs(fr - h * f0)
+    keep = np.clip(1 - (dist - max(8.0, 0.012 * f0)) / max(6.0, 0.01 * f0), 0, 1)  # 1 sur l'harmonique, 0 entre
+    # sous 1 kHz : on retire aussi ce qui n'est pas une harmonique (sous-harmoniques de la tenue, voix éraillée),
+    # un peu moins fort ; au-dessus : le souffle, à −26 dB
+    floor = np.where(fr < 1000, 10 ** (-18 / 20), 10 ** (-26 / 20))
+    mask = floor + (1 - floor) * keep
+    mask[fr < 40] = 1.0
+    out = np.zeros(len(pad)); norm = np.zeros(len(pad))
+    for i in range(0, len(pad) - win, hop):
+        spec = np.fft.rfft(pad[i:i + win] * w) * mask
+        out[i:i + win] += np.fft.irfft(spec, win) * w
+        norm[i:i + win] += w ** 2
+    out = out / np.maximum(norm, 1e-6)
+    return out[win: win + n]
+
+
+def _fundamental_share(vowel: np.ndarray, sr: int, f0: float) -> float:
+    spec = np.abs(np.fft.rfft(vowel * np.hanning(len(vowel)))) ** 2
+    fr = np.fft.rfftfreq(len(vowel), 1 / sr)
+    return float(spec[np.abs(fr - f0) < max(20, 0.05 * f0)].sum() / (spec[fr > 60].sum() + 1e-15))
+
+
+def _enrich(vowel: np.ndarray, sr: int, f0: float, target: float = 0.6) -> np.ndarray:
+    """
+    Timbre « flûte » : quand la fondamentale écrase tout (voyelle « i », notes aiguës), le son devient pur et sifflé.
+    On ajoute des harmoniques 2, 3 et 4 exactes (polynômes de Tchebychev sur l'onde normalisée), juste assez pour
+    ramener la fondamentale autour de 60 % de l'énergie, comme dans une vraie voix chantée.
+    """
+    if len(vowel) < 256:
+        return vowel
+    share = _fundamental_share(vowel, sr, f0)
+    if share <= target:
+        return vowel
+    k = max(4, int(sr / f0 * 2))
+    env = np.sqrt(np.convolve(vowel ** 2, np.ones(k) / k, mode="same")) * np.sqrt(2) + 1e-9
+    xn = np.clip(vowel / env, -1, 1)
+    harm = 0.5 * (2 * xn ** 2 - 1) + 0.38 * (4 * xn ** 3 - 3 * xn) + 0.22 * (8 * xn ** 4 - 8 * xn ** 2 + 1)
+    harm -= np.convolve(harm, np.ones(64) / 64, mode="same")  # pas de composante continue
+    harm *= env
+    best = vowel
+    for amount in (0.25, 0.45, 0.7, 1.0, 1.4):  # dose la plus faible qui suffit
+        best = vowel + amount * harm
+        if _fundamental_share(best, sr, f0) <= target:
+            break
+    return best
+
+
 def _smooth_noise(rng, n: int, rate: int, hz: float) -> np.ndarray:
     """Bruit lent (variations de quelques hertz), écart-type 1 : dérive naturelle de la hauteur."""
     k = max(2, int(n / rate * hz) + 2)
@@ -264,7 +327,15 @@ def sing_syllable(singer: tuple, text: str, freq: float, seconds: float, kind: s
     i0, i1 = int(v0 * sr), max(int(v1 * sr), int(v0 * sr) + 1)
     i1 = min(i1, len(y))
     onset, nucleus, coda = y[:i0], y[i0:i1], y[i1:]
-    coda = coda[: int(0.14 * sr)]
+    # consonnes soufflées raccourcies : 90 ms au plus avant la voyelle (on garde la fin, qui mène à la voyelle),
+    # 80 ms au plus en finale ; un chanteur ne laisse jamais traîner un « sss »
+    if len(onset) > int(0.09 * sr):
+        onset = onset[-int(0.09 * sr):].copy()
+        fade_in = int(0.02 * sr)
+        onset[:fade_in] *= np.linspace(0, 1, fade_in)
+    coda = coda[: int(0.08 * sr)].copy()
+    if len(coda) > 8:
+        coda *= np.linspace(1, 0, len(coda)) ** 0.7
 
     # 2. la voyelle dure jusqu'à la consonne finale (un peu de marge pour la hauteur vivante)
     need = max(int((seconds - len(coda) / sr) * sr), int(0.05 * sr))
@@ -281,6 +352,8 @@ def sing_syllable(singer: tuple, text: str, freq: float, seconds: float, kind: s
         if xf > 4:  # jonction douce entre l'attaque naturelle et la tenue
             a = len(head) - xf
             vowel[a: a + xf] = nucleus[a: a + xf] * np.linspace(1, 0, xf) + vowel[a: a + xf] * np.linspace(0, 1, xf)
+    # voyelle propre (souffle retiré), timbre enrichi dans l'aigu, puis hauteur vivante
+    vowel = _enrich(_harmonic_clean(vowel, sr, freq), sr, freq)
     glide = 1200 * np.log2(glide_from / freq) if glide_from else 0.0
     vowel = _express(vowel, sr, rng, seconds, glide)[:need]
     # niveau régulier : chaque voyelle au même niveau, quelle que soit la syllabe prononcée
@@ -293,8 +366,8 @@ def sing_syllable(singer: tuple, text: str, freq: float, seconds: float, kind: s
     # consonnes renforcées (+3,5 dB à l'attaque, +2 dB en finale) : ce sont elles qui rendent les mots compréhensibles ;
     # le renfort ne porte que sur le médium (en dessous de 4 kHz) : les « s » et « ch » n'en profitent pas
     peak = float(np.max(np.abs(vowel))) or 1.0
-    onset = np.clip(_boost_mid(onset, sr, k, 1.5), -peak * 1.1, peak * 1.1)
-    coda = np.clip(_boost_mid(coda, sr, k, 1.26), -peak * 1.1, peak * 1.1)
+    onset = np.clip(_consonant(onset, sr, k, 1.5), -peak * 1.1, peak * 1.1)
+    coda = np.clip(_consonant(coda, sr, k, 1.26), -peak * 1.1, peak * 1.1)
     # fin de note posée
     rel = min(int(0.07 * sr), len(vowel) // 3)
     if rel > 0:
@@ -314,8 +387,36 @@ def _boost_mid(x: np.ndarray, sr: int, k: float, boost: float) -> np.ndarray:
         return x * k
     spec = np.fft.rfft(x)
     f = np.fft.rfftfreq(len(x), 1 / sr)
-    spec *= 1 + (boost - 1) / (1 + (f / 4000) ** 4)
+    spec *= 1 + (boost - 1) / (1 + (f / 2500) ** 4)
+    # « s », « ch », « j », « f », « r » soufflé : les aigus des consonnes (> 3 kHz) baissés de 10 dB — ce sont eux
+    # qui sifflent ; le médium, qui porte l'articulation, reste intact
+    spec *= 1 - (1 - 10 ** (-10 / 20)) / (1 + (3000 / np.maximum(f, 1)) ** 6)
     return np.fft.irfft(spec, len(x)) * k
+
+
+def _is_fricative(x: np.ndarray, sr: int) -> bool:
+    """Consonne soufflée (« s », « ch », « j », « f », « z », « r » soufflé) : énergie centrée haut, au-dessus de 1,8 kHz."""
+    if len(x) < 64:
+        return False
+    spec = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    f = np.fft.rfftfreq(len(x), 1 / sr)
+    return float((spec * f).sum() / (spec.sum() + 1e-15)) > 1800
+
+
+def _consonant(x: np.ndarray, sr: int, k: float, boost: float) -> np.ndarray:
+    """
+    Consonnes : les articulées (m, n, l, b, d, t…) reçoivent un renfort de clarté ; les soufflées, qui sifflent,
+    n'en reçoivent aucun — aigus baissés de 12 dB dès 2,2 kHz et niveau plafonné à 8 dB sous la voyelle.
+    """
+    if not _is_fricative(x, sr):
+        return _boost_mid(x, sr, k, boost)
+    spec = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1 / sr)
+    spec *= 1 - (1 - 10 ** (-12 / 20)) / (1 + (2200 / np.maximum(f, 1)) ** 6)
+    y = np.fft.irfft(spec, len(x)) * k
+    cap = 0.1 * 10 ** (-8 / 20)  # la voyelle est à 0,1 (efficace) : la consonne soufflée reste 8 dB en dessous
+    rms = float(np.sqrt(np.mean(y ** 2))) or 1e-9
+    return y * min(1.0, cap / rms)
 
 
 def in_tune(y: np.ndarray, onset: float, freq: float) -> bool:
