@@ -161,11 +161,11 @@ Les partitions du chef de chœur sont dans **Documents/Pupitre** (menu *Fichier 
 ## Voix chantées (essai)
 Sonorité *Voix chantées* (table de mixage › *Tempo et sonorité*), version de bureau seulement : chaque note est chantée
 sur sa syllabe, à sa hauteur et pour sa durée exactes (`engine/chant.py` : Piper prononce la syllabe, Praat règle la hauteur,
-la voyelle est tenue jusqu'à la fin de la note, vibrato léger, effet de petit ensemble). Voix de femme pour les voix
-hautes, d'homme pour les voix basses. Paroles : celles de la partition (MusicXML, MuseScore), modifiables voix par voix
+la voyelle est tenue jusqu'à la fin de la note, vibrato léger, effet de petit ensemble). Trois chanteurs par pupitre (deux sur le serveur en ligne, `CHANT_ENSEMBLE`), voix de femme pour les voix
+hautes, d'homme pour les voix basses ; hauteur vivante (glissés, vibrato variable), nuances, respirations. Paroles : celles de la partition (MusicXML, MuseScore), modifiables voix par voix
 (« Sain-te Ma-ri-e », « _ » pour tenir une syllabe) ; langues : français, latin d'église, anglais, mooré, dioula
 (ces deux-là prononcés à partir de la voix française : l'accent reste). Les voix (~140 Mo) sont téléchargées au premier
-usage dans le dossier de l'application (`VOIX_DIR`). Compter quelques minutes de calcul par chant.
+usage dans le dossier de l'application (`VOIX_DIR`, environ 220 Mo). Compter quelques minutes de calcul par chant.
 Dépendances : `engine/requirements-chant.txt` (installées par la construction des installateurs, pas sur le serveur en ligne).
 
 ## Composants tiers
@@ -173,7 +173,7 @@ Dépendances : `engine/requirements-chant.txt` (installées par la construction 
 Livrés dans le dossier `licences-tierces` de l'installation : Audiveris (GNU AGPL v3, programme distinct appelé
 sans modification), banque de sons GeneralUser GS, music21, OpenCV, PDFium, TinySoundFont, LAME, Electron…
 Voix chantées : Piper (GNU GPL v3, avec espeak-ng), onnxruntime (MIT), Praat/parselmouth (GNU GPL v3) ;
-voix téléchargées au premier usage, SIWIS (CC BY 4.0) et UPMC « Pierre » (CC BY-SA 4.0), créditées dans *À propos*.
+voix téléchargées au premier usage, SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0), créditées dans *À propos*.
 Le contrat de licence d'utilisation (`desktop/assets/contrat-licence.txt`) est un modèle à faire relire par un juriste.
 
 ## Développement

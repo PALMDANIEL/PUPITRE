@@ -94,7 +94,7 @@ import { SHOP_TARGET, shopUrl } from '../../core/shop';
         </li>
       </ol>
       <p class="thanks">Voix chantées (essai) : voix de synthèse <a href="https://github.com/OHF-Voice/piper1-gpl" target="_blank" rel="noopener">Piper</a>
-        — SIWIS (CC BY 4.0) et UPMC « Pierre » (CC BY-SA 4.0) — et <a href="https://www.praat.org" target="_blank" rel="noopener">Praat</a> pour la hauteur des notes.</p>
+        — SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0) — et <a href="https://www.praat.org" target="_blank" rel="noopener">Praat</a> pour la hauteur des notes.</p>
     </section>
 
     @if (player && ait.hasKey()) { <p class="admin"><a routerLink="/ait">Espace AIT (administration)</a></p> }

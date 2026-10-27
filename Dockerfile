@@ -29,11 +29,11 @@ RUN apt-get update \
 # Moteur Python (liste complète figée : --no-deps évite PyAudio, inutile)
 COPY engine/requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --no-deps -r /tmp/requirements.txt
-# Voix chantées (essai) : Piper, onnxruntime, Praat, et les deux voix libres (SIWIS CC BY 4.0, UPMC CC BY-SA 4.0)
+# Voix chantées (essai) : Piper, onnxruntime, Praat, et les voix libres (SIWIS et MLS CC BY 4.0, UPMC CC BY-SA 4.0)
 COPY engine/requirements-chant.txt /tmp/requirements-chant.txt
 RUN /opt/venv/bin/pip install --no-cache-dir --no-deps -r /tmp/requirements-chant.txt \
  && mkdir -p /opt/voix && cd /opt/voix \
- && for v in siwis/medium/fr_FR-siwis-medium upmc/medium/fr_FR-upmc-medium; do \
+ && for v in siwis/medium/fr_FR-siwis-medium upmc/medium/fr_FR-upmc-medium mls/medium/fr_FR-mls-medium; do \
       curl -fsSL -O "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/$v.onnx" \
    && curl -fsSL -O "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/$v.onnx.json"; done \
  && ls -l /opt/voix

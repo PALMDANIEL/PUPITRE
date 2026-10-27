@@ -357,7 +357,7 @@ def encode_mp3(pcm, base: pathlib.Path):
     import lameenc, numpy as np
     pcm = np.clip(pcm, -1, 1)
     enc = lameenc.Encoder()
-    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(2)
+    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(5)  # 5 : réglage standard de LAME, inaudible à 160 kb/s, 2,4 fois plus rapide que 2
     if pcm.ndim == 1:
         pcm = np.repeat(pcm, 2)
     elif pcm.ndim == 2:
@@ -459,8 +459,8 @@ def sing_voices(voices, labels, tempo_qpm, a):
         vid, vname = labels[i]
         midis = [p.midi for n in v.recurse().notes for p in n.pitches]
         kind = "femme" if statistics.mean(midis) >= 60 else "homme"
-        print(f"Chant {i+1}/{len(voices)} : {vname} (voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
-        sung.append(mixage.polish_voice(chant.chorus(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid))), kind))
+        print(f"Chant {i+1}/{len(voices)} : {vname} ({chant.ensemble_size()} voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
+        sung.append(mixage.polish_voice(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid)), kind))
     return sung
 
 

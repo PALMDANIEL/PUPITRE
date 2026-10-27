@@ -78,7 +78,7 @@ import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../c
               corrigez-les ici si besoin : une syllabe par note, séparées par des tirets ou des espaces (« Sain-te Ma-ri-e »),
               et « _ » pour tenir la syllabe sur la note suivante. Sans paroles, la voix chante « a ».
               @if (player()) { La création prend une à quelques minutes. }
-              @else { La création prend quelques minutes ; la première fois, les voix sont téléchargées (environ 140 Mo). }</p>
+              @else { La création prend quelques minutes ; la première fois, les voix sont téléchargées (environ 220 Mo). }</p>
             <label class="row">
               <span>Langue des paroles</span>
               <select [value]="langue()" (change)="langue.set($any($event.target).value)">

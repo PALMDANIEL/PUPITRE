@@ -1,11 +1,15 @@
 """
 Voix chantées (essai) : chaque note est chantée sur sa syllabe, à sa hauteur et pour sa durée exactes.
 
-1. Une voix de synthèse libre (Piper : SIWIS pour les voix de femme, UPMC « Pierre » pour les voix d'homme)
-   prononce la syllabe.
-2. Praat (parselmouth) la transforme en note chantée : la consonne d'attaque garde sa durée naturelle,
-   la voyelle est tenue jusqu'au bout de la note, la hauteur devient celle de la partition, avec un vibrato léger.
-3. Les syllabes sont posées sur le temps (la consonne juste avant, comme le fait un chanteur) et mélangées.
+1. Plusieurs chanteurs par pupitre, comme un vrai chœur : des voix de synthèse libres et différentes (Piper :
+   SIWIS et deux locutrices de MLS pour les femmes, UPMC « Pierre » et deux locuteurs de MLS pour les hommes),
+   jamais parfaitement ensemble (quelques millisecondes, quelques cents d'écart).
+2. Praat (parselmouth) transforme chaque syllabe prononcée en note chantée : la consonne d'attaque garde sa durée
+   naturelle, la voyelle est tenue jusqu'au bout de la note, à la hauteur de la partition.
+3. Une hauteur vivante : petite montée vers la note, glissé d'une note à l'autre quand c'est lié, légère dérive,
+   vibrato qui s'installe et varie d'une note et d'un chanteur à l'autre.
+4. Des nuances (les aigus un peu plus forts, la voix qui s'ouvre sur les notes longues) et des respirations
+   avant chaque phrase. Les syllabes sont posées sur le temps, la consonne juste avant, comme le fait un chanteur.
 
 Langues : français, latin d'église, anglais (prononcé à la française), mooré et dioula (orthographe convertie
 en sons français : l'accent reste, les mots sont reconnaissables). Sans paroles, la voix chante « a ».
@@ -21,12 +25,13 @@ import unicodedata
 import numpy as np
 
 RATE = 44100
-VOICES = {  # fichier Piper, numéro de locuteur
-    "femme": ("fr_FR-siwis-medium", None),
-    "homme": ("fr_FR-upmc-medium", 1),
+# Chanteurs de chaque pupitre : (modèle Piper, numéro de locuteur, désaccord propre en cents, volume).
+# Le premier est la voix principale ; les locuteurs MLS ont été choisis parmi 125 pour la clarté de leur timbre.
+SINGERS = {
+    "femme": [("fr_FR-siwis-medium", None, 0, 1.0), ("fr_FR-mls-medium", 54, 7, 0.8), ("fr_FR-mls-medium", 14, -6, 0.72)],
+    "homme": [("fr_FR-upmc-medium", 1, 0, 1.0), ("fr_FR-mls-medium", 28, -7, 0.8), ("fr_FR-mls-medium", 117, 6, 0.72)],
 }
-VOICE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/{path}"
-VOICE_PATHS = {"fr_FR-siwis-medium": "siwis/medium/fr_FR-siwis-medium", "fr_FR-upmc-medium": "upmc/medium/fr_FR-upmc-medium"}
+MODELS = sorted({m for group in SINGERS.values() for m, *_ in group})
 
 
 def voice_dir() -> pathlib.Path:
@@ -35,7 +40,15 @@ def voice_dir() -> pathlib.Path:
 
 def missing_voices() -> list[str]:
     d = voice_dir()
-    return [name for name, _ in VOICES.values() if not (d / f"{name}.onnx").exists() or not (d / f"{name}.onnx.json").exists()]
+    return [name for name in MODELS if not (d / f"{name}.onnx").exists() or not (d / f"{name}.onnx.json").exists()]
+
+
+def ensemble_size() -> int:
+    """Chanteurs par pupitre : 3 sur l'ordinateur ; le serveur en ligne en met moins (limite de temps)."""
+    try:
+        return max(1, min(3, int(os.environ.get("CHANT_ENSEMBLE", "3"))))
+    except ValueError:
+        return 3
 
 
 def _espeak_data() -> pathlib.Path:
@@ -65,9 +78,8 @@ os.environ.setdefault("ESPEAK_DATA_PATH", str(_espeak_data()))
 
 
 @functools.lru_cache(maxsize=None)
-def _voice(kind: str):
+def _voice(name: str):
     from piper import PiperVoice
-    name, _ = VOICES[kind]
     d = voice_dir()
     return PiperVoice.load(d / f"{name}.onnx", config_path=d / f"{name}.onnx.json", espeak_data_dir=_espeak_data())
 
@@ -130,12 +142,12 @@ def pronounce(syl: str, lang: str) -> str:
 
 # --- Une syllabe chantée --------------------------------------------------------------------------------------
 
-@functools.lru_cache(maxsize=4096)
-def _spoken(kind: str, text: str) -> tuple[np.ndarray, int]:
-    """Syllabe prononcée par la voix (mise en cache : les mêmes syllabes reviennent souvent)."""
+@functools.lru_cache(maxsize=8192)
+def _spoken(model: str, speaker: int | None, text: str) -> tuple[np.ndarray, int]:
+    """Syllabe prononcée par un chanteur (mise en cache : les mêmes syllabes reviennent souvent)."""
     from piper import SynthesisConfig
-    voice = _voice(kind)
-    cfg = SynthesisConfig(speaker_id=VOICES[kind][1], length_scale=1.15, noise_scale=0.5, noise_w_scale=0.6)
+    voice = _voice(model)
+    cfg = SynthesisConfig(speaker_id=speaker, length_scale=1.15, noise_scale=0.5, noise_w_scale=0.6)
     chunks = [c.audio_float_array for c in voice.synthesize(text, cfg)]
     audio = np.concatenate(chunks) if chunks else np.zeros(1, np.float32)
     return audio.astype(np.float64), voice.config.sample_rate
@@ -174,24 +186,50 @@ def _sustain(region: np.ndarray, period: int, length: int) -> np.ndarray:
     return out[:length]
 
 
-def _vibrato(y: np.ndarray, rate: int, after: float = 0.3) -> np.ndarray:
-    """Vibrato naturel (environ ±25 cents, 5,4 Hz) par une ligne à retard modulée, qui s'installe progressivement."""
-    n = len(y)
-    t = np.arange(n) / rate
-    depth = np.clip((t - after) / 0.4, 0, 1) * 0.00045
-    d = depth * np.sin(2 * np.pi * 5.4 * t) * rate
-    return np.interp(np.clip(np.arange(n) - d - 0.00045 * rate, 0, n - 1), np.arange(n), y)
+def _smooth_noise(rng, n: int, rate: int, hz: float) -> np.ndarray:
+    """Bruit lent (variations de quelques hertz), écart-type 1 : dérive naturelle de la hauteur."""
+    k = max(2, int(n / rate * hz) + 2)
+    pts = rng.standard_normal(k)
+    return np.interp(np.linspace(0, k - 1, n), np.arange(k), pts)
 
 
-def sing_syllable(kind: str, text: str, freq: float, seconds: float, vibrato: bool = True) -> tuple[np.ndarray, float]:
+def _express(vowel: np.ndarray, sr: int, rng, seconds: float, glide_cents: float) -> np.ndarray:
+    """
+    Hauteur vivante, appliquée à la voyelle déjà accordée (lecture à vitesse variable, cents par cents) :
+    glissé depuis la note précédente (legato) ou petite montée vers la note, légère dérive, vibrato qui
+    s'installe après un instant, dont la vitesse et l'ampleur varient.
+    """
+    n = len(vowel)
+    t = np.arange(n) / sr
+    cents = np.zeros(n)
+    if glide_cents:
+        cents += glide_cents * np.exp(-t / 0.045)                      # glissé d'une note à l'autre
+        cents += -0.08 * glide_cents * (t / 0.09) * np.exp(1 - t / 0.09)  # léger dépassement, puis la note
+    else:
+        cents += -rng.uniform(20, 40) * np.exp(-t / 0.035)              # attaque un peu par en dessous
+    cents += 3.0 * _smooth_noise(rng, n, sr, 3.0)                      # dérive : ±3 cents environ
+    if seconds > 0.4:
+        start = rng.uniform(0.2, 0.34)
+        ramp = np.clip((t - start) / 0.4, 0, 1)
+        rate = rng.uniform(5.1, 5.8) + 0.3 * _smooth_noise(rng, n, sr, 1.0)
+        depth = rng.uniform(24, 40) * (1 + 0.12 * _smooth_noise(rng, n, sr, 1.5))
+        cents += ramp * depth * np.sin(2 * np.pi * np.cumsum(rate) / sr + rng.uniform(0, 6.28))
+    pos = np.cumsum(2 ** (cents / 1200)) - 1
+    return np.interp(np.clip(pos, 0, n - 1), np.arange(n), vowel)
+
+
+def sing_syllable(singer: tuple, text: str, freq: float, seconds: float, kind: str = "femme", *,
+                  glide_from: float | None = None, swell: bool = True, rng=None) -> tuple[np.ndarray, float]:
     """Renvoie l'audio (44,1 kHz) et la durée de la consonne d'attaque, à placer juste avant le temps."""
     import parselmouth
     from parselmouth.praat import call
 
-    audio, rate = _spoken(kind, text)
+    rng = rng if rng is not None else np.random.default_rng(0)
+    model, speaker = singer[0], singer[1]
+    audio, rate = _spoken(model, speaker, text)
     audio = _trim(audio, rate)
     snd = parselmouth.Sound(audio, sampling_frequency=rate)
-    floor, ceiling = (75, 400) if kind == "homme" else (120, 600)
+    floor, ceiling = (70, 400) if kind == "homme" else (110, 600)
     pitch = snd.to_pitch(time_step=0.01, pitch_floor=floor, pitch_ceiling=ceiling)
     voiced = np.where(pitch.selected_array["frequency"] > 0)[0]
     total = snd.duration
@@ -200,12 +238,10 @@ def sing_syllable(kind: str, text: str, freq: float, seconds: float, vibrato: bo
     else:
         v0, v1 = float(pitch.xs()[voiced[0]]), float(pitch.xs()[voiced[-1]])
 
-    # 1. hauteur de la note (Praat, sans changer la durée), petite montée vers la note au début de la voyelle
+    # 1. hauteur exacte de la note (Praat, sans changer la durée)
     manip = call(snd, "To Manipulation", 0.01, floor, ceiling)
     tier = call("Create PitchTier", "hauteur", 0, total)
-    call(tier, "Add point", 0, freq * 2 ** (-35 / 1200))
-    call(tier, "Add point", v0, freq * 2 ** (-35 / 1200))
-    call(tier, "Add point", min(v0 + 0.06, v1), freq)
+    call(tier, "Add point", 0, freq)
     call(tier, "Add point", total, freq)
     call([manip, tier], "Replace pitch tier")
     out = call(manip, "Get resynthesis (overlap-add)")
@@ -219,34 +255,38 @@ def sing_syllable(kind: str, text: str, freq: float, seconds: float, vibrato: bo
     onset, nucleus, coda = y[:i0], y[i0:i1], y[i1:]
     coda = coda[: int(0.14 * sr)]
 
-    # 2. la voyelle dure jusqu'à la consonne finale
+    # 2. la voyelle dure jusqu'à la consonne finale (un peu de marge pour la hauteur vivante)
     need = max(int((seconds - len(coda) / sr) * sr), int(0.05 * sr))
-    if need <= len(nucleus):
-        vowel = nucleus[:need].copy()
+    longer = need + int(0.06 * sr)
+    if longer <= len(nucleus):
+        vowel = nucleus[:longer].copy()
     else:
         period = max(2, int(round(sr / freq)))
         q = len(nucleus) // 4
         head = nucleus[: max(q, 1)]
         region = nucleus[q: len(nucleus) - q] if len(nucleus) - 2 * q > period * 3 else nucleus
-        vowel = np.concatenate([head, _sustain(region, period, need - len(head))])
+        vowel = np.concatenate([head, _sustain(region, period, longer - len(head))])
         xf = min(int(0.012 * sr), len(head) // 2, len(vowel) - len(head))
         if xf > 4:  # jonction douce entre l'attaque naturelle et la tenue
             a = len(head) - xf
             vowel[a: a + xf] = nucleus[a: a + xf] * np.linspace(1, 0, xf) + vowel[a: a + xf] * np.linspace(0, 1, xf)
-    if vibrato:
-        vowel = _vibrato(vowel, sr)
+    glide = 1200 * np.log2(glide_from / freq) if glide_from else 0.0
+    vowel = _express(vowel, sr, rng, seconds, glide)[:need]
     # niveau régulier : chaque voyelle au même niveau, quelle que soit la syllabe prononcée
     vrms = float(np.sqrt(np.mean(vowel ** 2))) or 1e-6
     k = 0.1 / vrms
     vowel = vowel * k
+    if swell and seconds > 0.7:  # la voix s'ouvre sur les notes longues (+1,5 dB au milieu), puis se pose
+        x = np.linspace(0, 1, len(vowel))
+        vowel *= 1 + 0.19 * np.sin(np.pi * np.clip(x * 1.15, 0, 1)) ** 2
     # consonnes renforcées (+3,5 dB à l'attaque, +2 dB en finale) : ce sont elles qui rendent les mots compréhensibles
     peak = float(np.max(np.abs(vowel))) or 1.0
     onset = np.clip(onset * k * 1.5, -peak * 1.1, peak * 1.1)
     coda = np.clip(coda * k * 1.26, -peak * 1.1, peak * 1.1)
-    # léger souffle de fin de note
-    rel = min(int(0.06 * sr), len(vowel) // 3)
+    # fin de note posée
+    rel = min(int(0.07 * sr), len(vowel) // 3)
     if rel > 0:
-        vowel[-rel:] *= np.linspace(1, 0.35 if len(coda) else 0.0, rel)
+        vowel[-rel:] *= np.linspace(1, 0.35 if len(coda) else 0.0, rel) ** 1.5
     full = np.concatenate([onset, vowel, coda])
     full = _resample(full, sr)
     fade = min(len(full) // 4, int(0.012 * RATE))
@@ -254,6 +294,30 @@ def sing_syllable(kind: str, text: str, freq: float, seconds: float, vibrato: bo
         full[:fade] *= np.linspace(0, 1, fade)
         full[-fade:] *= np.linspace(1, 0, fade)
     return full.astype(np.float32), len(onset) / sr
+
+
+def in_tune(y: np.ndarray, onset: float, freq: float) -> bool:
+    """Contrôle d'une note d'un chanteur d'accompagnement : bien voisée et juste (à un demi-ton près)."""
+    import parselmouth
+    seg = y[int((onset + 0.04) * RATE):].astype(np.float64)
+    if len(seg) < int(0.06 * RATE):
+        return False
+    f0 = parselmouth.Sound(seg, sampling_frequency=RATE).to_pitch(
+        time_step=0.01, pitch_floor=max(50, freq * 0.6), pitch_ceiling=min(1500, freq * 1.6)).selected_array["frequency"]
+    on = f0[f0 > 0]
+    return len(on) >= 0.5 * len(f0) and abs(1200 * np.log2(np.median(on) / freq)) < 100
+
+
+def breath(seconds: float, rng) -> np.ndarray:
+    """Inspiration avant une phrase : souffle filtré (zone 500–3 500 Hz), qui monte puis s'arrête net."""
+    n = max(int(seconds * RATE), 64)
+    spec = np.fft.rfft(rng.standard_normal(n))
+    f = np.fft.rfftfreq(n, 1 / RATE)
+    spec *= np.exp(-0.5 * (np.log2(np.maximum(f, 1) / 1400) / 1.1) ** 2)
+    y = np.fft.irfft(spec, n)
+    x = np.linspace(0, 1, n)
+    y *= np.sin(np.pi * x ** 0.7) ** 1.5
+    return (y / (np.sqrt(np.mean(y ** 2)) or 1) * 0.011).astype(np.float32)
 
 
 # --- Une voix entière -----------------------------------------------------------------------------------------
@@ -285,31 +349,60 @@ def note_syllables(notes, lyrics_text: str | None) -> list[str | None]:
     return out
 
 
-def sing_part(part, qpm: float, kind: str, lang: str = "fr", lyrics_text: str | None = None) -> np.ndarray:
+def sing_part(part, qpm: float, kind: str, lang: str = "fr", lyrics_text: str | None = None, singers: int | None = None) -> np.ndarray:
+    """Une voix entière chantée par un petit groupe de chanteurs (3 sur l'ordinateur), comme un pupitre de chœur."""
     notes = list(part.stripTies().flatten().notes)
     sec = 60.0 / qpm
     sylls = note_syllables(notes, lyrics_text)
     has_words = any(sylls)
     end = (float(notes[-1].offset + notes[-1].quarterLength) * sec + 1.5) if notes else 1.0
     buf = np.zeros(int(end * RATE) + RATE, np.float32)
-    last_vowel = "a"
-    prev_end = -1.0
+    group = SINGERS.get(kind, SINGERS["femme"])[: singers or ensemble_size()]
+    midis = [max(p.midi for p in n.pitches) for n in notes]
+    center = float(np.median(midis)) if midis else 60.0
+
+    # syllabe prononcée pour chaque note (la même pour tout le pupitre)
+    texts, last_vowel, prev_end = [], "a", -1.0
     for n, syl in zip(notes, sylls):
-        start, dur = float(n.offset) * sec, float(n.quarterLength) * sec
-        midi = max(p.midi for p in n.pitches)
-        freq = 440.0 * 2 ** ((midi - 69) / 12)
-        if syl is None:
-            # mélisme ou note sans parole : on tient la voyelle de la syllabe précédente (ou « a » sans paroles)
-            text = last_vowel if has_words and start - prev_end < 0.05 else "a" if not has_words else last_vowel
+        start = float(n.offset) * sec
+        if syl is None:  # mélisme ou note sans parole : on tient la voyelle précédente (« a » sans paroles)
+            texts.append(last_vowel if has_words else "a")
         else:
-            text = pronounce(syl, lang)
-            vowels = re.findall(r"[aeiouyéèêàâîôûœ]+n?", text)
+            t = pronounce(syl, lang)
+            vowels = re.findall(r"[aeiouyéèêàâîôûœ]+n?", t)
             last_vowel = vowels[-1] if vowels else "a"
-        y, onset = sing_syllable(kind, text, freq, dur * 0.97)
-        i = int(max(0.0, start - onset) * RATE)
-        j = min(len(buf), i + len(y))
-        buf[i:j] += y[: j - i]
-        prev_end = start + dur
+            texts.append(t)
+        prev_end = start + float(n.quarterLength) * sec
+
+    for k, singer in enumerate(group):
+        rng = np.random.default_rng(1000 * k + len(notes))
+        lead = k == 0
+        prev_end, prev_freq = -1.0, None
+        for n, midi, text, syl in zip(notes, midis, texts, sylls):
+            start, dur = float(n.offset) * sec, float(n.quarterLength) * sec
+            # chaque chanteur a son propre accord et ne chante jamais exactement en même temps que les autres
+            cents = singer[2] + (0 if lead else rng.normal(0, 3))
+            freq = 440.0 * 2 ** ((midi - 69 + cents / 100) / 12)
+            shift = rng.normal(0, 0.004 if lead else 0.011)
+            gap = start - prev_end
+            legato = prev_freq is not None and gap < 0.06 and abs(12 * np.log2(prev_freq / freq)) <= 7
+            y, onset = sing_syllable(singer, text, freq, dur * 0.97, kind, glide_from=prev_freq if legato else None, rng=rng)
+            if not lead and not in_tune(y, onset, freq):  # note mal formée : ce choriste se tait sur cette note
+                prev_end, prev_freq = start + dur, freq
+                continue
+            # nuances : les aigus un peu plus forts (comme chez un vrai chanteur), à ±2 dB au plus
+            y = y * singer[3] * 10 ** (float(np.clip(0.13 * (midi - center), -2, 2)) / 20)
+            if lead and (prev_end < 0 or gap >= 0.3):  # respiration avant chaque phrase
+                b = breath(min(0.34, max(0.18, (gap if prev_end >= 0 else 0.5) * 0.6)), rng)
+                bi = int(max(0.0, start - onset - 0.05) * RATE) - len(b)
+                if bi > 0:
+                    buf[bi: bi + len(b)] += b
+            i = int(max(0.0, start - onset + shift) * RATE)
+            j = min(len(buf), i + len(y))
+            buf[i:j] += y[: j - i]
+            prev_end, prev_freq = start + dur, freq
+    if len(group) == 1:
+        buf = chorus(buf)
     return buf  # niveaux et égalisation : mixage.polish_voice
 
 
