@@ -88,6 +88,8 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - Son (`engine/mixage.py`, numpy seul) : niveau réglé par syllabe, consonnes +3,5 dB, composante continue retirée après la resynthèse Praat (sinon les notes aiguës sortaient à −15 dB), égaliseur à phase nulle, compresseur doux, voix à −18 dB puis fichiers à −16 dB, stéréo (S/T à gauche, A/B à droite), petite salle, limiteur à −1 dB. Mesuré : voix au même niveau, ≤ 1,8 dB d'écart entre notes.
 - Moteur autonome : `engine/requirements-chant.txt` ; espeak-ng refuse les chemins longs → copie dans `~/.pupitre-espeak` si besoin ; `ESPEAK_DATA_PATH` réglé avant l'import de piper.
 
+- Chœur réel (27/10/2026) : sonorité `reel` (`engine/choeur.py`, `--voyelle ah|oo`), 79 enregistrements mono 6 s (`engine/choeur/`, 42 Mo, VocalSet via epic-choir, CC BY 4.0), `index.json` = plage, centre, `start` (chœur posé), `tune` (cents) ; rééchantillonnage FFT ≤ 1 demi-ton, notes liées, boucle fondue > 6 s. Mesuré : justesse ≤ 7 cents, ≤ 2,9 dB entre notes. `ScoreMeta.voyelle`.
+
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.
 - Les paroles ne sont pas chantées (son « aah » de chœur ou piano).

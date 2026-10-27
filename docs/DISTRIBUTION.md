@@ -158,6 +158,13 @@ Les installateurs ne sont pas encore signés par Apple / Microsoft : un avertiss
 
 Les partitions du chef de chœur sont dans **Documents/Pupitre** (menu *Fichier › Ouvrir le dossier des partitions*).
 
+## Chœur réel (« aah », « ouh »)
+Sonorité *Chœur réel* : chaque note est jouée par de vrais chanteurs enregistrés (3 à 10 par note, VocalSet via epic-choir,
+CC BY 4.0, crédités dans *À propos* et `engine/choeur/LISEZ-MOI.txt`), sur « aah » ou « ouh », sans paroles. 79 enregistrements
+mono (≈ 42 Mo, `engine/choeur/`) embarqués dans l'application et le serveur : fonctionne hors ligne et sur le téléphone (en ligne).
+Chaque enregistrement est mesuré une fois (`index.json`) : instant où le chœur est posé et petit écart d'accord, compensé.
+Les quatre sonorités : *Chœur synthé*, *Chœur réel*, *Piano*, *Voix chantées*.
+
 ## Voix chantées (essai)
 Sonorité *Voix chantées* (table de mixage › *Tempo et sonorité*), version de bureau seulement : chaque note est chantée
 sur sa syllabe, à sa hauteur et pour sa durée exactes (`engine/chant.py` : Piper prononce la syllabe, Praat règle la hauteur,
@@ -174,6 +181,7 @@ Livrés dans le dossier `licences-tierces` de l'installation : Audiveris (GNU AG
 sans modification), banque de sons GeneralUser GS, music21, OpenCV, PDFium, TinySoundFont, LAME, Electron…
 Voix chantées : Piper (GNU GPL v3, avec espeak-ng), onnxruntime (MIT), Praat/parselmouth (GNU GPL v3) ;
 voix téléchargées au premier usage, SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0), créditées dans *À propos*.
+Chœur réel : VocalSet (Wilkins, Seetharaman, Wahl, Pardo 2018, CC BY 4.0) via epic-choir (thepok, CC BY 4.0).
 Le contrat de licence d'utilisation (`desktop/assets/contrat-licence.txt`) est un modèle à faire relire par un juriste.
 
 ## Développement

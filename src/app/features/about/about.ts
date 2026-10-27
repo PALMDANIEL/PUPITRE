@@ -94,7 +94,10 @@ import { SHOP_TARGET, shopUrl } from '../../core/shop';
         </li>
       </ol>
       <p class="thanks">Voix chantées (essai) : voix de synthèse <a href="https://github.com/OHF-Voice/piper1-gpl" target="_blank" rel="noopener">Piper</a>
-        — SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0) — et <a href="https://www.praat.org" target="_blank" rel="noopener">Praat</a> pour la hauteur des notes.</p>
+        — SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0) — et <a href="https://www.praat.org" target="_blank" rel="noopener">Praat</a> pour la hauteur des notes.
+        Chœur réel : enregistrements dérivés de VocalSet (Wilkins, Seetharaman, Wahl, Pardo 2018, CC BY 4.0,
+        <a href="https://doi.org/10.5281/zenodo.1442513" target="_blank" rel="noopener">doi:10.5281/zenodo.1442513</a>),
+        via <a href="https://github.com/thepok/epic-choir" target="_blank" rel="noopener">epic-choir</a>.</p>
     </section>
 
     @if (player && ait.hasKey()) { <p class="admin"><a routerLink="/ait">Espace AIT (administration)</a></p> }

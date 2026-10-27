@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Langue, ScoreMeta, ScoreStatus, Timbre } from './api';
+import { Langue, ScoreMeta, ScoreStatus, Timbre, Voyelle } from './api';
 import { PackStore } from './packs';
 import { shrinkPhoto } from './shrink';
 
@@ -153,7 +153,7 @@ export class RemoteReader {
    * Recrée l'audio d'un chant enregistré sur le téléphone (tempo, sonorité, voix chantées) : le serveur AIT
    * reçoit sa partition et renvoie un pack, qui remplace l'ancien. Renvoie l'identifiant du chant.
    */
-  async recreate(packId: string, opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string> },
+  async recreate(packId: string, opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string>; voyelle?: Voyelle },
                  onProgress: (pct: number) => void): Promise<string> {
     const s = this.settings();
     if (!s.url || !s.code) throw new RemoteError('Indiquez d’abord le serveur et le code de votre chorale dans les réglages.');
@@ -165,6 +165,7 @@ export class RemoteReader {
     body.append('tempo', String(opts.tempo));
     body.append('timbre', opts.timbre);
     if (opts.langue) body.append('langue', opts.langue);
+    if (opts.voyelle) body.append('voyelle', opts.voyelle);
     if (opts.paroles) body.append('paroles', JSON.stringify(opts.paroles));
     let res: Response;
     try {

@@ -8,9 +8,11 @@ here = os.path.abspath(SPECPATH)
 # music21 : ses données sans le corpus (des centaines de partitions de démonstration inutiles ici)
 datas = [d for d in collect_data_files('music21') if f'{os.sep}corpus{os.sep}' not in d[0]]
 datas += collect_data_files('pypdfium2_raw') + collect_data_files('pypdfium2')
+# Chœur réel : enregistrements de vrais chanteurs (VocalSet / epic-choir, CC BY 4.0), ~42 Mo
+datas += [(os.path.join(here, 'choeur'), 'choeur')]
 binaries = collect_dynamic_libs('pypdfium2_raw') + collect_dynamic_libs('tinysoundfont') + collect_dynamic_libs('lameenc')
 
-hidden = ['omr', 'preprocess', 'merge', 'render', 'chant', 'mixage'] + collect_submodules('music21')
+hidden = ['omr', 'preprocess', 'merge', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')
 hidden += ['pillow_heif', 'tinysoundfont', 'lameenc', 'pypdfium2']
 
 # Voix chantées (requirements-chant.txt) : Piper et ses données espeak-ng, onnxruntime, Praat (parselmouth).

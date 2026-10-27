@@ -10,7 +10,7 @@ import path from 'node:path';
 import { config, engineCommand } from './config';
 import { run } from './jobs';
 import { buildPack } from './pack';
-import { UserError, type Langue, type Manifest, type ScoreStatus, type Timbre } from './types';
+import { UserError, type Langue, type Manifest, type ScoreStatus, type Timbre, type Voyelle } from './types';
 import { ensureVoices } from './voix';
 
 export interface DirectEvent { status: ScoreStatus; progress: number }
@@ -69,7 +69,7 @@ export async function readDirect(
 export async function recreateDirect(
   score: Buffer,
   title: string,
-  opts: { tempo: number | null; timbre: Timbre; langue: Langue; paroles: Record<string, string> | null },
+  opts: { tempo: number | null; timbre: Timbre; langue: Langue; paroles: Record<string, string> | null; voyelle: Voyelle },
   onEvent: (e: DirectEvent) => void,
 ): Promise<Buffer> {
   const dir = path.join(os.tmpdir(), `pupitre-recreer-${randomUUID()}`);
@@ -81,6 +81,7 @@ export async function recreateDirect(
     // --omr : les partitions lues par photo nomment « Piano » chaque portée ; l'ordre des voix suit la page
     const args = [source, audio, '--timbre', opts.timbre, '--omr', '--sans-travail'];
     if (opts.tempo) args.push('--tempo', String(opts.tempo));
+    if (opts.timbre === 'reel') args.push('--voyelle', opts.voyelle);
     const sung = opts.timbre === 'chant';
     if (sung) {
       onEvent({ status: 'rendering', progress: 3 });

@@ -447,6 +447,20 @@ def mix(tracks):
     return mixage.master(mixage.mix_stereo([(t, g, pans[i] if len(tracks) > 1 else 0.0) for i, (t, g) in enumerate(tracks)]))
 
 
+def real_choir(voices, labels, tempo_qpm, a):
+    """Chœur réel : chaque voix jouée par de vrais chanteurs enregistrés, sur « aah » ou « ouh »."""
+    import choeur, mixage
+    if not choeur.available():
+        sys.exit(f"Enregistrements du chœur réel introuvables : {choeur.pack_dir()}")
+    hints = {"soprano": "S", "alto": "A", "tenor": "T", "basse": "B"}
+    out = []
+    for i, v in enumerate(voices):
+        vid, vname = labels[i]
+        print(f"Chœur {i+1}/{len(voices)} : {vname}", flush=True)
+        out.append(mixage.level_to(choeur.sing_part(v, tempo_qpm, a.voyelle, hints.get(vid)), mixage.TARGET_VOICE))
+    return out
+
+
 def sing_voices(voices, labels, tempo_qpm, a):
     """Voix chantées : voix de femme pour les voix hautes, d'homme pour les voix basses ; paroles saisies ou de la partition."""
     import chant, mixage
@@ -468,7 +482,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src"); ap.add_argument("out")
     ap.add_argument("--tempo", type=int, default=0)
-    ap.add_argument("--timbre", choices=["choeur", "piano", "chant"], default="choeur")
+    ap.add_argument("--timbre", choices=["choeur", "piano", "chant", "reel"], default="choeur")
+    ap.add_argument("--voyelle", choices=["ah", "oo"], default="ah", help="chœur réel : « aah » ou « ouh »")
     ap.add_argument("--langue", choices=["fr", "la", "en", "mos", "dyu"], default="fr")
     ap.add_argument("--paroles", help="fichier JSON { id de voix : paroles } saisies par l'utilisateur")
     ap.add_argument("--omr", action="store_true", help="partition lue par Audiveris : ignorer les noms de portées")
@@ -485,7 +500,7 @@ def main():
         sys.exit("Aucune note n’a été reconnue dans la partition.")
 
     labels = LABELS.get(len(voices)) or [(f"voix{i+1}", f"Voix {i+1}") for i in range(len(voices))]
-    sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else None
+    sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else real_choir(voices, labels, tempo_qpm, a) if a.timbre == "reel" else None
     # paroles saisies : gardées dans le manifeste, pour les retrouver à la prochaine modification
     typed_lyrics = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
     entries = []
@@ -521,6 +536,7 @@ def main():
     manifest = {
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
         **({"langue": a.langue} if a.timbre == "chant" else {}),
+        **({"voyelle": a.voyelle} if a.timbre == "reel" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),
         "timeSignature": ts.ratioString if ts else None,
         "key": f"{fr_name(ks.tonic, octave=False)} {'majeur' if ks.mode == 'major' else 'mineur'}",

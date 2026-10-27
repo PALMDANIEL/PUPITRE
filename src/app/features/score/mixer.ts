@@ -1,7 +1,7 @@
 import { Component, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreStore } from '../../core/score.store';
-import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../core/api';
+import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from '../../core/api';
 
 @Component({
   selector: 'app-mixer',
@@ -68,10 +68,20 @@ import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../c
           <input type="range" min="40" max="180" step="2" [value]="tempo()" (input)="tempo.set(num($event))">
         </label>
         <div class="seg" role="radiogroup" aria-label="Sonorité">
-          <button type="button" role="radio" [attr.aria-checked]="timbre() === 'choeur'" (click)="timbre.set('choeur')">Voix de chœur</button>
+          <button type="button" role="radio" [attr.aria-checked]="timbre() === 'choeur'" (click)="timbre.set('choeur')">Chœur synthé</button>
+          <button type="button" role="radio" [attr.aria-checked]="timbre() === 'reel'" (click)="timbre.set('reel')">Chœur réel</button>
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'piano'" (click)="timbre.set('piano')">Piano</button>
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'chant'" (click)="timbre.set('chant')">Voix chantées <small>essai</small></button>
         </div>
+        @if (timbre() === 'reel') {
+          <div class="lyrics">
+            <p class="hint">De vrais chanteurs enregistrés (3 à 10 par note), sans paroles.</p>
+            <div class="seg small" role="radiogroup" aria-label="Voyelle">
+              <button type="button" role="radio" [attr.aria-checked]="voyelle() === 'ah'" (click)="voyelle.set('ah')">« Aah »</button>
+              <button type="button" role="radio" [attr.aria-checked]="voyelle() === 'oo'" (click)="voyelle.set('oo')">« Ouh »</button>
+            </div>
+          </div>
+        }
         @if (timbre() === 'chant') {
           <div class="lyrics">
             <p class="hint">Chaque note est chantée sur sa syllabe, à sa hauteur exacte. Les paroles viennent de la partition ;
@@ -179,6 +189,8 @@ import { LANGUES, Langue, ScoreMeta, Timbre, fileUrl, voiceColor } from '../../c
     .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; background: var(--raised); }
     .seg button { border: 0; background: none; padding: .38rem .85rem; border-radius: 999px; cursor: pointer; font-weight: 700; font-size: .88rem; color: var(--ink-soft); }
     .seg button[aria-checked="true"] { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+    .seg { flex-wrap: wrap; }
+    .seg.small button { font-size: .82rem; padding: .3rem .8rem; }
     .seg small { font-size: .68rem; font-weight: 700; opacity: .75; text-transform: uppercase; letter-spacing: .06em; margin-left: .2rem; }
     .lyrics { display: grid; gap: .7rem; margin: .4rem 0 .2rem; }
     .lyrics select { border-radius: 10px; border: 1px solid var(--rule); background: var(--raised); color: var(--ink); padding: .35rem .6rem; font: inherit; }
@@ -222,6 +234,7 @@ export class Mixer {
   protected readonly tempo = signal(90);
   protected readonly timbre = signal<Timbre>('choeur');
   protected readonly langue = signal<Langue>('fr');
+  protected readonly voyelle = signal<Voyelle>('ah');
   protected readonly langues = LANGUES;
   /** Paroles modifiées dans l'éditeur (par voix) ; les autres viennent de la partition. */
   protected readonly edits = signal<Record<string, string>>({});
@@ -232,7 +245,8 @@ export class Mixer {
     const m = this.score().manifest;
     if (!m) return false;
     const sung = this.timbre() === 'chant' && (this.langue() !== (m.langue ?? 'fr') || Object.keys(this.edits()).length > 0);
-    return this.tempo() !== m.tempo || this.timbre() !== m.timbre || sung;
+    const vowel = this.timbre() === 'reel' && this.voyelle() !== (m.voyelle ?? 'ah');
+    return this.tempo() !== m.tempo || this.timbre() !== m.timbre || sung || vowel;
   });
 
   constructor() {
@@ -245,6 +259,7 @@ export class Mixer {
         this.tempo.set(m.tempo);
         this.timbre.set(m.timbre);
         this.langue.set(s.langue ?? m.langue ?? 'fr');
+        this.voyelle.set(m.voyelle ?? s.voyelle ?? 'ah');
         this.edits.set({});
         void this.engine.load(m.voices.map((v) => ({ id: v.id, url: fileUrl(s, 'audio', v.stem) })));
       });
@@ -267,7 +282,8 @@ export class Mixer {
     const chant = this.timbre() === 'chant';
     const paroles = chant && Object.keys(this.edits()).length
       ? Object.fromEntries(this.voices().map((v) => [v.id, this.lyricOf(v.id)])) : undefined;
-    const opts = { tempo: this.tempo(), timbre: this.timbre(), ...(chant ? { langue: this.langue(), ...(paroles ? { paroles } : {}) } : {}) };
+    const opts = { tempo: this.tempo(), timbre: this.timbre(), ...(chant ? { langue: this.langue(), ...(paroles ? { paroles } : {}) } : {}),
+      ...(this.timbre() === 'reel' ? { voyelle: this.voyelle() } : {}) };
     if (this.player()) this.recreate.emit(opts);
     else void this.store?.render(opts);
   }

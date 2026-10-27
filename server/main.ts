@@ -8,7 +8,7 @@ import path from 'node:path';
 import { checkSetup, config } from './config';
 import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
-import { BUSY, LANGUES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre } from './types';
+import { BUSY, LANGUES, TIMBRES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre, type Voyelle } from './types';
 import { buildPack, packFileName } from './pack';
 import { readDirect, recreateDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
@@ -284,7 +284,8 @@ app.post('/api/scores/:id/render', async (req, res) => {
   if (!meta.partitionFile) fail(409, 'La partition n’a pas encore été lue.');
   const tempo = req.body?.tempo == null ? meta.tempo : Number(req.body.tempo);
   if (tempo !== null && (!Number.isInteger(tempo) || tempo < 30 || tempo > 240)) fail(400, 'Le tempo doit être un entier entre 30 et 240.');
-  const timbre: Timbre = ['piano', 'choeur', 'chant'].includes(req.body?.timbre) ? req.body.timbre : meta.timbre;
+  const timbre: Timbre = TIMBRES.includes(req.body?.timbre) ? req.body.timbre : meta.timbre;
+  const voyelle: Voyelle | null = req.body?.voyelle === 'oo' || req.body?.voyelle === 'ah' ? req.body.voyelle : meta.voyelle ?? null;
   if (timbre === 'chant' && config.direct) fail(400, 'Les voix chantées se créent sur l’ordinateur (version de bureau).');
   const langue: Langue | null = LANGUES.includes(req.body?.langue) ? req.body.langue : meta.langue ?? null;
   // paroles saisies : { id de voix : « Sain-te Ma-ri-e » } ; absentes = celles de la partition
@@ -296,7 +297,7 @@ app.post('/api/scores/:id/render', async (req, res) => {
       .filter(([k, v]) => /^[a-z0-9]{1,20}$/.test(k) && typeof v === 'string')
       .map(([k, v]) => [k, (v as string).slice(0, 8000)]));
   }
-  const next = await patchMeta(meta.id, { tempo, timbre, langue, paroles, status: 'queued', progress: 0, error: null });
+  const next = await patchMeta(meta.id, { tempo, timbre, langue, paroles, voyelle, status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: 'render' });
   res.status(202).json(next);
 });
@@ -340,7 +341,8 @@ app.post('/api/recreer', upload.single('file'), async (req, res) => {
   if (!file || !/\.(musicxml|xml)$/i.test(utf8Name(file.originalname))) fail(400, 'Partition manquante (fichier MusicXML du chant).');
   const body = (req.body ?? {}) as Record<string, string>;
   const title = (typeof body.titre === 'string' && body.titre.trim().slice(0, 140)) || 'Chant';
-  const timbre: Timbre = ['piano', 'choeur', 'chant'].includes(body.timbre) ? body.timbre as Timbre : 'choeur';
+  const timbre: Timbre = TIMBRES.includes(body.timbre as Timbre) ? body.timbre as Timbre : 'choeur';
+  const voyelle: Voyelle = body.voyelle === 'oo' ? 'oo' : 'ah';
   const tempo = body.tempo ? Number(body.tempo) : null;
   if (tempo !== null && (!Number.isInteger(tempo) || tempo < 30 || tempo > 240)) fail(400, 'Le tempo doit être un entier entre 30 et 240.');
   const langue: Langue = LANGUES.includes(body.langue as Langue) ? body.langue as Langue : 'fr';
@@ -357,7 +359,7 @@ app.post('/api/recreer', upload.single('file'), async (req, res) => {
   const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
   const ping = setInterval(() => send({ ping: true }), 10_000);
   try {
-    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles }, (e) => send(e));
+    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e));
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
     if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);

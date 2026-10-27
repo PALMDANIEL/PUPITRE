@@ -2,7 +2,8 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
 export type ScoreStatus = 'queued' | 'preprocessing' | 'recognizing' | 'rendering' | 'ready' | 'failed';
-export type Timbre = 'choeur' | 'piano' | 'chant';
+export type Timbre = 'choeur' | 'reel' | 'piano' | 'chant';
+export type Voyelle = 'ah' | 'oo';
 /** Langue des voix chantées. */
 export type Langue = 'fr' | 'la' | 'en' | 'mos' | 'dyu';
 export const LANGUES: { id: Langue; label: string }[] = [
@@ -13,7 +14,7 @@ export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'r
 
 export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string]; lyrics?: string; sung?: number }
 export interface Manifest {
-  tempo: number; timbre: Timbre; tutti: string; score: string; langue?: Langue;
+  tempo: number; timbre: Timbre; tutti: string; score: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
 export interface ScoreMeta {
@@ -21,7 +22,7 @@ export interface ScoreMeta {
   partitionFile: string | null; corrected: boolean; pages: string[];
   status: ScoreStatus; progress: number; error: string | null;
   tempo: number | null; timbre: Timbre; manifest: Manifest | null; revision: number;
-  langue?: Langue | null; paroles?: Record<string, string> | null;
+  langue?: Langue | null; paroles?: Record<string, string> | null; voyelle?: Voyelle | null;
   createdAt: string; updatedAt: string;
 }
 
@@ -68,7 +69,7 @@ export class ScoresApi {
     return this.http.post<ScoreMeta>('/api/scores', body, { reportProgress: true, observe: 'events' });
   }
   rename(id: string, title: string) { return this.http.patch<ScoreMeta>(`/api/scores/${id}`, { title }); }
-  render(id: string, opts: { tempo?: number | null; timbre?: Timbre; langue?: Langue; paroles?: Record<string, string> | null }) { return this.http.post<ScoreMeta>(`/api/scores/${id}/render`, opts); }
+  render(id: string, opts: { tempo?: number | null; timbre?: Timbre; langue?: Langue; paroles?: Record<string, string> | null; voyelle?: Voyelle }) { return this.http.post<ScoreMeta>(`/api/scores/${id}/render`, opts); }
   retry(id: string) { return this.http.post<ScoreMeta>(`/api/scores/${id}/retry`, {}); }
   correct(id: string, file: File) {
     const body = new FormData();

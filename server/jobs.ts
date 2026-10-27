@@ -89,6 +89,7 @@ async function renderScore(id: string) {
 
   const args = [path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
   if (meta.tempo) args.push('--tempo', String(meta.tempo));
+  if (meta.timbre === 'reel') args.push('--voyelle', meta.voyelle ?? 'ah');
   if (meta.timbre === 'chant') {
     // voix chantées : voix de synthèse téléchargées au premier usage, paroles saisies passées au moteur
     await ensureVoices((done, total) => void patchMeta(id, { progress: base + Math.round((5 * done) / total) }).catch(() => undefined));
