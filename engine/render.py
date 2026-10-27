@@ -421,7 +421,12 @@ def to_mp3(sc, base: pathlib.Path):
             s.noteon(chan, key, vel)
         elif kind == 0:
             s.noteoff(chan, key)
-    return encode_mp3(np.concatenate(chunks) if chunks else np.zeros(2, np.float32), base)
+    pcm = np.concatenate(chunks) if chunks else np.zeros(2, np.float32)
+    # même volume perçu que les autres sonorités (−14 LUFS), clarté et basses audibles sur téléphone
+    import mixage
+    kind = "piano" if any(getattr(next(iter(p.recurse().getElementsByClass(instrument.Instrument)), None), "midiProgram", None) == 0 for p in sc.parts) else "choeur"
+    midis = [int(x.midi) for p in sc.parts for n in p.recurse().notes for x in n.pitches]
+    return encode_mp3(mixage.finish(pcm.reshape(-1, 2), kind, midis), base)
 
 
 def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
@@ -440,11 +445,11 @@ def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
         shutil.copy(src, dst)
 
 
-def mix(tracks):
-    """Voix chantées → fichier stéréo final : voix réparties dans l'espace, salle, volume constant, limiteur."""
+def mix(tracks, wet=0.16, pans=None):
+    """Voix chantées ou chœur réel → fichier stéréo final : voix réparties dans l'espace, salle, −14 LUFS, limiteur."""
     import mixage
-    pans = mixage.pan_positions(len(tracks))
-    return mixage.master(mixage.mix_stereo([(t, g, pans[i] if len(tracks) > 1 else 0.0) for i, (t, g) in enumerate(tracks)]))
+    pans = pans or mixage.pan_positions(len(tracks))
+    return mixage.master(mixage.mix_stereo([(t, g, pans[i] if len(tracks) > 1 else 0.0) for i, (t, g) in enumerate(tracks)]), wet)
 
 
 def real_choir(voices, labels, tempo_qpm, a):
@@ -457,7 +462,9 @@ def real_choir(voices, labels, tempo_qpm, a):
     for i, v in enumerate(voices):
         vid, vname = labels[i]
         print(f"Chœur {i+1}/{len(voices)} : {vname}", flush=True)
-        out.append(mixage.level_to(choeur.sing_part(v, tempo_qpm, a.voyelle, hints.get(vid)), mixage.TARGET_VOICE))
+        x = choeur.sing_part(v, tempo_qpm, a.voyelle, hints.get(vid))
+        x = mixage.phone_bass(x, mixage.bass_amount([p.midi for n in v.recurse().notes for p in n.pitches]))
+        out.append(mixage.level_to(x, mixage.TARGET_VOICE))
     return out
 
 
@@ -474,7 +481,8 @@ def sing_voices(voices, labels, tempo_qpm, a):
         midis = [p.midi for n in v.recurse().notes for p in n.pitches]
         kind = "femme" if statistics.mean(midis) >= 60 else "homme"
         print(f"Chant {i+1}/{len(voices)} : {vname} ({chant.ensemble_size()} voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
-        sung.append(mixage.polish_voice(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid)), kind))
+        x = mixage.polish_voice(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid)), kind)
+        sung.append(mixage.level_to(mixage.phone_bass(x, mixage.bass_amount(midis)), mixage.TARGET_VOICE))
     return sung
 
 
@@ -501,23 +509,27 @@ def main():
 
     labels = LABELS.get(len(voices)) or [(f"voix{i+1}", f"Voix {i+1}") for i in range(len(voices))]
     sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else real_choir(voices, labels, tempo_qpm, a) if a.timbre == "reel" else None
+    wet = 0.06 if a.timbre == "reel" else 0.16  # le chœur réel a déjà sa salle dans les enregistrements
     # paroles saisies : gardées dans le manifeste, pour les retrouver à la prochaine modification
     typed_lyrics = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
     entries = []
     for i, v in enumerate(voices):
         vid, vname = labels[i]
         if sung:
-            stem = encode_mp3(mix([(sung[i], 1.0)]), out / vid)
+            stem = encode_mp3(mix([(sung[i], 1.0)], wet), out / vid)
         else:
             stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
         work = ""
         if not a.sans_travail:
             if sung:
-                work = encode_mp3(mix([(x, 1.0 if i == j else 0.3) for j, x in enumerate(sung)]), out / f"{vid}_travail")
+                # piste de travail : sa voix au centre, 12 dB devant ; les autres écartées sur les côtés
+                side = [(-0.6 if k % 2 == 0 else 0.6) for k in range(len(sung))]
+                pans = [0.0 if j == i else side[j] for j in range(len(sung))]
+                work = encode_mp3(mix([(x, 1.0 if i == j else 0.25) for j, x in enumerate(sung)], wet, pans), out / f"{vid}_travail")
             else:
                 practice = stream.Score()
                 for j, other in enumerate(voices):
-                    practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 38))
+                    practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 27))  # sa voix ≈ 12 dB devant
                 work = to_mp3(practice, out / f"{vid}_travail")
         pitches = [p for n in v.recurse().notes for p in n.pitches]
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
@@ -527,7 +539,7 @@ def main():
         print(f"Voix {i+1}/{len(voices)} : {vname} ({fr_name(lo)} à {fr_name(hi)})", flush=True)
 
     if sung:
-        tutti = encode_mp3(mix([(x, 1.0) for x in sung]), out / "tutti")
+        tutti = encode_mp3(mix([(x, 1.0) for x in sung], wet), out / "tutti")
     else:
         tutti = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre) for v in voices]), out / "tutti")
     export_musicxml(pathlib.Path(a.src), out / "score.musicxml", score)

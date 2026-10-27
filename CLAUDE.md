@@ -90,6 +90,8 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 
 - Chœur réel (27/10/2026) : sonorité `reel` (`engine/choeur.py`, `--voyelle ah|oo`), 79 enregistrements mono 6 s (`engine/choeur/`, 42 Mo, VocalSet via epic-choir, CC BY 4.0), `index.json` = plage, centre, `start` (chœur posé), `tune` (cents) ; rééchantillonnage FFT ≤ 1 demi-ton, notes liées, boucle fondue > 6 s. Mesuré : justesse ≤ 7 cents, ≤ 2,9 dB entre notes. `ScoreMeta.voyelle`.
 
+- Audibilité (27/10/2026) : toutes les sonorités passent par `mixage.finish` → −14 LUFS (BS.1770, `mixage.lufs`), limiteur −1 dB ; Chœur synthé et Piano (TinySoundFont) étaient à −31 et −26 LUFS. `phone_bass` : renfort des harmoniques naturelles 300 Hz–1 kHz (+6 dB × dose selon tessiture, `bass_amount`) et −3 dB sous 140 Hz, pour les téléphones ; égalisation `SYNTH_EQ` (synthé, piano) ; pistes de travail : sa voix ≈ 12 dB devant, au centre, les autres sur les côtés (vélocité 27 pour le synthé). Chœur réel : réverbération ajoutée réduite (0,06).
+
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.
 - Les paroles ne sont pas chantées (son « aah » de chœur ou piano).

@@ -200,9 +200,88 @@ def mix_stereo(tracks: list[tuple[np.ndarray, float, float]]) -> np.ndarray:
     return out
 
 
-def master(stereo: np.ndarray) -> np.ndarray:
-    """Fichier final : salle, volume constant (−16 dB sur les parties chantées), limiteur."""
-    x = reverb(stereo)
+def master(stereo: np.ndarray, wet: float = 0.16) -> np.ndarray:
+    """Fichier final des voix chantées et du chœur réel : salle, volume perçu −14 LUFS, limiteur."""
+    x = reverb(stereo, wet) if wet > 0 else stereo
     x = np.stack([lowpass(x[:, c], 10500) for c in range(x.shape[1])], axis=1)  # rien d'utile au-dessus de 11 kHz
-    x = level_to(x, TARGET_MASTER)
-    return limit(x)
+    return finish(x)
+
+
+# --- Audibilité : volume perçu commun, basses audibles sur téléphone, clarté -------------------------------------
+
+TARGET_LUFS = -14.0  # volume perçu de référence (plateformes d'écoute, téléphones)
+
+
+def lufs(x: np.ndarray) -> float:
+    """Volume perçu intégré (pondération K et double fenêtrage de la norme UIT-R BS.1770), en LUFS."""
+    st = x if x.ndim == 2 else x[:, None]
+    n = len(st)
+    if n < RATE // 2:
+        return -70.0
+    f = np.fft.rfftfreq(n, 1 / RATE); f[0] = 1.0
+    k = 10 ** ((4.0 / (1 + (1500 / f) ** 2)) / 20) / np.sqrt(1 + (38 / f) ** 4)
+    y = np.stack([np.fft.irfft(np.fft.rfft(st[:, c]) * k, n) for c in range(st.shape[1])], axis=1)
+    blk, hop = int(0.4 * RATE), int(0.1 * RATE)
+    e = np.array([np.sum(np.mean(y[i:i + blk] ** 2, axis=0)) for i in range(0, n - blk, hop)]) + 1e-15
+    loud = -0.691 + 10 * np.log10(e)
+    gated = e[loud > -70]
+    if not len(gated):
+        return -70.0
+    rel = -0.691 + 10 * np.log10(np.mean(gated)) - 10
+    final = e[loud > max(-70, rel)]
+    return float(-0.691 + 10 * np.log10(np.mean(final)))
+
+
+def phone_bass(x: np.ndarray, amount: float) -> np.ndarray:
+    """
+    Voix graves audibles sur un petit haut-parleur (téléphone), qui ne restitue presque rien sous 300 Hz :
+    on renforce les harmoniques naturelles de la note (300 Hz – 1 kHz, jusqu'à +6 dB) et on allège l'extrême grave
+    (jusqu'à −3 dB sous 140 Hz). L'oreille reconstitue la note à partir de ses harmoniques. Aucune harmonique
+    fabriquée : rien ne peut s'annuler avec celles de l'instrument. amount : 0 (rien) à 1 (basse).
+    """
+    if amount <= 0 or len(x) < 1024:
+        return x
+    n = len(x)
+    f = np.fft.rfftfreq(n, 1 / RATE); f[0] = 1.0
+    g = amount * (6.0 * np.exp(-0.5 * (np.log2(f / 560) / 0.8) ** 2) - 3.0 / (1 + (f / 140) ** 4))
+    return np.fft.irfft(np.fft.rfft(x) * 10 ** (g / 20), n).astype(np.float32)
+
+
+def bass_amount(midis, top: float = 67) -> float:
+    """Dose de renfort des harmoniques selon la tessiture : pleine pour une basse, forte pour un ténor, rien en haut.
+    top : note médiane à partir de laquelle on ne renforce plus (plus haut pour le piano, au son très « fondamental »)."""
+    if not len(midis):
+        return 0.0
+    m = float(np.median(midis))
+    return float(np.clip((top - m) / 10, 0, 1))
+
+
+SYNTH_EQ = {  # Chœur synthé et Piano (TinySoundFont) : clarté et place pour les voix
+    "choeur": [(120, -2.0, 1.2), (300, -1.5, 0.8), (2800, 3.5, 1.0)],
+    "piano": [(110, -3.0, 1.2), (350, -1.5, 0.8), (3000, 3.0, 1.0), (7500, 1.5, 0.8)],
+}
+
+
+def eq_bells(x: np.ndarray, bells) -> np.ndarray:
+    n = len(x)
+    if n < 64:
+        return x
+    f = np.fft.rfftfreq(n, 1 / RATE); f[0] = 1.0
+    g = np.zeros_like(f)
+    for f0, gain, bw in bells:
+        g += gain * np.exp(-0.5 * (np.log2(f / f0) / (bw / 2)) ** 2)
+    return np.fft.irfft(np.fft.rfft(x) * 10 ** (g / 20), n).astype(np.float32)
+
+
+def finish(stereo: np.ndarray, kind: str | None = None, midis=None) -> np.ndarray:
+    """Fichier final de toute sonorité : égalisation propre à la sonorité, basses audibles, −14 LUFS, limiteur."""
+    x = stereo if stereo.ndim == 2 else np.stack([stereo, stereo], axis=1)
+    x = x.astype(np.float32)
+    if kind in SYNTH_EQ:
+        x = np.stack([eq_bells(x[:, c], SYNTH_EQ[kind]) for c in range(2)], axis=1)
+        if kind == "choeur":  # le souffle des échantillons de synthèse est dans l'extrême aigu : coupé en douceur
+            x = np.stack([lowpass(x[:, c], 9000) for c in range(2)], axis=1)
+        amt = 0.8 if midis is None else bass_amount(midis, top=73 if kind == "piano" else 67)
+        x = np.stack([phone_bass(x[:, c], amt) for c in range(2)], axis=1)
+    gain = 10 ** ((TARGET_LUFS - lufs(x)) / 20)
+    return limit(x * gain)
