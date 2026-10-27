@@ -10,7 +10,7 @@ datas = [d for d in collect_data_files('music21') if f'{os.sep}corpus{os.sep}' n
 datas += collect_data_files('pypdfium2_raw') + collect_data_files('pypdfium2')
 binaries = collect_dynamic_libs('pypdfium2_raw') + collect_dynamic_libs('tinysoundfont') + collect_dynamic_libs('lameenc')
 
-hidden = ['omr', 'preprocess', 'merge', 'render', 'chant'] + collect_submodules('music21')
+hidden = ['omr', 'preprocess', 'merge', 'render', 'chant', 'mixage'] + collect_submodules('music21')
 hidden += ['pillow_heif', 'tinysoundfont', 'lameenc', 'pypdfium2']
 
 # Voix chantées (requirements-chant.txt) : Piper et ses données espeak-ng, onnxruntime, Praat (parselmouth).

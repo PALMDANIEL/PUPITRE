@@ -360,6 +360,8 @@ def encode_mp3(pcm, base: pathlib.Path):
     enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(2)
     if pcm.ndim == 1:
         pcm = np.repeat(pcm, 2)
+    elif pcm.ndim == 2:
+        pcm = pcm.reshape(-1)  # (échantillons, 2) → gauche, droite entrelacés
     mp3 = base.with_suffix(".mp3")
     mp3.write_bytes(enc.encode((pcm * 32767).astype("<i2").tobytes()) + enc.flush())
     return mp3.name
@@ -439,19 +441,15 @@ def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
 
 
 def mix(tracks):
-    """Mélange de voix chantées (gain par voix), sans saturation."""
-    import numpy as np
-    n = max(len(t) for t, _ in tracks)
-    out = np.zeros(n, np.float32)
-    for t, g in tracks:
-        out[: len(t)] += t * g
-    peak = float(np.max(np.abs(out))) or 1.0
-    return out / peak * 0.85
+    """Voix chantées → fichier stéréo final : voix réparties dans l'espace, salle, volume constant, limiteur."""
+    import mixage
+    pans = mixage.pan_positions(len(tracks))
+    return mixage.master(mixage.mix_stereo([(t, g, pans[i] if len(tracks) > 1 else 0.0) for i, (t, g) in enumerate(tracks)]))
 
 
 def sing_voices(voices, labels, tempo_qpm, a):
     """Voix chantées : voix de femme pour les voix hautes, d'homme pour les voix basses ; paroles saisies ou de la partition."""
-    import chant
+    import chant, mixage
     missing = chant.missing_voices()
     if missing:
         sys.exit(f"Voix de synthèse introuvables dans {chant.voice_dir()} : {', '.join(missing)}")
@@ -462,7 +460,7 @@ def sing_voices(voices, labels, tempo_qpm, a):
         midis = [p.midi for n in v.recurse().notes for p in n.pitches]
         kind = "femme" if statistics.mean(midis) >= 60 else "homme"
         print(f"Chant {i+1}/{len(voices)} : {vname} (voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
-        sung.append(chant.chorus(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid))))
+        sung.append(mixage.polish_voice(chant.chorus(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid))), kind))
     return sung
 
 
@@ -494,13 +492,13 @@ def main():
     for i, v in enumerate(voices):
         vid, vname = labels[i]
         if sung:
-            stem = encode_mp3(sung[i], out / vid)
+            stem = encode_mp3(mix([(sung[i], 1.0)]), out / vid)
         else:
             stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
         work = ""
         if not a.sans_travail:
             if sung:
-                work = encode_mp3(mix([(x, 1.0 if i == j else 0.34) for j, x in enumerate(sung)]), out / f"{vid}_travail")
+                work = encode_mp3(mix([(x, 1.0 if i == j else 0.3) for j, x in enumerate(sung)]), out / f"{vid}_travail")
             else:
                 practice = stream.Score()
                 for j, other in enumerate(voices):

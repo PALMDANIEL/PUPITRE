@@ -82,6 +82,7 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - Sonorité `chant` (en plus de `choeur` et `piano`) : `engine/chant.py` (Piper : SIWIS femme, UPMC « Pierre » homme ; Praat/parselmouth pour la hauteur ; voyelle tenue par grains calés sur la période ; vibrato par ligne à retard). `render.py --timbre chant --langue fr|la|en|mos|dyu --paroles paroles.json`.
 - Paroles : manifeste `voices[].lyrics` (lues dans la partition) et `voices[].sung` (notes après liaisons) ; saisie dans la table de mixage, enregistrée dans `ScoreMeta.paroles` / `langue`.
 - Voix téléchargées par le serveur au premier usage (`server/voix.ts`, `VOIX_DIR`, ~/pupitre/voix en local, userData/voix sur le bureau). Refusé en lecture directe (Vercel).
+- Son (`engine/mixage.py`, numpy seul) : niveau réglé par syllabe, consonnes +3,5 dB, composante continue retirée après la resynthèse Praat (sinon les notes aiguës sortaient à −15 dB), égaliseur à phase nulle, compresseur doux, voix à −18 dB puis fichiers à −16 dB, stéréo (S/T à gauche, A/B à droite), petite salle, limiteur à −1 dB. Mesuré : voix au même niveau, ≤ 1,8 dB d'écart entre notes.
 - Moteur autonome : `engine/requirements-chant.txt` ; espeak-ng refuse les chemins longs → copie dans `~/.pupitre-espeak` si besoin ; `ESPEAK_DATA_PATH` réglé avant l'import de piper.
 
 ## Limites connues

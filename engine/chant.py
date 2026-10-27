@@ -209,8 +209,11 @@ def sing_syllable(kind: str, text: str, freq: float, seconds: float, vibrato: bo
     call(tier, "Add point", total, freq)
     call([manip, tier], "Replace pitch tier")
     out = call(manip, "Get resynthesis (overlap-add)")
-    y = np.asarray(out.values[0], dtype=np.float64)
     sr = int(out.sampling_frequency)
+    # la resynthèse laisse une composante continue, énorme quand la note est bien plus aiguë que la voix parlée :
+    # on la retire avant de régler le niveau, sinon la note réelle sortirait beaucoup trop faible
+    from mixage import highpass
+    y = highpass(np.asarray(out.values[0], dtype=np.float64), 45 if kind == "homme" else 60, sr)
     i0, i1 = int(v0 * sr), max(int(v1 * sr), int(v0 * sr) + 1)
     i1 = min(i1, len(y))
     onset, nucleus, coda = y[:i0], y[i0:i1], y[i1:]
@@ -232,6 +235,14 @@ def sing_syllable(kind: str, text: str, freq: float, seconds: float, vibrato: bo
             vowel[a: a + xf] = nucleus[a: a + xf] * np.linspace(1, 0, xf) + vowel[a: a + xf] * np.linspace(0, 1, xf)
     if vibrato:
         vowel = _vibrato(vowel, sr)
+    # niveau régulier : chaque voyelle au même niveau, quelle que soit la syllabe prononcée
+    vrms = float(np.sqrt(np.mean(vowel ** 2))) or 1e-6
+    k = 0.1 / vrms
+    vowel = vowel * k
+    # consonnes renforcées (+3,5 dB à l'attaque, +2 dB en finale) : ce sont elles qui rendent les mots compréhensibles
+    peak = float(np.max(np.abs(vowel))) or 1.0
+    onset = np.clip(onset * k * 1.5, -peak * 1.1, peak * 1.1)
+    coda = np.clip(coda * k * 1.26, -peak * 1.1, peak * 1.1)
     # léger souffle de fin de note
     rel = min(int(0.06 * sr), len(vowel) // 3)
     if rel > 0:
@@ -299,8 +310,7 @@ def sing_part(part, qpm: float, kind: str, lang: str = "fr", lyrics_text: str | 
         j = min(len(buf), i + len(y))
         buf[i:j] += y[: j - i]
         prev_end = start + dur
-    peak = float(np.max(np.abs(buf))) or 1.0
-    return (buf / peak * 0.8).astype(np.float32)
+    return buf  # niveaux et égalisation : mixage.polish_voice
 
 
 def chorus(mono: np.ndarray) -> np.ndarray:
@@ -308,9 +318,9 @@ def chorus(mono: np.ndarray) -> np.ndarray:
     n = len(mono)
     t = np.arange(n) / RATE
     out = mono.copy()
-    for delay_ms, rate_hz, depth_ms, gain in ((17, 0.31, 2.2, 0.55), (29, 0.23, 2.8, 0.45)):
+    # copies discrètes : assez pour un son d'ensemble, pas au point de brouiller les consonnes
+    for delay_ms, rate_hz, depth_ms, gain in ((17, 0.31, 2.2, 0.3), (29, 0.23, 2.8, 0.22)):
         d = (delay_ms + depth_ms * np.sin(2 * np.pi * rate_hz * t)) * RATE / 1000
         idx = np.clip(np.arange(n) - d, 0, n - 1)
         out += gain * np.interp(idx, np.arange(n), mono).astype(np.float32)
-    peak = float(np.max(np.abs(out))) or 1.0
-    return (out / peak * 0.8).astype(np.float32)
+    return out.astype(np.float32)
