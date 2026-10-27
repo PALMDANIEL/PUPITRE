@@ -524,7 +524,9 @@ def sing_part(part, qpm: float, kind: str, lang: str = "fr", lyrics_text: str | 
         rng = np.random.default_rng(1000 * k + len(notes))
         lead = k == 0
         prev_end, prev_freq = -1.0, None
-        for n, midi, text, syl in zip(notes, midis, texts, sylls):
+        for count, (n, midi, text, syl) in enumerate(zip(notes, midis, texts, sylls)):
+            if count % 25 == 0:
+                print("actif:chant", flush=True)  # signe de vie pour la surveillance du serveur
             start, dur = float(n.offset) * sec, float(n.quarterLength) * sec
             # chaque chanteur a son propre accord et ne chante jamais exactement en même temps que les autres
             cents = singer[2] + (0 if lead else rng.normal(0, 3))

@@ -62,6 +62,10 @@ export const config = {
   maxUploadMb: Number(env.MAX_UPLOAD_MB ?? 30),
   omrTimeoutMs: Number(env.OMR_TIMEOUT_MS ?? 15 * 60_000),
   renderTimeoutMs: Number(env.RENDER_TIMEOUT_MS ?? 8 * 60_000),
+  /** Surveillance des calculs : arrêt seulement sans aucun signe d'avancement pendant ce délai… */
+  idleMs: Number(env.ENGINE_IDLE_MS ?? 5 * 60_000),
+  /** … et plafond de sécurité (ordinateur, serveur VPS) ; sur Vercel, les limites courtes restent (5 min par requête). */
+  maxJobMs: Number(env.ENGINE_MAX_MS ?? 60 * 60_000),
   /** Voix chantées : chaque syllabe est prononcée puis accordée, bien plus long que le synthétiseur. */
   chantTimeoutMs: Number(env.CHANT_TIMEOUT_MS ?? 4 * Number(env.RENDER_TIMEOUT_MS ?? 8 * 60_000)),
   /** Voix de synthèse (voix chantées) : téléchargées au premier usage (environ 140 Mo). */

@@ -6,25 +6,49 @@ import { ensureVoices } from './voix';
 import { dirOf, listMetas, patchMeta, readMeta } from './store';
 import { BUSY, UserError, type Job, type Manifest } from './types';
 
+/**
+ * Lance une étape du moteur. Pas de durée fixe : un long chant va toujours au bout. On n'arrête que
+ * - un calcul qui ne donne plus aucun signe d'avancement pendant config.idleMs (5 min), ou
+ * - au-delà du plafond de sécurité (1 h) ; sur Vercel (lecture directe), la limite courte demandée (la plateforme
+ *   coupe chaque requête à 5 min : mieux vaut s'arrêter proprement avec un message clair).
+ */
 export function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env, windowsHide: true });
     let tail = '';
     let buffer = '';
-    const timer = setTimeout(() => {
+    let lastSign = Date.now();
+    let done = false;
+    const stop = (message: string) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer); clearInterval(watch);
       child.kill('SIGKILL');
-      reject(new UserError(`${opts.label} a pris trop de temps et a été interrompue.`));
-    }, opts.timeoutMs);
+      reject(new UserError(message));
+    };
+    const max = config.direct ? opts.timeoutMs : Math.max(opts.timeoutMs, config.maxJobMs);
+    const timer = setTimeout(() => stop(config.direct
+      ? `${opts.label} a pris trop de temps pour le serveur en ligne (5 minutes au plus). Envoyez moins de pages à la fois, ou utilisez Pupitre sur ordinateur pour les longues partitions.`
+      : `${opts.label} a dépassé ${Math.round(max / 60_000)} minutes et a été interrompue.`), max);
+    const watch = setInterval(() => {
+      if (Date.now() - lastSign > config.idleMs) {
+        const d = config.idleMs >= 60_000 ? `${Math.round(config.idleMs / 60_000)} minutes` : `${Math.round(config.idleMs / 1000)} secondes`;
+        stop(`${opts.label} ne donnait plus aucun signe d’avancement depuis ${d} et a été interrompue.`);
+      }
+    }, 5_000);
     child.stdout.on('data', (chunk: Buffer) => {
+      lastSign = Date.now();
       buffer += chunk.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines) opts.onLine?.(line.trim());
     });
-    child.stderr.on('data', (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-4000); });
-    child.on('error', (err) => { clearTimeout(timer); reject(new Error(`${opts.label} : impossible de lancer ${cmd} (${err.message})`)); });
+    child.stderr.on('data', (chunk: Buffer) => { lastSign = Date.now(); tail = (tail + chunk.toString()).slice(-4000); });
+    child.on('error', (err) => { done = true; clearTimeout(timer); clearInterval(watch); reject(new Error(`${opts.label} : impossible de lancer ${cmd} (${err.message})`)); });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clearTimeout(timer); clearInterval(watch);
+      if (done) return;
+      done = true;
       if (buffer) opts.onLine?.(buffer.trim());
       if (code === 0) return resolve();
       const last = tail.trim().split('\n').pop() ?? '';

@@ -571,6 +571,7 @@ SFID = 0  # première (et seule) banque chargée
 def encode_mp3(pcm, base: pathlib.Path):
     """PCM flottant (mono ou stéréo entrelacé) → MP3 160 kb/s."""
     import lameenc, numpy as np
+    print(f"actif:mp3:{base.name}", flush=True)  # signe de vie pour la surveillance du serveur
     pcm = np.clip(pcm, -1, 1)
     enc = lameenc.Encoder()
     enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(5)  # 5 : réglage standard de LAME, inaudible à 160 kb/s, 2,4 fois plus rapide que 2

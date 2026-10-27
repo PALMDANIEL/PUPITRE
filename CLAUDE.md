@@ -96,6 +96,8 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 - FFT rapides (`mixage.fast_len`, `apply_curve`) : une longueur à grand facteur premier rendait chaque transformée ~2 s ; le Cantique complet passait de 10 min à 2 min 53.
 - Téléphone, abonnement expiré : `features/packs/renew-access.ts` (bandeau « Renouveler en ligne » sur Mes chants, Photo, Réglages ; code lu par `decodeCode`, même expiré, enregistré quand même) ; `/api/paiement/renouvellement` inscrit au registre un code jamais vu.
 
+- Surveillance des calculs (27/10/2026) : `jobs.run` n'arrête plus à durée fixe ; arrêt seulement sans signe d'avancement pendant `ENGINE_IDLE_MS` (5 min) ou au-delà de `ENGINE_MAX_MS` (1 h) ; sur Vercel (`LECTURE_DIRECTE`), limites courtes gardées avec message clair. Le moteur imprime des signes de vie (`actif:omr` toutes les 20 s, `actif:chant`/`actif:choeur` toutes les 25 notes, `actif:mp3`).
+
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.
 - Les paroles ne sont pas chantées (son « aah » de chœur ou piano).

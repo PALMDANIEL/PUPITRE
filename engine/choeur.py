@@ -115,7 +115,9 @@ def sing_part(part_stream, qpm: float, vowel: str = "ah", hint: str | None = Non
     end = (float(notes[-1].offset + notes[-1].quarterLength) * sec + 2.0) if notes else 1.0
     buf = np.zeros(int(end * RATE) + RATE, np.float32)
     prev_end = -1.0
-    for n, midi in zip(notes, midis):
+    for count, (n, midi) in enumerate(zip(notes, midis)):
+        if count % 25 == 0:
+            print("actif:choeur", flush=True)  # signe de vie pour la surveillance du serveur
         start, dur = float(n.offset) * sec, float(n.quarterLength) * sec
         legato = abs(start - prev_end) < 0.05
         x = _note(part, vowel, midi, dur)

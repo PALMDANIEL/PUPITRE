@@ -81,8 +81,12 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int):
         proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), *ocr_options(), "--", str(pdf)],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
                                 env=ocr_env(), **QUIET)
+        last_sign = time.time()
         for line in proc.stdout:
             tail = (tail + [line.rstrip()])[-25:]
+            if time.time() - last_sign > 20:  # signe de vie : une page dense peut prendre plusieurs minutes
+                print("actif:omr", flush=True)
+                last_sign = time.time()
             m = re.search(r"Sheet#(\d+)", line)
             if m and m.group(1) not in seen:
                 seen.add(m.group(1))
