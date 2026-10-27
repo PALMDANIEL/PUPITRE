@@ -29,7 +29,7 @@ import { ScoreViewer } from '../score/score-viewer';
       </header>
       <div class="workspace">
         <app-mixer [score]="s" [player]="true" [online]="remote.configured()" [busy]="busy()" [progress]="progress()" [failure]="failure()"
-                   (recreate)="recreate($event)" />
+                   (recreate)="recreate($event)" (renamed)="renameVoice($event)" />
         <app-score-viewer [score]="s" />
       </div>
     } @else {
@@ -60,6 +60,11 @@ export class PackPlayer {
   protected readonly busy = signal(false);
   protected readonly progress = signal<number | null>(null);
   protected readonly failure = signal<string | null>(null);
+
+  protected async renameVoice(e: { voice: string; name: string }) {
+    await this.packs.renameVoice(this.id(), e.voice, e.name);
+    this.score.set(await this.packs.open(this.id()));
+  }
 
   /** Sonorité, tempo ou voix chantées : le serveur AIT recrée le chant, qui remplace celui du téléphone. */
   protected async recreate(opts: Parameters<RemoteReader['recreate']>[1]) {

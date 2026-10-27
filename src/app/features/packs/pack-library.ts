@@ -6,10 +6,11 @@ import { RemoteReader } from '../../core/remote';
 import { frDateShort } from '../../core/dates';
 import { voiceColor } from '../../core/api';
 import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
+import { RenewAccess } from './renew-access';
 
 @Component({
   selector: 'app-pack-library',
-  imports: [RouterLink, DatePipe],
+  imports: [RouterLink, DatePipe, RenewAccess],
   template: `
     <section class="intro">
       <p class="eyebrow">Lecteur de répétition</p>
@@ -46,6 +47,7 @@ import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
         @if (i.expires) { · <a [href]="renew(i.id)" [target]="shopTarget" rel="noopener">Renouveler</a> }
       </p>
     }
+    <app-renew-access />
     <p class="settings"><a routerLink="/reglages">Réglages du serveur de lecture</a></p>
     @if (store.error()) { <p class="error banner" role="alert">{{ store.error() }}</p> }
 

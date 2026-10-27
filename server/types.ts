@@ -28,6 +28,8 @@ export interface ScoreMeta {
   langue?: Langue | null; paroles?: Record<string, string> | null;
   /** Chœur réel : voyelle chantée */
   voyelle?: Voyelle | null;
+  /** Noms de voix choisis par l'utilisateur (id → nom), gardés quand l'audio est recréé */
+  voiceNames?: Record<string, string> | null;
   manifest: Manifest | null;
   revision: number;
   createdAt: string; updatedAt: string;

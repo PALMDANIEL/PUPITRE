@@ -2,12 +2,13 @@ import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { frDateShort } from '../../core/dates';
-import { AccessInfo, RemoteReader } from '../../core/remote';
+import { AccessInfo, RemoteReader, decodeCode } from '../../core/remote';
+import { RenewAccess } from './renew-access';
 import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
 
 @Component({
   selector: 'app-remote-settings',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, RenewAccess],
   template: `
     <a routerLink="/" class="back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>Mes chants</a>
     <section class="head">
@@ -31,6 +32,7 @@ import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
         <p class="ok" role="status">✓ Code valable pour <b>{{ i.client }}</b>{{ i.issued ? ', du ' + date(i.issued) : '' }}{{ i.expires ? ' au ' + date(i.expires) + ' inclus' : ' (sans date de fin)' }}.</p>
       }
     </form>
+    <app-renew-access />
     <p class="hint">Pas encore de code ? <a [href]="buy" [target]="shopTarget" rel="noopener">Acheter un code pour la chorale</a> (Orange Money, Moov Money).</p>
     <p class="hint">L’écoute des chants déjà enregistrés n’a jamais besoin d’Internet.</p>
   `,
@@ -77,6 +79,12 @@ export class RemoteSettingsPage {
       setTimeout(() => void this.router.navigate(['/photo']), 900);
     } catch (e) {
       this.error.set((e as Error).message);
+      // code expiré : on le garde quand même, pour afficher le bouton de renouvellement
+      const code = decodeCode(this.code);
+      if (code?.expires && code.expires < new Date().toISOString().slice(0, 10)) {
+        this.remote.save({ url: this.url, code: this.code, direct: true,
+          info: { client: code.client, id: code.id, issued: code.issued, expires: code.expires, direct: true } });
+      }
     } finally {
       this.checking.set(false);
     }

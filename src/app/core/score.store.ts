@@ -41,6 +41,7 @@ export const ScoreStore = signalStore(
         patchState(store, { loading: true, score: null, error: null });
         void poll(id);
       },
+      renameVoice: (voice: string, name: string) => act((id) => firstValueFrom(api.renameVoice(id, voice, name))),
       render: (opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string> | null; voyelle?: Voyelle }) => act((id) => firstValueFrom(api.render(id, opts))),
       retry: () => act((id) => firstValueFrom(api.retry(id))),
       uploadCorrection: (file: File) => act((id) => firstValueFrom(api.correct(id, file))),

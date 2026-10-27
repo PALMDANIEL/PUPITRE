@@ -10,6 +10,8 @@ datas = [d for d in collect_data_files('music21') if f'{os.sep}corpus{os.sep}' n
 datas += collect_data_files('pypdfium2_raw') + collect_data_files('pypdfium2')
 # Chœur réel : enregistrements de vrais chanteurs (VocalSet / epic-choir, CC BY 4.0), ~42 Mo
 datas += [(os.path.join(here, 'choeur'), 'choeur')]
+# Lecture du texte des partitions (paroles, noms des voix) : langue française de Tesseract (Apache 2.0), 14 Mo
+datas += [(os.path.join(here, 'tessdata'), 'tessdata')]
 binaries = collect_dynamic_libs('pypdfium2_raw') + collect_dynamic_libs('tinysoundfont') + collect_dynamic_libs('lameenc')
 
 hidden = ['omr', 'preprocess', 'merge', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')

@@ -11,9 +11,9 @@ const COLS: Record<keyof ScoreMeta, string> = {
   partitionFile: 'partition_file', corrected: 'corrected', pages: 'pages', status: 'status',
   progress: 'progress', error: 'error', tempo: 'tempo', timbre: 'timbre', manifest: 'manifest',
   revision: 'revision', createdAt: 'created_at', updatedAt: 'updated_at', owner: 'owner',
-  langue: 'langue', paroles: 'paroles', voyelle: 'voyelle',
+  langue: 'langue', paroles: 'paroles', voyelle: 'voyelle', voiceNames: 'voice_names',
 };
-const JSON_KEYS = new Set<keyof ScoreMeta>(['pages', 'manifest', 'paroles']);
+const JSON_KEYS = new Set<keyof ScoreMeta>(['pages', 'manifest', 'paroles', 'voiceNames']);
 const toDb = (k: keyof ScoreMeta, v: unknown) => (JSON_KEYS.has(k) ? (v == null ? null : JSON.stringify(v)) : v);
 
 const SCHEMA = `
@@ -40,6 +40,7 @@ const SCHEMA = `
   ALTER TABLE scores ADD COLUMN IF NOT EXISTS langue text;
   ALTER TABLE scores ADD COLUMN IF NOT EXISTS paroles jsonb;
   ALTER TABLE scores ADD COLUMN IF NOT EXISTS voyelle text;
+  ALTER TABLE scores ADD COLUMN IF NOT EXISTS voice_names jsonb;
   CREATE INDEX IF NOT EXISTS scores_created_idx ON scores (created_at DESC);
   CREATE INDEX IF NOT EXISTS scores_owner_idx ON scores (owner);
   CREATE INDEX IF NOT EXISTS scores_status_idx ON scores (status);
@@ -52,7 +53,7 @@ function fromRow(r: any): ScoreMeta {
     id: r.id, title: r.title, originalName: r.original_name, source: r.source, sourceFile: r.source_file,
     partitionFile: r.partition_file, corrected: r.corrected, pages: r.pages ?? [], status: r.status,
     progress: r.progress, error: r.error, tempo: r.tempo, timbre: r.timbre, manifest: r.manifest,
-    revision: r.revision, owner: r.owner ?? null, langue: r.langue ?? null, paroles: r.paroles ?? null, voyelle: r.voyelle ?? null,
+    revision: r.revision, owner: r.owner ?? null, langue: r.langue ?? null, paroles: r.paroles ?? null, voyelle: r.voyelle ?? null, voiceNames: r.voice_names ?? null,
     createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString(),
   };
 }

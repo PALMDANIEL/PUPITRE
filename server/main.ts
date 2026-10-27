@@ -278,6 +278,18 @@ app.patch('/api/scores/:id', async (req, res) => {
   res.json(await patchMeta(meta.id, { title }));
 });
 
+/** Renommer une voix (« Voix 2 » → « La fiancée ») ; le nom est gardé quand l'audio est recréé. */
+app.patch('/api/scores/:id/voix/:voice', async (req, res) => {
+  const meta = await getScore(req.params.id, res);
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 40) : '';
+  if (!name) fail(400, 'Le nom de la voix ne peut pas être vide.');
+  if (!meta.manifest?.voices.some((v) => v.id === req.params.voice)) fail(404, 'Voix inconnue.');
+  const manifest = { ...meta.manifest!, voices: meta.manifest!.voices.map((v) => (v.id === req.params.voice ? { ...v, name } : v)) };
+  const file = path.join(dirOf(meta.id), 'audio', 'manifest.json');
+  await fs.writeFile(file, JSON.stringify(manifest, null, 2)).catch(() => undefined);
+  res.json(await patchMeta(meta.id, { manifest, voiceNames: { ...(meta.voiceNames ?? {}), [req.params.voice]: name } }));
+});
+
 app.post('/api/scores/:id/render', async (req, res) => {
   const meta = await getScore(req.params.id, res);
   assertIdle(meta);

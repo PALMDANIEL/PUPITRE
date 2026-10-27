@@ -92,6 +92,10 @@ Objectif : d'abord en local, ensuite hébergement en ligne et **commercialisatio
 
 - Audibilité (27/10/2026) : toutes les sonorités passent par `mixage.finish` → −14 LUFS (BS.1770, `mixage.lufs`), limiteur −1 dB ; Chœur synthé et Piano (TinySoundFont) étaient à −31 et −26 LUFS. `phone_bass` : renfort des harmoniques naturelles 300 Hz–1 kHz (+6 dB × dose selon tessiture, `bass_amount`) et −3 dB sous 140 Hz, pour les téléphones ; égalisation `SYNTH_EQ` (synthé, piano) ; pistes de travail : sa voix ≈ 12 dB devant, au centre, les autres sur les côtés (vélocité 27 pour le synthé). Chœur réel : réverbération ajoutée réduite (0,06).
 
+- Noms des voix (27/10/2026) : OCR Audiveris activé (`engine/tessdata/fra.traineddata` complet — le mode « legacy » d'Audiveris refuse tessdata_fast). `render.py` : `merge_named_parts` (portées de même nom réunies ; mesures à deux voix d'une portée de rôle → chœur du même registre, sinon voix du haut), `staff_names`/`pretty_name`/`ACCENTS`, `share_lyrics` (paroles écrites une fois entre S et A), `name_by_range`, `voice_id` (identifiants = noms). `chant.clean_syllable` nettoie les paroles lues (« 1a) », « frère(x) », « V0 »). Renommage : `PATCH /api/scores/:id/voix/:voice` (`ScoreMeta.voiceNames`, réappliqué après rendu), `PackStore.renameVoice` sur le téléphone. Couleurs des autres voix : `voiceColor` (hachage du nom).
+- FFT rapides (`mixage.fast_len`, `apply_curve`) : une longueur à grand facteur premier rendait chaque transformée ~2 s ; le Cantique complet passait de 10 min à 2 min 53.
+- Téléphone, abonnement expiré : `features/packs/renew-access.ts` (bandeau « Renouveler en ligne » sur Mes chants, Photo, Réglages ; code lu par `decodeCode`, même expiré, enregistré quand même) ; `/api/paiement/renouvellement` inscrit au registre un code jamais vu.
+
 ## Limites connues
 - Pas de partitions manuscrites ni de **solfa chiffré** (notation courante dans les chorales africaines) : Audiveris ne lit que la notation sur portée.
 - Les paroles ne sont pas chantées (son « aah » de chœur ou piano).

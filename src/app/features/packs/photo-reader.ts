@@ -4,12 +4,13 @@ import { Router, RouterLink } from '@angular/router';
 import { STATUS_LABEL } from '../../core/api';
 import { PackStore } from '../../core/packs';
 import { RemoteJob, RemoteReader } from '../../core/remote';
+import { RenewAccess } from './renew-access';
 
 interface Page { file: File; url: string }
 
 @Component({
   selector: 'app-photo-reader',
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, RenewAccess],
   template: `
     <a routerLink="/" class="back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>Mes chants</a>
     <section class="head">
@@ -52,6 +53,7 @@ interface Page { file: File; url: string }
           {{ remote.uploading() ? 'Envoi… ' + remote.uploadProgress() + ' %' : 'Lire la partition' }}
         </button>
         @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+        <app-renew-access />
       </section>
     }
 

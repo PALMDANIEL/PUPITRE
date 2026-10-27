@@ -116,6 +116,16 @@ export class PackStore {
     };
   }
 
+  /** Renommer une voix d'un chant enregistré sur le téléphone. */
+  async renameVoice(id: string, voice: string, name: string): Promise<void> {
+    const rec = await tx<PackRecord | undefined>('readonly', (s) => s.get(id) as IDBRequest<PackRecord | undefined>);
+    if (!rec) return;
+    rec.manifest = { ...rec.manifest, voices: rec.manifest.voices.map((v) => (v.id === voice ? { ...v, name } : v)) };
+    rec.importedAt = new Date().toISOString();  // le lecteur recharge le chant
+    await tx('readwrite', (s) => s.put(rec));
+    await this.load();
+  }
+
   /** Partition MusicXML d'un chant enregistré (pour recréer son audio en ligne). */
   async scoreFile(id: string): Promise<{ title: string; file: Blob; name: string } | null> {
     const rec = await tx<PackRecord | undefined>('readonly', (s) => s.get(id) as IDBRequest<PackRecord | undefined>);

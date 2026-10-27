@@ -40,7 +40,9 @@ import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from
             <svg class="thread" viewBox="0 0 100 12" preserveAspectRatio="none" aria-hidden="true">
               <line x1="1" y1="6" x2="99" y2="6" vector-effect="non-scaling-stroke" [attr.stroke-width]="engine.muted().has(v.id) ? 1 : 1.5 + vol(v.id) * 4" />
             </svg>
-            <span class="name">{{ v.name }}</span>
+            <span class="name">{{ v.name }}
+              <button type="button" class="rename" (click)="renameVoice(v)" [attr.aria-label]="'Renommer ' + v.name" title="Renommer">✎</button>
+            </span>
             <span class="range">{{ v.range[0] }} à {{ v.range[1] }}</span>
             <input type="range" min="0" max="1" step="0.05" [value]="vol(v.id)" (input)="setVol(v.id, $event)" [attr.aria-label]="'Volume ' + v.name">
             <button type="button" class="mute" [attr.aria-pressed]="engine.muted().has(v.id)" (click)="engine.toggleMute(v.id)">Couper</button>
@@ -190,6 +192,8 @@ import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from
     .seg button { border: 0; background: none; padding: .38rem .85rem; border-radius: 999px; cursor: pointer; font-weight: 700; font-size: .88rem; color: var(--ink-soft); }
     .seg button[aria-checked="true"] { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
     .seg { flex-wrap: wrap; }
+    .rename { border: 0; background: none; color: var(--ink-soft); cursor: pointer; font-size: .85rem; padding: 0 .2rem; opacity: .7; }
+    .rename:hover { opacity: 1; color: var(--ink); }
     .seg.small button { font-size: .82rem; padding: .3rem .8rem; }
     .seg small { font-size: .68rem; font-weight: 700; opacity: .75; text-transform: uppercase; letter-spacing: .06em; margin-left: .2rem; }
     .lyrics { display: grid; gap: .7rem; margin: .4rem 0 .2rem; }
@@ -225,6 +229,8 @@ export class Mixer {
   readonly progress = input<number | null>(null);
   readonly failure = input<string | null>(null);
   /** Téléphone : demande de recréation, faite par la page (le serveur AIT renvoie un nouveau pack). */
+  /** Téléphone : renommer une voix (fait par la page, dans le chant enregistré). */
+  readonly renamed = output<{ voice: string; name: string }>();
   readonly recreate = output<{ tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string> }>();
   protected readonly engine = inject(AudioEngine);
   private readonly store = inject(ScoreStore, { optional: true });
@@ -286,6 +292,12 @@ export class Mixer {
       ...(this.timbre() === 'reel' ? { voyelle: this.voyelle() } : {}) };
     if (this.player()) this.recreate.emit(opts);
     else void this.store?.render(opts);
+  }
+  protected renameVoice(v: { id: string; name: string }) {
+    const name = prompt('Nom de cette voix (ex. La fiancée, Soprano, Ténor 2) :', v.name)?.trim();
+    if (!name || name === v.name) return;
+    if (this.player()) this.renamed.emit({ voice: v.id, name: name.slice(0, 40) });
+    else void this.store?.renameVoice(v.id, name.slice(0, 40));
   }
   protected lyricOf(id: string) {
     return this.edits()[id] ?? this.score().paroles?.[id] ?? this.voices().find((v) => v.id === id)?.lyrics ?? '';

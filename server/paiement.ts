@@ -10,7 +10,7 @@ import { checkAccess, signAccess, type AccessPayload } from '../licence/acces';
 import { decodeLicence, signLicence, type LicencePayload } from '../licence/core';
 import { normalizeMachineId } from '../licence/machine';
 import { addDuration } from '../src/app/core/duree';
-import { db, event } from './admin';
+import { db, event, register } from './admin';
 import { config } from './config';
 import { activeGateway, directNumbers, gatewayOf } from './passerelles';
 import { UserError } from './types';
@@ -276,6 +276,8 @@ export async function isKnownSale(text: string): Promise<boolean> {
 export async function renewalForCode(text: string, keys: string[]): Promise<string | null> {
   let acc: AccessPayload;
   try { acc = checkAccess(text, keys, new Date(0)); } catch { return null; }
+  // un code expiré n'a parfois jamais été vu par le serveur (refusé à l'entrée) : on l'inscrit, pour pouvoir le renouveler
+  await register('acces', acc).catch(() => undefined);
   return renewalOf(acc.id, acc.expires);
 }
 

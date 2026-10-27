@@ -446,6 +446,28 @@ def breath(seconds: float, rng) -> np.ndarray:
 
 # --- Une voix entière -----------------------------------------------------------------------------------------
 
+def clean_syllable(text: str | None) -> str | None:
+    """
+    Syllabe lue sur une photo : on retire numéros de couplet (« 1a) », « b) »), taches d'encre lues comme des signes,
+    et on corrige les confusions courantes (« V0 » → « vo », mots en capitales). Rien de lisible : None (la note tient).
+    """
+    if not text:
+        return None
+    s = re.sub(r"^\s*([\dlI]+\s*[a-z]?|[a-z])\)\s*", "", text.strip())  # numéro de couplet (« 1a) », lu « la) »)
+    s = re.sub(r"\([^)]*\)", "", s)                                      # « frère(x) » : marque du pluriel
+    s = re.sub(r"(?<=[^\W\d_])0|(?<!\d)0(?=[^\W\d_])", "o", s)         # chiffre 0 au milieu d'un mot
+    if sum(c.isdigit() for c in s) >= max(1, sum(c.isalpha() for c in s)):
+        return None                                                          # surtout des chiffres : tache ou numéro
+    s = re.sub(r"[^\w'’\-]", "", s).replace("_", "")
+    s = re.sub(r"\d+", "", s).strip("-'’")
+    letters = re.sub(r"[^\w]", "", s)
+    if not letters:
+        return None
+    if len(letters) > 1 and letters.isupper():
+        s = s.lower()
+    return s
+
+
 def syllables_from_text(text: str) -> list[str]:
     """« Sain-te Ma-ri-e _ ma-ter » → ['Sain', 'te', 'Ma', 'ri', 'e', '_', 'ma', 'ter'] ; « _ » prolonge la syllabe précédente."""
     out = []
@@ -469,7 +491,7 @@ def note_syllables(notes, lyrics_text: str | None) -> list[str | None]:
     out = []
     for n in notes:
         lyr = n.lyrics[0].text if getattr(n, "lyrics", None) and n.lyrics[0].text else None
-        out.append(lyr)
+        out.append(clean_syllable(lyr))
     return out
 
 

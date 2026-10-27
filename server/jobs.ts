@@ -116,6 +116,10 @@ async function renderScore(id: string) {
   });
 
   const manifest = JSON.parse(await fs.readFile(path.join(next, 'manifest.json'), 'utf8')) as Manifest;
+  // noms de voix choisis par l'utilisateur : gardés quand l'audio est recréé
+  const names = (await readMeta(id))?.voiceNames ?? {};
+  for (const v of manifest.voices) if (names[v.id]) v.name = names[v.id];
+  if (Object.keys(names).length) await fs.writeFile(path.join(next, 'manifest.json'), JSON.stringify(manifest, null, 2));
   const audio = path.join(dir, 'audio');
   await fs.rm(audio, { recursive: true, force: true });
   await fs.rename(next, audio);

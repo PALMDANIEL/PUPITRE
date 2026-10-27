@@ -24,6 +24,34 @@ TARGET_MASTER = -16.0  # niveau final d'un fichier (dB, parties chantées)
 CEILING = 0.89         # crête maximale (−1 dB)
 
 
+def fast_len(n: int) -> int:
+    """Plus petite longueur ≥ n qui ne se décompose qu'en 2, 3 et 5 : la transformée de Fourier y est très rapide
+    (une longueur avec un grand facteur premier peut la rendre des dizaines de fois plus lente)."""
+    best = 1 << max(0, (n - 1).bit_length())
+    p5 = 1
+    while p5 < best:
+        p35 = p5
+        while p35 < best:
+            p = p35
+            while p < n:
+                p *= 2
+            best = min(best, p)
+            p35 *= 3
+        p5 *= 5
+    return best
+
+
+def apply_curve(x: np.ndarray, gain, rate: int = RATE) -> np.ndarray:
+    """Filtre à phase nulle : gain(f) appliqué au spectre (longueur rapide, puis on recoupe à la longueur d'origine)."""
+    n = len(x)
+    if n < 64:
+        return x
+    size = fast_len(n + 2048)  # un peu de marge : rien ne revient en boucle du bout vers le début
+    f = np.fft.rfftfreq(size, 1 / rate)
+    f[0] = 1e-3
+    return np.fft.irfft(np.fft.rfft(x, size) * gain(f), size)[:n]
+
+
 def db(x: float) -> float:
     return 20 * np.log10(max(float(x), 1e-9))
 
@@ -53,38 +81,26 @@ def _moving(x: np.ndarray, width: int) -> np.ndarray:
 def equalize(x: np.ndarray, kind: str) -> np.ndarray:
     """Égaliseur à phase nulle (FFT) : courbes douces, aucun artefact de filtre."""
     hp, bells, shelf_f, shelf_g = EQ.get(kind, EQ["femme"])
-    n = len(x)
-    if n < 64:
-        return x
-    spec = np.fft.rfft(x)
-    f = np.fft.rfftfreq(n, 1 / RATE)
-    f[0] = 1.0
-    gain_db = np.zeros_like(f)
-    for f0, g, bw in bells:
-        gain_db += g * np.exp(-0.5 * (np.log2(f / f0) / (bw / 2)) ** 2)
-    gain_db += shelf_g / (1 + np.exp(-np.log2(f / shelf_f) * 6))
-    mag = 10 ** (gain_db / 20) / np.sqrt(1 + (hp / f) ** 4)  # passe-haut 12 dB/octave
-    mag[0] = 0.0
-    return np.fft.irfft(spec * mag, n).astype(np.float32)
+
+    def curve(f):
+        gain_db = np.zeros_like(f)
+        for f0, g, bw in bells:
+            gain_db += g * np.exp(-0.5 * (np.log2(f / f0) / (bw / 2)) ** 2)
+        gain_db += shelf_g / (1 + np.exp(-np.log2(f / shelf_f) * 6))
+        return 10 ** (gain_db / 20) / np.sqrt(1 + (hp / f) ** 4)  # passe-haut 12 dB/octave
+    return apply_curve(x, curve).astype(np.float32)
 
 
 def highpass(x: np.ndarray, fc: float, rate: int = RATE) -> np.ndarray:
     """Passe-haut à phase nulle (24 dB/octave) : retire composante continue et grondements inaudibles."""
-    n = len(x)
-    if n < 64:
+    if len(x) < 64:
         return x - float(np.mean(x))
-    f = np.fft.rfftfreq(n, 1 / rate)
-    f[0] = 1e-3
-    return np.fft.irfft(np.fft.rfft(x) / np.sqrt(1 + (fc / f) ** 8), n)
+    return apply_curve(x, lambda f: 1 / np.sqrt(1 + (fc / f) ** 8), rate)
 
 
 def lowpass(x: np.ndarray, fc: float) -> np.ndarray:
     """Passe-bas à phase nulle, pente douce (pas de sonnerie)."""
-    n = len(x)
-    if n < 64:
-        return x
-    f = np.fft.rfftfreq(n, 1 / RATE)
-    return np.fft.irfft(np.fft.rfft(x) / np.sqrt(1 + (f / fc) ** 12), n).astype(np.float32)
+    return apply_curve(x, lambda f: 1 / np.sqrt(1 + (f / fc) ** 12)).astype(np.float32)
 
 
 def compress(x: np.ndarray, threshold_db: float = -24.0, ratio: float = 3.0, knee_db: float = 6.0) -> np.ndarray:
@@ -111,10 +127,7 @@ def deess(x: np.ndarray, split: float = 4500.0, margin_db: float = -4.0) -> np.n
     n = len(x)
     if n < 1024:
         return x
-    spec = np.fft.rfft(x)
-    f = np.fft.rfftfreq(n, 1 / RATE)
-    hi_part = 1 / np.sqrt(1 + (split / np.maximum(f, 1)) ** 8)
-    hi = np.fft.irfft(spec * hi_part, n)
+    hi = apply_curve(x, lambda f: 1 / np.sqrt(1 + (split / np.maximum(f, 1)) ** 8))
     lo = x - hi
     e_hi = np.sqrt(_moving(hi ** 2, 0.008 * RATE)) + 1e-9
     e_lo = np.sqrt(_moving(lo ** 2, 0.008 * RATE)) + 1e-9
@@ -218,11 +231,12 @@ def lufs(x: np.ndarray) -> float:
     n = len(st)
     if n < RATE // 2:
         return -70.0
-    f = np.fft.rfftfreq(n, 1 / RATE); f[0] = 1.0
-    k = 10 ** ((4.0 / (1 + (1500 / f) ** 2)) / 20) / np.sqrt(1 + (38 / f) ** 4)
-    y = np.stack([np.fft.irfft(np.fft.rfft(st[:, c]) * k, n) for c in range(st.shape[1])], axis=1)
+    k = lambda f: 10 ** ((4.0 / (1 + (1500 / f) ** 2)) / 20) / np.sqrt(1 + (38 / f) ** 4)
+    y = np.stack([apply_curve(st[:, c], k) for c in range(st.shape[1])], axis=1)
     blk, hop = int(0.4 * RATE), int(0.1 * RATE)
-    e = np.array([np.sum(np.mean(y[i:i + blk] ** 2, axis=0)) for i in range(0, n - blk, hop)]) + 1e-15
+    c = np.concatenate([[0.0], np.cumsum((y ** 2).sum(axis=1))])
+    starts = np.arange(0, n - blk, hop)
+    e = (c[starts + blk] - c[starts]) / blk + 1e-15
     loud = -0.691 + 10 * np.log10(e)
     gated = e[loud > -70]
     if not len(gated):
@@ -241,10 +255,11 @@ def phone_bass(x: np.ndarray, amount: float) -> np.ndarray:
     """
     if amount <= 0 or len(x) < 1024:
         return x
-    n = len(x)
-    f = np.fft.rfftfreq(n, 1 / RATE); f[0] = 1.0
-    g = amount * (6.0 * np.exp(-0.5 * (np.log2(f / 560) / 0.8) ** 2) - 3.0 / (1 + (f / 140) ** 4))
-    return np.fft.irfft(np.fft.rfft(x) * 10 ** (g / 20), n).astype(np.float32)
+    return apply_curve(x, lambda f: 10 ** (phone_bass_db(f, amount) / 20)).astype(np.float32)
+
+
+def phone_bass_db(f: np.ndarray, amount: float) -> np.ndarray:
+    return amount * (6.0 * np.exp(-0.5 * (np.log2(f / 560) / 0.8) ** 2) - 3.0 / (1 + (f / 140) ** 4))
 
 
 def bass_amount(midis, top: float = 67) -> float:
@@ -262,15 +277,15 @@ SYNTH_EQ = {  # Chœur synthé et Piano (TinySoundFont) : clarté et place pour 
 }
 
 
-def eq_bells(x: np.ndarray, bells) -> np.ndarray:
-    n = len(x)
-    if n < 64:
-        return x
-    f = np.fft.rfftfreq(n, 1 / RATE); f[0] = 1.0
+def bells_db(f: np.ndarray, bells) -> np.ndarray:
     g = np.zeros_like(f)
     for f0, gain, bw in bells:
         g += gain * np.exp(-0.5 * (np.log2(f / f0) / (bw / 2)) ** 2)
-    return np.fft.irfft(np.fft.rfft(x) * 10 ** (g / 20), n).astype(np.float32)
+    return g
+
+
+def eq_bells(x: np.ndarray, bells) -> np.ndarray:
+    return apply_curve(x, lambda f: 10 ** (bells_db(f, bells) / 20)).astype(np.float32)
 
 
 def finish(stereo: np.ndarray, kind: str | None = None, midis=None) -> np.ndarray:
@@ -278,10 +293,11 @@ def finish(stereo: np.ndarray, kind: str | None = None, midis=None) -> np.ndarra
     x = stereo if stereo.ndim == 2 else np.stack([stereo, stereo], axis=1)
     x = x.astype(np.float32)
     if kind in SYNTH_EQ:
-        x = np.stack([eq_bells(x[:, c], SYNTH_EQ[kind]) for c in range(2)], axis=1)
-        if kind == "choeur":  # le souffle des échantillons de synthèse est dans l'extrême aigu : coupé en douceur
-            x = np.stack([lowpass(x[:, c], 9000) for c in range(2)], axis=1)
         amt = 0.8 if midis is None else bass_amount(midis, top=73 if kind == "piano" else 67)
-        x = np.stack([phone_bass(x[:, c], amt) for c in range(2)], axis=1)
+
+        def curve(f):  # égalisation, voix graves audibles, et (chœur) aigus de synthèse coupés : en une seule passe
+            g = 10 ** ((bells_db(f, SYNTH_EQ[kind]) + phone_bass_db(f, amt)) / 20)
+            return g / np.sqrt(1 + (f / 9000) ** 12) if kind == "choeur" else g
+        x = np.stack([apply_curve(x[:, c], curve) for c in range(2)], axis=1).astype(np.float32)
     gain = 10 ** ((TARGET_LUFS - lufs(x)) / 20)
     return limit(x * gain)

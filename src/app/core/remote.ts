@@ -32,6 +32,19 @@ function readJobs(): RemoteJob[] {
 
 export class RemoteError extends Error {}
 
+/** Contenu d'un code d'accès (sans vérifier la signature : sert seulement à l'affichage et au renouvellement). */
+export function decodeCode(code: string | null | undefined): { id: string; client: string; issued: string | null; expires: string | null } | null {
+  const parts = (code ?? '').replace(/\s+/g, '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'PUPA1') return null;
+  try {
+    const json = decodeURIComponent(escape(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))));
+    const p = JSON.parse(json) as { id?: string; client?: string; issued?: string; expires?: string | null };
+    return p.id ? { id: p.id, client: p.client ?? '', issued: p.issued ?? null, expires: p.expires ?? null } : null;
+  } catch {
+    return null;
+  }
+}
+
 @Injectable({ providedIn: 'root' })
 export class RemoteReader {
   private readonly packs = inject(PackStore);

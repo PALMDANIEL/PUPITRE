@@ -158,6 +158,15 @@ Les installateurs ne sont pas encore signés par Apple / Microsoft : un avertiss
 
 Les partitions du chef de chœur sont dans **Documents/Pupitre** (menu *Fichier › Ouvrir le dossier des partitions*).
 
+## Noms des voix et paroles lus sur la partition
+Audiveris lit maintenant le texte des partitions (Tesseract, langue française complète `engine/tessdata/fra.traineddata`,
+Apache 2.0 ; `TESSDATA_PREFIX` et l'option `Language.defaultSpecification=fra` passés par `omr.py`) : **paroles** et **noms
+des portées**. Les voix prennent les noms de la partition : « S. A. » → Soprano, Alto ; « T. B. » → Ténor, Basse ;
+« LA FIANCEE » → La fiancée (accents des mots courants rétablis). Les portées de même nom sont réunies (partitions en
+dialogue) ; dans une portée de rôle, les mesures à deux voix vont au chœur du même registre. Sans nom : la tessiture
+décide (Soprano, Alto, Ténor, Basse, numérotés si besoin). Chaque voix se **renomme** (✎ dans la table de mixage,
+sur l'ordinateur et le téléphone) ; le nom est gardé quand l'audio est recréé et passe dans les packs.
+
 ## Chœur réel (« aah », « ouh »)
 Sonorité *Chœur réel* : chaque note est jouée par de vrais chanteurs enregistrés (3 à 10 par note, VocalSet via epic-choir,
 CC BY 4.0, crédités dans *À propos* et `engine/choeur/LISEZ-MOI.txt`), sur « aah » ou « ouh », sans paroles. 79 enregistrements
