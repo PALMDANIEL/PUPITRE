@@ -1,12 +1,18 @@
 export type ScoreStatus = 'queued' | 'preprocessing' | 'recognizing' | 'rendering' | 'ready' | 'failed';
 export type SourceKind = 'pdf' | 'image' | 'musicxml' | 'midi' | 'musescore';
-export type Timbre = 'choeur' | 'piano';
+/** choeur : chœur de synthèse ; reel : vrais chanteurs enregistrés (« aah », « ouh ») ; piano ; chant : voix chantées avec paroles. */
+export type Timbre = 'choeur' | 'reel' | 'piano' | 'chant';
+export const TIMBRES: Timbre[] = ['choeur', 'reel', 'piano', 'chant'];
+export type Voyelle = 'ah' | 'oo';
+/** Langue des paroles chantées : français, latin, anglais, mooré, dioula. */
+export type Langue = 'fr' | 'la' | 'en' | 'mos' | 'dyu';
+export const LANGUES: Langue[] = ['fr', 'la', 'en', 'mos', 'dyu'];
 export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'rendering'];
 
-export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string] }
+export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string]; lyrics?: string; sung?: number }
 
 export interface Manifest {
-  tempo: number; timbre: Timbre; tutti: string; score: string;
+  tempo: number; timbre: Timbre; tutti: string; score: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
 
@@ -18,6 +24,12 @@ export interface ScoreMeta {
   pages: string[];
   status: ScoreStatus; progress: number; error: string | null;
   tempo: number | null; timbre: Timbre;
+  /** Voix chantées : langue et paroles saisies par voix (sinon celles de la partition) */
+  langue?: Langue | null; paroles?: Record<string, string> | null;
+  /** Chœur réel : voyelle chantée */
+  voyelle?: Voyelle | null;
+  /** Noms de voix choisis par l'utilisateur (id → nom), gardés quand l'audio est recréé */
+  voiceNames?: Record<string, string> | null;
   manifest: Manifest | null;
   revision: number;
   createdAt: string; updatedAt: string;

@@ -29,6 +29,14 @@ RUN apt-get update \
 # Moteur Python (liste complète figée : --no-deps évite PyAudio, inutile)
 COPY engine/requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --no-deps -r /tmp/requirements.txt
+# Voix chantées (essai) : Piper, onnxruntime, Praat, et les voix libres (SIWIS et MLS CC BY 4.0, UPMC CC BY-SA 4.0)
+COPY engine/requirements-chant.txt /tmp/requirements-chant.txt
+RUN /opt/venv/bin/pip install --no-cache-dir --no-deps -r /tmp/requirements-chant.txt \
+ && mkdir -p /opt/voix && cd /opt/voix \
+ && for v in siwis/medium/fr_FR-siwis-medium upmc/medium/fr_FR-upmc-medium mls/medium/fr_FR-mls-medium; do \
+      curl -fsSL -O "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/$v.onnx" \
+   && curl -fsSL -O "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/$v.onnx.json"; done \
+ && ls -l /opt/voix
 
 # Banque de sons GeneralUser GS (S. Christian Collins) et sa licence
 RUN mkdir -p /opt/soundfont \
@@ -46,7 +54,7 @@ COPY --from=web /app/dist ./dist
 
 ENV NODE_ENV=production NO_OPEN=1 PORT=3000 \
     ACCES_EN_LIGNE=1 STORE=files STORAGE_DIR=/data \
-    PYTHON_BIN=/opt/venv/bin/python3 SOUNDFONT=/opt/soundfont/GeneralUser-GS.sf2 AUDIVERIS_BIN=/opt/audiveris/bin/Audiveris \
+    PYTHON_BIN=/opt/venv/bin/python3 SOUNDFONT=/opt/soundfont/GeneralUser-GS.sf2 AUDIVERIS_BIN=/opt/audiveris/bin/Audiveris VOIX_DIR=/opt/voix \
     HOME=/tmp/home XDG_CONFIG_HOME=/tmp/home/.config XDG_CACHE_HOME=/tmp/home/.cache XDG_DATA_HOME=/tmp/home/.local/share \
     JAVA_TOOL_OPTIONS="-Djava.awt.headless=true -Duser.home=/tmp/home -Djava.io.tmpdir=/tmp"
 VOLUME /data

@@ -1,7 +1,7 @@
 import { computed, inject } from '@angular/core';
 import { patchState, signalStore, withComputed, withHooks, withMethods, withState } from '@ngrx/signals';
 import { firstValueFrom } from 'rxjs';
-import { BUSY, ScoreMeta, ScoresApi, Timbre, errorMessage } from './api';
+import { BUSY, Langue, ScoreMeta, ScoresApi, Timbre, Voyelle, errorMessage } from './api';
 
 interface ScoreState { score: ScoreMeta | null; loading: boolean; error: string | null; actionError: string | null }
 
@@ -41,7 +41,8 @@ export const ScoreStore = signalStore(
         patchState(store, { loading: true, score: null, error: null });
         void poll(id);
       },
-      render: (opts: { tempo: number; timbre: Timbre }) => act((id) => firstValueFrom(api.render(id, opts))),
+      renameVoice: (voice: string, name: string) => act((id) => firstValueFrom(api.renameVoice(id, voice, name))),
+      render: (opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string> | null; voyelle?: Voyelle }) => act((id) => firstValueFrom(api.render(id, opts))),
       retry: () => act((id) => firstValueFrom(api.retry(id))),
       uploadCorrection: (file: File) => act((id) => firstValueFrom(api.correct(id, file))),
       stop() { clearTimeout(timer); },

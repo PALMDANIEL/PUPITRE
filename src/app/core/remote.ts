@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { ScoreMeta, ScoreStatus } from './api';
+import { Langue, ScoreMeta, ScoreStatus, Timbre, Voyelle } from './api';
 import { PackStore } from './packs';
 import { shrinkPhoto } from './shrink';
 
@@ -31,6 +31,19 @@ function readJobs(): RemoteJob[] {
 }
 
 export class RemoteError extends Error {}
+
+/** Contenu d'un code d'accès (sans vérifier la signature : sert seulement à l'affichage et au renouvellement). */
+export function decodeCode(code: string | null | undefined): { id: string; client: string; issued: string | null; expires: string | null } | null {
+  const parts = (code ?? '').replace(/\s+/g, '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'PUPA1') return null;
+  try {
+    const json = decodeURIComponent(escape(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))));
+    const p = JSON.parse(json) as { id?: string; client?: string; issued?: string; expires?: string | null };
+    return p.id ? { id: p.id, client: p.client ?? '', issued: p.issued ?? null, expires: p.expires ?? null } : null;
+  } catch {
+    return null;
+  }
+}
 
 @Injectable({ providedIn: 'root' })
 export class RemoteReader {
@@ -147,6 +160,57 @@ export class RemoteReader {
       }
     })();
     return job;
+  }
+
+  /**
+   * Recrée l'audio d'un chant enregistré sur le téléphone (tempo, sonorité, voix chantées) : le serveur AIT
+   * reçoit sa partition et renvoie un pack, qui remplace l'ancien. Renvoie l'identifiant du chant.
+   */
+  async recreate(packId: string, opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string>; voyelle?: Voyelle },
+                 onProgress: (pct: number) => void): Promise<string> {
+    const s = this.settings();
+    if (!s.url || !s.code) throw new RemoteError('Indiquez d’abord le serveur et le code de votre chorale dans les réglages.');
+    const src = await this.packs.scoreFile(packId);
+    if (!src) throw new RemoteError('Ce chant n’est plus sur ce téléphone.');
+    const body = new FormData();
+    body.append('file', new File([src.file], src.name.endsWith('.musicxml') ? src.name : 'score.musicxml'));
+    body.append('titre', src.title);
+    body.append('tempo', String(opts.tempo));
+    body.append('timbre', opts.timbre);
+    if (opts.langue) body.append('langue', opts.langue);
+    if (opts.voyelle) body.append('voyelle', opts.voyelle);
+    if (opts.paroles) body.append('paroles', JSON.stringify(opts.paroles));
+    let res: Response;
+    try {
+      res = await fetch(`${s.url}/api/recreer`, { method: 'POST', body, headers: this.headers(s) });
+    } catch {
+      throw new RemoteError('Le serveur ne répond pas. Vérifiez la connexion Internet.');
+    }
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => null) as { error?: string } | null;
+      throw new RemoteError(err?.error ?? `Erreur du serveur (${res.status}).`);
+    }
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines.filter(Boolean)) {
+        const msg = JSON.parse(line) as { progress?: number; error?: string; pack?: string; title?: string };
+        if (msg.error) throw new RemoteError(msg.error);
+        if (msg.pack) {
+          const bytes = Uint8Array.from(atob(msg.pack), (c) => c.charCodeAt(0));
+          const id = await this.packs.import([new File([bytes], `${msg.title ?? src.title}.pupitre`)]);
+          if (!id) throw new RemoteError(this.packs.error() ?? 'Pack reçu illisible.');
+          return id;
+        }
+        if (typeof msg.progress === 'number') onProgress(msg.progress);
+      }
+    }
+    throw new RemoteError('La connexion a été coupée avant la fin. Réessayez.');
   }
 
   private sendQueued(files: File[], title: string): Promise<RemoteJob> {

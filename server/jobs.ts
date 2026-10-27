@@ -2,28 +2,53 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config, engineCommand } from './config';
+import { ensureVoices } from './voix';
 import { dirOf, listMetas, patchMeta, readMeta } from './store';
 import { BUSY, UserError, type Job, type Manifest } from './types';
 
+/**
+ * Lance une étape du moteur. Pas de durée fixe : un long chant va toujours au bout. On n'arrête que
+ * - un calcul qui ne donne plus aucun signe d'avancement pendant config.idleMs (5 min), ou
+ * - au-delà du plafond de sécurité (1 h) ; sur Vercel (lecture directe), la limite courte demandée (la plateforme
+ *   coupe chaque requête à 5 min : mieux vaut s'arrêter proprement avec un message clair).
+ */
 export function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env, windowsHide: true });
     let tail = '';
     let buffer = '';
-    const timer = setTimeout(() => {
+    let lastSign = Date.now();
+    let done = false;
+    const stop = (message: string) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer); clearInterval(watch);
       child.kill('SIGKILL');
-      reject(new UserError(`${opts.label} a pris trop de temps et a été interrompue.`));
-    }, opts.timeoutMs);
+      reject(new UserError(message));
+    };
+    const max = config.direct ? opts.timeoutMs : Math.max(opts.timeoutMs, config.maxJobMs);
+    const timer = setTimeout(() => stop(config.direct
+      ? `${opts.label} a pris trop de temps pour le serveur en ligne (5 minutes au plus). Envoyez moins de pages à la fois, ou utilisez Pupitre sur ordinateur pour les longues partitions.`
+      : `${opts.label} a dépassé ${Math.round(max / 60_000)} minutes et a été interrompue.`), max);
+    const watch = setInterval(() => {
+      if (Date.now() - lastSign > config.idleMs) {
+        const d = config.idleMs >= 60_000 ? `${Math.round(config.idleMs / 60_000)} minutes` : `${Math.round(config.idleMs / 1000)} secondes`;
+        stop(`${opts.label} ne donnait plus aucun signe d’avancement depuis ${d} et a été interrompue.`);
+      }
+    }, 5_000);
     child.stdout.on('data', (chunk: Buffer) => {
+      lastSign = Date.now();
       buffer += chunk.toString();
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines) opts.onLine?.(line.trim());
     });
-    child.stderr.on('data', (chunk: Buffer) => { tail = (tail + chunk.toString()).slice(-4000); });
-    child.on('error', (err) => { clearTimeout(timer); reject(new Error(`${opts.label} : impossible de lancer ${cmd} (${err.message})`)); });
+    child.stderr.on('data', (chunk: Buffer) => { lastSign = Date.now(); tail = (tail + chunk.toString()).slice(-4000); });
+    child.on('error', (err) => { done = true; clearTimeout(timer); clearInterval(watch); reject(new Error(`${opts.label} : impossible de lancer ${cmd} (${err.message})`)); });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clearTimeout(timer); clearInterval(watch);
+      if (done) return;
+      done = true;
       if (buffer) opts.onLine?.(buffer.trim());
       if (code === 0) return resolve();
       const last = tail.trim().split('\n').pop() ?? '';
@@ -88,18 +113,37 @@ async function renderScore(id: string) {
 
   const args = [path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
   if (meta.tempo) args.push('--tempo', String(meta.tempo));
+  if (meta.timbre === 'reel') args.push('--voyelle', meta.voyelle ?? 'ah');
+  if (meta.timbre === 'chant') {
+    // voix chantées : voix de synthèse téléchargées au premier usage, paroles saisies passées au moteur
+    await ensureVoices((done, total) => void patchMeta(id, { progress: base + Math.round((5 * done) / total) }).catch(() => undefined));
+    args.push('--langue', meta.langue ?? 'fr');
+    if (meta.paroles && Object.values(meta.paroles).some((t) => t.trim())) {
+      const file = path.join(dir, 'paroles.json');
+      await fs.writeFile(file, JSON.stringify(meta.paroles));
+      args.push('--paroles', file);
+    }
+  }
   if (meta.source === 'pdf' || meta.source === 'image') args.push('--omr');
   const [renderCmd, renderArgs] = engineCommand('render', args);
   await run(renderCmd, renderArgs, {
     label: 'La création de l’audio',
-    timeoutMs: config.renderTimeoutMs,
+    // le chant prend bien plus longtemps que le synthétiseur (chaque syllabe est prononcée puis accordée)
+    timeoutMs: meta.timbre === 'chant' ? config.chantTimeoutMs : config.renderTimeoutMs,
     onLine: (line) => {
+      const sung = /^Chant (\d+)\/(\d+)/.exec(line);
+      if (sung) { void patchMeta(id, { progress: base + Math.round(((80 - base) * (Number(sung[1]) - 1)) / Number(sung[2])) }).catch(() => undefined); return; }
       const m = /(?:progress:voice:|Voix )(\d+)\/(\d+)/.exec(line);
-      if (m) void patchMeta(id, { progress: base + Math.round(((95 - base) * Number(m[1])) / Number(m[2])) }).catch(() => undefined);
+      const from = meta.timbre === 'chant' ? 80 : base;
+      if (m) void patchMeta(id, { progress: from + Math.round(((95 - from) * Number(m[1])) / Number(m[2])) }).catch(() => undefined);
     },
   });
 
   const manifest = JSON.parse(await fs.readFile(path.join(next, 'manifest.json'), 'utf8')) as Manifest;
+  // noms de voix choisis par l'utilisateur : gardés quand l'audio est recréé
+  const names = (await readMeta(id))?.voiceNames ?? {};
+  for (const v of manifest.voices) if (names[v.id]) v.name = names[v.id];
+  if (Object.keys(names).length) await fs.writeFile(path.join(next, 'manifest.json'), JSON.stringify(manifest, null, 2));
   const audio = path.join(dir, 'audio');
   await fs.rm(audio, { recursive: true, force: true });
   await fs.rename(next, audio);

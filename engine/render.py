@@ -1,6 +1,7 @@
 """
 Moteur de rendu : MusicXML -> une piste audio par voix.
-Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72] [--timbre choeur|piano]
+Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72] [--timbre choeur|piano|chant]
+        [--langue fr|la|en|mos|dyu] [--paroles paroles.json]   (chant : voix chantées avec les paroles, essai)
 """
 import argparse, copy, json, os, pathlib, re, shutil, statistics, subprocess, sys, zipfile
 from fractions import Fraction
@@ -99,6 +100,212 @@ def sounding(line):
     return {m.number for m in line.getElementsByClass(stream.Measure) if m.recurse().notes}
 
 
+# --- Noms des voix ------------------------------------------------------------------------------------------
+# Noms lus dans la partition (MusicXML, ou texte lu par Audiveris) : abréviations de chœur, rôles d'un dialogue.
+
+GENERIC_NAME = re.compile(r"^(voice|voix|piano|staff|part|partie|port[ée]e|instrument|p\d+|music|musique)?[\s.#-]*\d*$", re.I)
+ABBR = {
+    "s": "Soprano", "sop": "Soprano", "soprano": "Soprano", "sopranos": "Soprano", "sopr": "Soprano",
+    "a": "Alto", "alt": "Alto", "alto": "Alto", "altos": "Alto", "c": "Alto", "contralto": "Alto",
+    "t": "Ténor", "ten": "Ténor", "tenor": "Ténor", "ténor": "Ténor", "tenors": "Ténor", "ténors": "Ténor",
+    "b": "Basse", "bs": "Basse", "bass": "Basse", "basse": "Basse", "basses": "Basse",
+    "bar": "Baryton", "baryton": "Baryton", "baritone": "Baryton", "mez": "Mezzo", "mezzo": "Mezzo",
+}
+ACCENTS = {  # mots courants des chants, écrits sans accents en majuscules sur les partitions
+    "fiancee": "fiancée", "fiance": "fiancé", "fiancees": "fiancées", "fiances": "fiancés", "tenor": "ténor",
+    "recitant": "récitant", "recitante": "récitante", "pretre": "prêtre", "celebrant": "célébrant", "assemblee": "assemblée",
+    "mariee": "mariée", "maries": "mariés", "epoux": "époux", "epouse": "épouse", "pere": "père", "mere": "mère",
+    "frere": "frère", "freres": "frères", "soeur": "sœur", "soeurs": "sœurs", "choeur": "chœur", "eleve": "élève",
+    "fidele": "fidèle", "fideles": "fidèles", "ecole": "école",
+}
+FEMALE, MALE = {"Soprano", "Alto", "Mezzo"}, {"Ténor", "Basse", "Baryton"}
+
+
+def clean_name(raw):
+    s = re.sub(r"\s+", " ", (raw or "").strip())
+    return None if not s or GENERIC_NAME.match(s) else s
+
+
+def pretty_name(raw):
+    """« LA FIANCEE » → « La fiancée » ; « S. » → « Soprano »."""
+    words = re.findall(r"[^\W\d_]+|\d+", raw)
+    if len(words) == 1 and words[0].lower() in ABBR:
+        return ABBR[words[0].lower()]
+    out = []
+    for i, w in enumerate(words):
+        lw = ACCENTS.get(w.lower(), w.lower() if w.isupper() or i else w)
+        out.append(lw[:1].upper() + lw[1:] if i == 0 else lw)
+    return " ".join(out) or raw
+
+
+def staff_names(raw, n):
+    """Noms des n voix d'une portée : « S. A. » → Soprano, Alto ; « A. » à deux voix → Soprano, Alto (portée des femmes)."""
+    name = clean_name(raw)
+    if not name:
+        return [None] * n
+    tokens = re.findall(r"[^\W\d_]+", name)
+    mapped = [ABBR.get(t.lower()) for t in tokens]
+    if n == 1:
+        return [pretty_name(name)]
+    if len(tokens) >= n and all(mapped[:n]) and len(set(mapped[:n])) == n:
+        return mapped[:n]
+    if any(mapped) and all(m is None or m in FEMALE for m in mapped):
+        return ["Soprano", "Alto"] if n == 2 else [f"Soprano {i + 1}" for i in range(n)]
+    if any(mapped) and all(m is None or m in MALE for m in mapped):
+        return ["Ténor", "Basse"] if n == 2 else [f"Basse {i + 1}" for i in range(n)]
+    base = pretty_name(name)
+    return [f"{base} (haut)", f"{base} (bas)"] if n == 2 else [f"{base} {i + 1}" for i in range(n)]
+
+
+def share_lyrics(lines):
+    """
+    Deux voix sur une même portée (S et A, T et B) : les paroles y sont écrites une seule fois, entre les deux,
+    et la lecture les attache à l'une d'elles. Une voix sans paroles reçoit celles de l'autre, note par note,
+    là où les deux chantent en même temps (même mesure, même instant).
+    """
+    with_words = [l for l in lines if any(n.lyrics for n in l.recurse().notes)]
+    if len(with_words) != 1 or len(lines) < 2:
+        return
+    src = with_words[0]
+    table = {}
+    for m in src.getElementsByClass(stream.Measure):
+        for n in m.recurse().notes:
+            if n.lyrics:
+                table[(m.number, float(n.offset))] = n.lyrics[0]
+    for line in lines:
+        if line is src:
+            continue
+        for m in line.getElementsByClass(stream.Measure):
+            for n in m.recurse().notes:
+                lyr = table.get((m.number, float(n.offset)))
+                if lyr is not None and not n.lyrics:
+                    n.lyric = lyr.text
+                    n.lyrics[0].syllabic = lyr.syllabic
+
+
+def _sung_voices(m):
+    """Nombre de lignes chantées dans une mesure (voix séparées, ou accords de deux notes)."""
+    vs = [v for v in m.voices if any(True for _ in v.notes)]
+    if len(vs) >= 2:
+        return 2
+    notes = list(m.recurse().notes)
+    return 2 if notes and sum(1 for n in notes if n.isChord) > len(notes) / 2 else (1 if notes else 0)
+
+
+def _is_choir_name(name):
+    tokens = re.findall(r"[^\W\d_]+", clean_name(name) or "")
+    return bool(tokens) and all(ABBR.get(t.lower()) for t in tokens)
+
+
+def _low_clef(m, part):
+    c = m.getContextByClass(clef.Clef) or next(iter(part.recurse().getElementsByClass(clef.Clef)), None)
+    if c is None:
+        return False
+    return isinstance(c, (clef.BassClef, clef.Treble8vbClef)) or getattr(c, "octaveChange", 0) < 0 or c.sign == "F"
+
+
+def _move(src, dst):
+    """Remplace le contenu de la mesure dst par celui de src (notes, silences, voix)."""
+    for el in list(dst.notesAndRests) + list(dst.voices):
+        dst.remove(el)
+    if src.voices:
+        for v in src.voices:
+            dst.insert(v.offset, copy.deepcopy(v))
+    else:
+        for n in src.notesAndRests:
+            dst.insert(n.offset, copy.deepcopy(n))
+    for el in list(src.notesAndRests) + list(src.voices):
+        src.remove(el)
+
+
+def merge_named_parts(parts):
+    """
+    Partition en dialogue (soliste seul, puis avec le chœur…) : Audiveris range les portées par position sur la page,
+    pas par rôle ; une portée « LA FIANCÉE » peut ainsi contenir, sur certaines lignes, la portée ténor-basse du chœur.
+    1. Dans les portées nommées d'après un rôle, les mesures à deux voix sont du chœur : elles vont à la portée de
+       chœur de même registre (clé de fa → T. B., sinon S. A.) ; faute de place, le rôle garde la voix du haut.
+    2. Les portées de même nom sont réunies en une seule voix, mesure par mesure.
+    """
+    sung_in = lambda m: any(True for _ in m.recurse().notes)
+    parts = [copy.deepcopy(p) for p in parts]
+    choirs = [p for p in parts if _is_choir_name(p.partName)]
+    if choirs:
+        for p in parts:
+            if p in choirs or not clean_name(p.partName):
+                continue
+            for m in p.getElementsByClass(stream.Measure):
+                if _sung_voices(m) < 2:
+                    continue  # une seule voix : c'est le rôle qui chante
+                low = _low_clef(m, p)
+                moved = False
+                for c in choirs:
+                    tokens = [ABBR.get(t.lower()) for t in re.findall(r"[^\W\d_]+", clean_name(c.partName))]
+                    if (low and any(t in MALE for t in tokens)) or (not low and any(t in FEMALE for t in tokens)):
+                        target = next((x for x in c.getElementsByClass(stream.Measure) if x.number == m.number), None)
+                        if target is not None and not sung_in(target):
+                            _move(m, target)
+                            moved = True
+                            break
+                if not moved and m.voices:  # pas de place au chœur : le rôle garde sa voix du haut, jamais coupé en deux
+                    top = max((v for v in m.voices if any(True for _ in v.notes)), key=lambda v: mean_pitch(v) or 0)
+                    for v in list(m.voices):
+                        if v is not top:
+                            m.remove(v)
+    groups, order = {}, []
+    for p in parts:
+        key = (clean_name(p.partName) or "").lower().replace(".", "").strip() or f"#{id(p)}"
+        if key not in groups:
+            groups[key] = []; order.append(key)
+        groups[key].append(p)
+    merged = []
+    for key in order:
+        ps = groups[key]
+        if len(ps) == 1:
+            merged.append(ps[0]); continue
+        base = ps[0]
+        by_number = [{m.number: m for m in p.getElementsByClass(stream.Measure)} for p in ps[1:]]
+        for m in base.getElementsByClass(stream.Measure):
+            if sung_in(m):
+                continue
+            for table in by_number:
+                other = table.get(m.number)
+                if other is not None and sung_in(other):
+                    _move(other, m)
+                    break
+        merged.append(base)
+    return merged
+
+
+def name_by_range(voices):
+    """Voix sans nom : nommées d'après leur tessiture (Soprano, Alto, Ténor, Basse), numérotées si besoin."""
+    taken = [v.partName for v in voices if v.partName]
+    for v in voices:
+        if v.partName:
+            continue
+        m = mean_pitch(v) or 60
+        v.partName = "Soprano" if m >= 67 else "Alto" if m >= 60 else "Ténor" if m >= 53 else "Basse"
+    counts = {}
+    for v in voices:
+        counts[v.partName] = counts.get(v.partName, 0) + 1
+    seen = {}
+    for v in voices:
+        if counts[v.partName] > 1:
+            seen[v.partName] = seen.get(v.partName, 0) + 1
+            v.partName = f"{v.partName} {seen[v.partName]}"
+    return voices
+
+
+def voice_id(name, used):
+    import unicodedata
+    base = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    base = re.sub(r"[^a-z0-9]+", "", base)[:20] or "voix"
+    vid, k = base, 2
+    while vid in used:
+        vid = f"{base}{k}"; k += 1
+    used.add(vid)
+    return vid
+
+
 def fold_solos(voices):
     """Une ligne qui ne chante que là où tout le chœur se tait (couplet d'un soliste) n'est pas une voix de plus :
     on la verse dans la voix la plus aiguë, qui porte la mélodie."""
@@ -109,6 +316,8 @@ def fold_solos(voices):
         others = [o for o in kept if o is not v]
         if len(kept) <= 4:
             break
+        if getattr(v, "partName", None):  # voix nommée (soliste d'un dialogue…) : elle garde sa piste
+            continue
         mine, rest = sounding(v), set().union(*(sounding(o) for o in others))
         if not mine or len(mine & rest) > 0.2 * len(mine):
             continue
@@ -297,9 +506,13 @@ def extract_voices(score, trust_names=True):
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
+    sung = merge_named_parts(sung)
     voices = []
     for part in sung:
         lines = split_staff(part) if needs_split(part) else [flatten_voices(part)]
+        for line, name in zip(lines, staff_names(part.partName or part.partAbbreviation, len(lines))):
+            line.partName = name
+        share_lyrics(lines)
         voices.extend(l for l in lines if l.recurse().notes)
     voices = fold_solos(voices)
     if len(voices) == 4 and not trust_names:
@@ -308,9 +521,13 @@ def extract_voices(score, trust_names=True):
         voices.sort(key=lambda v: mean_pitch(v) or 0, reverse=True)
     else:
         centers = CENTERS.get(len(voices))
+        named = {"Soprano": 69, "Alto": 64, "Ténor": 57, "Basse": 50, "Mezzo": 66, "Baryton": 53}
         for i, v in enumerate(voices):
-            fix_octaves(v, centers[i] if centers else None)
-    return align_measures(voices)
+            fix_octaves(v, named.get((v.partName or "").split(" ")[0]) or (centers[i] if centers else None))
+    if not any(v.partName for v in voices) and len(voices) == 4:
+        for v, n in zip(voices, ("Soprano", "Alto", "Ténor", "Basse")):
+            v.partName = n
+    return name_by_range(align_measures(voices))
 
 
 def detect_tempo(score):
@@ -351,6 +568,48 @@ def synth():
 SFID = 0  # première (et seule) banque chargée
 
 
+def encode_mp3(pcm, base: pathlib.Path):
+    """PCM flottant (mono ou stéréo entrelacé) → MP3 160 kb/s."""
+    import lameenc, numpy as np
+    print(f"actif:mp3:{base.name}", flush=True)  # signe de vie pour la surveillance du serveur
+    pcm = np.clip(pcm, -1, 1)
+    enc = lameenc.Encoder()
+    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(5)  # 5 : réglage standard de LAME, inaudible à 160 kb/s, 2,4 fois plus rapide que 2
+    if pcm.ndim == 1:
+        pcm = np.repeat(pcm, 2)
+    elif pcm.ndim == 2:
+        pcm = pcm.reshape(-1)  # (échantillons, 2) → gauche, droite entrelacés
+    mp3 = base.with_suffix(".mp3")
+    mp3.write_bytes(enc.encode((pcm * 32767).astype("<i2").tobytes()) + enc.flush())
+    return mp3.name
+
+
+def lyrics_text(part):
+    """Paroles d'une voix sous la forme « Sain-te Ma-ri-e _ » (« _ » : la note tient la syllabe précédente)."""
+    from chant import clean_syllable
+    words, current, seen = [], "", False
+    for n in part.stripTies().flatten().notes:
+        lyr = n.lyrics[0] if getattr(n, "lyrics", None) else None
+        text = clean_syllable(lyr.text) if lyr is not None else None
+        if lyr is None or not text:
+            if current:          # note tenue au milieu d'un mot : « ex-cel-_-sis »
+                current += "_-"
+            elif seen:
+                words.append("_")
+            continue
+        seen = True
+        current += text
+        if lyr.syllabic in ("begin", "middle"):
+            current += "-"
+        else:
+            words.append(current); current = ""
+    if current:
+        words.append(current)
+    while words and words[-1] == "_":
+        words.pop()
+    return " ".join(words)
+
+
 def to_mp3(sc, base: pathlib.Path):
     """Joue la partition note par note dans le synthétiseur (tempo exact, sans fichier MIDI intermédiaire)."""
     import lameenc, numpy as np
@@ -381,12 +640,12 @@ def to_mp3(sc, base: pathlib.Path):
             s.noteon(chan, key, vel)
         elif kind == 0:
             s.noteoff(chan, key)
-    pcm = np.clip(np.concatenate(chunks) if chunks else np.zeros(2, np.float32), -1, 1)
-    enc = lameenc.Encoder()
-    enc.set_bit_rate(160); enc.set_in_sample_rate(RATE); enc.set_channels(2); enc.set_quality(2)
-    mp3 = base.with_suffix(".mp3")
-    mp3.write_bytes(enc.encode((pcm * 32767).astype("<i2").tobytes()) + enc.flush())
-    return mp3.name
+    pcm = np.concatenate(chunks) if chunks else np.zeros(2, np.float32)
+    # même volume perçu que les autres sonorités (−14 LUFS), clarté et basses audibles sur téléphone
+    import mixage
+    kind = "piano" if any(getattr(next(iter(p.recurse().getElementsByClass(instrument.Instrument)), None), "midiProgram", None) == 0 for p in sc.parts) else "choeur"
+    midis = [int(x.midi) for p in sc.parts for n in p.recurse().notes for x in n.pitches]
+    return encode_mp3(mixage.finish(pcm.reshape(-1, 2), kind, midis), base)
 
 
 def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
@@ -405,11 +664,55 @@ def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
         shutil.copy(src, dst)
 
 
+def mix(tracks, wet=0.16, pans=None):
+    """Voix chantées ou chœur réel → fichier stéréo final : voix réparties dans l'espace, salle, −14 LUFS, limiteur."""
+    import mixage
+    pans = pans or mixage.pan_positions(len(tracks))
+    return mixage.master(mixage.mix_stereo([(t, g, pans[i] if len(tracks) > 1 else 0.0) for i, (t, g) in enumerate(tracks)]), wet)
+
+
+def real_choir(voices, labels, tempo_qpm, a):
+    """Chœur réel : chaque voix jouée par de vrais chanteurs enregistrés, sur « aah » ou « ouh »."""
+    import choeur, mixage
+    if not choeur.available():
+        sys.exit(f"Enregistrements du chœur réel introuvables : {choeur.pack_dir()}")
+    hints = {"soprano": "S", "alto": "A", "tenor": "T", "basse": "B"}
+    out = []
+    for i, v in enumerate(voices):
+        vid, vname = labels[i]
+        print(f"Chœur {i+1}/{len(voices)} : {vname}", flush=True)
+        x = choeur.sing_part(v, tempo_qpm, a.voyelle, hints.get(vid))
+        x = mixage.phone_bass(x, mixage.bass_amount([p.midi for n in v.recurse().notes for p in n.pitches]))
+        out.append(mixage.level_to(x, mixage.TARGET_VOICE))
+    return out
+
+
+def sing_voices(voices, labels, tempo_qpm, a):
+    """Voix chantées : voix de femme pour les voix hautes, d'homme pour les voix basses ; paroles saisies ou de la partition."""
+    import chant, mixage
+    missing = chant.missing_voices()
+    if missing:
+        sys.exit(f"Voix de synthèse introuvables dans {chant.voice_dir()} : {', '.join(missing)}")
+    typed = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
+    sung = []
+    for i, v in enumerate(voices):
+        vid, vname = labels[i]
+        midis = [p.midi for n in v.recurse().notes for p in n.pitches]
+        kind = "femme" if statistics.mean(midis) >= 60 else "homme"
+        print(f"Chant {i+1}/{len(voices)} : {vname} ({chant.ensemble_size()} voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
+        x = mixage.polish_voice(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid)), kind)
+        sung.append(mixage.level_to(mixage.phone_bass(x, mixage.bass_amount(midis)), mixage.TARGET_VOICE))
+    return sung
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src"); ap.add_argument("out")
     ap.add_argument("--tempo", type=int, default=0)
-    ap.add_argument("--timbre", choices=["choeur", "piano"], default="choeur")
+    ap.add_argument("--timbre", choices=["choeur", "piano", "chant", "reel"], default="choeur")
+    ap.add_argument("--voyelle", choices=["ah", "oo"], default="ah", help="chœur réel : « aah » ou « ouh »")
+    ap.add_argument("--langue", choices=["fr", "la", "en", "mos", "dyu"], default="fr")
+    ap.add_argument("--paroles", help="fichier JSON { id de voix : paroles } saisies par l'utilisateur")
     ap.add_argument("--omr", action="store_true", help="partition lue par Audiveris : ignorer les noms de portées")
     ap.add_argument("--sans-travail", action="store_true", help="pas de pistes de travail (lecture directe pour le mobile, qui mixe lui-même)")
     a = ap.parse_args()
@@ -423,29 +726,49 @@ def main():
     if not voices:
         sys.exit("Aucune note n’a été reconnue dans la partition.")
 
-    labels = LABELS.get(len(voices)) or [(f"voix{i+1}", f"Voix {i+1}") for i in range(len(voices))]
+    used = set()
+    labels = [(voice_id(v.partName, used), v.partName) for v in voices]  # noms lus dans la partition, ou tessiture
+    sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else real_choir(voices, labels, tempo_qpm, a) if a.timbre == "reel" else None
+    wet = 0.06 if a.timbre == "reel" else 0.16  # le chœur réel a déjà sa salle dans les enregistrements
+    # paroles saisies : gardées dans le manifeste, pour les retrouver à la prochaine modification
+    typed_lyrics = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
     entries = []
     for i, v in enumerate(voices):
         vid, vname = labels[i]
-        stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
+        if sung:
+            stem = encode_mp3(mix([(sung[i], 1.0)], wet), out / vid)
+        else:
+            stem = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre)]), out / vid)
         work = ""
         if not a.sans_travail:
-            practice = stream.Score()
-            for j, other in enumerate(voices):
-                practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 38))
-            work = to_mp3(practice, out / f"{vid}_travail")
+            if sung:
+                # piste de travail : sa voix au centre, 12 dB devant ; les autres écartées sur les côtés
+                side = [(-0.6 if k % 2 == 0 else 0.6) for k in range(len(sung))]
+                pans = [0.0 if j == i else side[j] for j in range(len(sung))]
+                work = encode_mp3(mix([(x, 1.0 if i == j else 0.25) for j, x in enumerate(sung)], wet, pans), out / f"{vid}_travail")
+            else:
+                practice = stream.Score()
+                for j, other in enumerate(voices):
+                    practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 27))  # sa voix ≈ 12 dB devant
+                work = to_mp3(practice, out / f"{vid}_travail")
         pitches = [p for n in v.recurse().notes for p in n.pitches]
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
         entries.append({"id": vid, "name": vname, "stem": stem, "practice": work,
-                        "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)]})
+                        "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)],
+                        "lyrics": typed_lyrics.get(vid) or lyrics_text(v), "sung": len(v.stripTies().flatten().notes)})
         print(f"Voix {i+1}/{len(voices)} : {vname} ({fr_name(lo)} à {fr_name(hi)})", flush=True)
 
-    tutti = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre) for v in voices]), out / "tutti")
+    if sung:
+        tutti = encode_mp3(mix([(x, 1.0) for x in sung], wet), out / "tutti")
+    else:
+        tutti = to_mp3(stream.Score([prepare(v, tempo_qpm, a.timbre) for v in voices]), out / "tutti")
     export_musicxml(pathlib.Path(a.src), out / "score.musicxml", score)
     ts = next(iter(score.recurse().getElementsByClass(meter.TimeSignature)), None)
     ks = score.analyze("key")
     manifest = {
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
+        **({"langue": a.langue} if a.timbre == "chant" else {}),
+        **({"voyelle": a.voyelle} if a.timbre == "reel" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),
         "timeSignature": ts.ratioString if ts else None,
         "key": f"{fr_name(ks.tonic, octave=False)} {'majeur' if ks.mode == 'major' else 'mineur'}",

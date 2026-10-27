@@ -49,6 +49,28 @@ def broken(sheets):
     return sum(1 for sheet in sheets for n in sheet if n < max(sheet))
 
 
+def tessdata() -> pathlib.Path | None:
+    """Langues de lecture du texte (Tesseract) : sans elles, Audiveris ne lit ni les paroles ni les noms des voix."""
+    base = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).parent))
+    d = pathlib.Path(os.environ.get("TESSDATA_DIR") or base / "tessdata")
+    return d if (d / "fra.traineddata").exists() else None
+
+
+def ocr_env() -> dict:
+    env = dict(os.environ)
+    d = tessdata()
+    if d:
+        env["TESSDATA_PREFIX"] = str(d)
+    return env
+
+
+def ocr_options() -> list[str]:
+    """Paroles et noms de voix lus en français (le latin et l’anglais s’écrivent avec les mêmes lettres)."""
+    if not tessdata():
+        return []
+    return ["-option", f"org.audiveris.omr.text.Language.defaultSpecification={os.environ.get('OMR_LANGUES', 'fra')}"]
+
+
 def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int):
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -56,10 +78,15 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int):
     tail = []  # dernières lignes d'Audiveris, affichées s'il ne produit rien (diagnostic sur un serveur)
     proc = None
     try:
-        proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), "--", str(pdf)],
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", **QUIET)
+        proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), *ocr_options(), "--", str(pdf)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+                                env=ocr_env(), **QUIET)
+        last_sign = time.time()
         for line in proc.stdout:
             tail = (tail + [line.rstrip()])[-25:]
+            if time.time() - last_sign > 20:  # signe de vie : une page dense peut prendre plusieurs minutes
+                print("actif:omr", flush=True)
+                last_sign = time.time()
             m = re.search(r"Sheet#(\d+)", line)
             if m and m.group(1) not in seen:
                 seen.add(m.group(1))

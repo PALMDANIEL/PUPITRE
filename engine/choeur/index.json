@@ -1,0 +1,658 @@
+{
+ "S": {
+  "ah": [
+   {
+    "center": 60,
+    "lo": 59,
+    "hi": 61,
+    "file": "S_ah_60.wav",
+    "start": 0.62,
+    "tune": 0.9
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "S_ah_62.wav",
+    "start": 0.62,
+    "tune": 0.4
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "S_ah_64.wav",
+    "start": 0.02,
+    "tune": 8.2
+   },
+   {
+    "center": 66,
+    "lo": 66,
+    "hi": 67,
+    "file": "S_ah_66.wav",
+    "start": 0.27,
+    "tune": 2.5
+   },
+   {
+    "center": 68,
+    "lo": 68,
+    "hi": 69,
+    "file": "S_ah_68.wav",
+    "start": 0.12,
+    "tune": 12.5
+   },
+   {
+    "center": 70,
+    "lo": 70,
+    "hi": 71,
+    "file": "S_ah_70.wav",
+    "start": 0.03,
+    "tune": 2.6
+   },
+   {
+    "center": 72,
+    "lo": 72,
+    "hi": 73,
+    "file": "S_ah_72.wav",
+    "start": 0.325,
+    "tune": 5.8
+   },
+   {
+    "center": 74,
+    "lo": 74,
+    "hi": 75,
+    "file": "S_ah_74.wav",
+    "start": 0.535,
+    "tune": 7.7
+   },
+   {
+    "center": 76,
+    "lo": 76,
+    "hi": 77,
+    "file": "S_ah_76.wav",
+    "start": 0.335,
+    "tune": 1.0
+   },
+   {
+    "center": 78,
+    "lo": 78,
+    "hi": 80,
+    "file": "S_ah_78.wav",
+    "start": 0.315,
+    "tune": 7.2
+   }
+  ],
+  "oo": [
+   {
+    "center": 60,
+    "lo": 59,
+    "hi": 61,
+    "file": "S_oo_60.wav",
+    "start": 0.5,
+    "tune": 15.0
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "S_oo_62.wav",
+    "start": 0.83,
+    "tune": 15.7
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "S_oo_64.wav",
+    "start": 0.09,
+    "tune": 11.0
+   },
+   {
+    "center": 66,
+    "lo": 66,
+    "hi": 67,
+    "file": "S_oo_66.wav",
+    "start": 0.11,
+    "tune": -2.8
+   },
+   {
+    "center": 68,
+    "lo": 68,
+    "hi": 69,
+    "file": "S_oo_68.wav",
+    "start": 0.17,
+    "tune": -2.8
+   },
+   {
+    "center": 70,
+    "lo": 70,
+    "hi": 71,
+    "file": "S_oo_70.wav",
+    "start": 0.03,
+    "tune": 1.2
+   },
+   {
+    "center": 72,
+    "lo": 72,
+    "hi": 73,
+    "file": "S_oo_72.wav",
+    "start": 0.375,
+    "tune": 3.1
+   },
+   {
+    "center": 74,
+    "lo": 74,
+    "hi": 75,
+    "file": "S_oo_74.wav",
+    "start": 0.335,
+    "tune": -0.3
+   },
+   {
+    "center": 76,
+    "lo": 76,
+    "hi": 77,
+    "file": "S_oo_76.wav",
+    "start": 0.305,
+    "tune": 7.3
+   },
+   {
+    "center": 78,
+    "lo": 78,
+    "hi": 80,
+    "file": "S_oo_78.wav",
+    "start": 0.435,
+    "tune": 5.7
+   }
+  ]
+ },
+ "A": {
+  "ah": [
+   {
+    "center": 58,
+    "lo": 57,
+    "hi": 59,
+    "file": "A_ah_58.wav",
+    "start": 0.585,
+    "tune": -5.6
+   },
+   {
+    "center": 60,
+    "lo": 60,
+    "hi": 61,
+    "file": "A_ah_60.wav",
+    "start": 0.71,
+    "tune": 2.3
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "A_ah_62.wav",
+    "start": 0.67,
+    "tune": 1.6
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "A_ah_64.wav",
+    "start": 0.12,
+    "tune": 3.3
+   },
+   {
+    "center": 66,
+    "lo": 66,
+    "hi": 67,
+    "file": "A_ah_66.wav",
+    "start": 0.18,
+    "tune": 0.5
+   },
+   {
+    "center": 68,
+    "lo": 68,
+    "hi": 69,
+    "file": "A_ah_68.wav",
+    "start": 0.12,
+    "tune": 4.7
+   },
+   {
+    "center": 70,
+    "lo": 70,
+    "hi": 71,
+    "file": "A_ah_70.wav",
+    "start": 0.04,
+    "tune": -3.9
+   },
+   {
+    "center": 72,
+    "lo": 72,
+    "hi": 73,
+    "file": "A_ah_72.wav",
+    "start": 0.345,
+    "tune": 6.4
+   },
+   {
+    "center": 74,
+    "lo": 74,
+    "hi": 75,
+    "file": "A_ah_74.wav",
+    "start": 0.405,
+    "tune": 3.5
+   },
+   {
+    "center": 76,
+    "lo": 76,
+    "hi": 77,
+    "file": "A_ah_76.wav",
+    "start": 0.425,
+    "tune": 3.5
+   }
+  ],
+  "oo": [
+   {
+    "center": 60,
+    "lo": 60,
+    "hi": 61,
+    "file": "A_oo_60.wav",
+    "start": 0.68,
+    "tune": 7.3
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "A_oo_62.wav",
+    "start": 0.77,
+    "tune": 13.1
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "A_oo_64.wav",
+    "start": 0.19,
+    "tune": 9.7
+   },
+   {
+    "center": 66,
+    "lo": 66,
+    "hi": 67,
+    "file": "A_oo_66.wav",
+    "start": 0.13,
+    "tune": -2.7
+   },
+   {
+    "center": 68,
+    "lo": 68,
+    "hi": 69,
+    "file": "A_oo_68.wav",
+    "start": 0.05,
+    "tune": 5.1
+   },
+   {
+    "center": 70,
+    "lo": 70,
+    "hi": 71,
+    "file": "A_oo_70.wav",
+    "start": 0.16,
+    "tune": 5.2
+   },
+   {
+    "center": 72,
+    "lo": 72,
+    "hi": 73,
+    "file": "A_oo_72.wav",
+    "start": 0.455,
+    "tune": -2.4
+   },
+   {
+    "center": 74,
+    "lo": 74,
+    "hi": 75,
+    "file": "A_oo_74.wav",
+    "start": 0.545,
+    "tune": -2.3
+   },
+   {
+    "center": 76,
+    "lo": 76,
+    "hi": 77,
+    "file": "A_oo_76.wav",
+    "start": 0.225,
+    "tune": 6.0
+   }
+  ]
+ },
+ "T": {
+  "ah": [
+   {
+    "center": 48,
+    "lo": 47,
+    "hi": 49,
+    "file": "T_ah_48.wav",
+    "start": 0.55,
+    "tune": -4.9
+   },
+   {
+    "center": 50,
+    "lo": 50,
+    "hi": 51,
+    "file": "T_ah_50.wav",
+    "start": 0.72,
+    "tune": -3.5
+   },
+   {
+    "center": 52,
+    "lo": 52,
+    "hi": 53,
+    "file": "T_ah_52.wav",
+    "start": 0.21,
+    "tune": 2.1
+   },
+   {
+    "center": 54,
+    "lo": 54,
+    "hi": 55,
+    "file": "T_ah_54.wav",
+    "start": 0.095,
+    "tune": -1.7
+   },
+   {
+    "center": 56,
+    "lo": 56,
+    "hi": 57,
+    "file": "T_ah_56.wav",
+    "start": 0.125,
+    "tune": -6.9
+   },
+   {
+    "center": 58,
+    "lo": 58,
+    "hi": 59,
+    "file": "T_ah_58.wav",
+    "start": 0.415,
+    "tune": -10.6
+   },
+   {
+    "center": 60,
+    "lo": 60,
+    "hi": 61,
+    "file": "T_ah_60.wav",
+    "start": 0.54,
+    "tune": 1.4
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "T_ah_62.wav",
+    "start": 0.19,
+    "tune": -5.6
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "T_ah_64.wav",
+    "start": 0.65,
+    "tune": 2.0
+   },
+   {
+    "center": 66,
+    "lo": 66,
+    "hi": 68,
+    "file": "T_ah_66.wav",
+    "start": 0.5,
+    "tune": 0.5
+   }
+  ],
+  "oo": [
+   {
+    "center": 48,
+    "lo": 47,
+    "hi": 49,
+    "file": "T_oo_48.wav",
+    "start": 0.47,
+    "tune": -8.8
+   },
+   {
+    "center": 50,
+    "lo": 50,
+    "hi": 51,
+    "file": "T_oo_50.wav",
+    "start": 0.35,
+    "tune": 6.9
+   },
+   {
+    "center": 52,
+    "lo": 52,
+    "hi": 53,
+    "file": "T_oo_52.wav",
+    "start": 0.07,
+    "tune": -3.0
+   },
+   {
+    "center": 54,
+    "lo": 54,
+    "hi": 55,
+    "file": "T_oo_54.wav",
+    "start": 0.105,
+    "tune": -2.5
+   },
+   {
+    "center": 56,
+    "lo": 56,
+    "hi": 57,
+    "file": "T_oo_56.wav",
+    "start": 0.025,
+    "tune": 4.3
+   },
+   {
+    "center": 58,
+    "lo": 58,
+    "hi": 59,
+    "file": "T_oo_58.wav",
+    "start": 0.195,
+    "tune": -6.1
+   },
+   {
+    "center": 60,
+    "lo": 60,
+    "hi": 61,
+    "file": "T_oo_60.wav",
+    "start": 0.26,
+    "tune": -0.9
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "T_oo_62.wav",
+    "start": 0.16,
+    "tune": 5.3
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "T_oo_64.wav",
+    "start": 0.36,
+    "tune": 8.5
+   },
+   {
+    "center": 66,
+    "lo": 66,
+    "hi": 68,
+    "file": "T_oo_66.wav",
+    "start": 0.31,
+    "tune": 2.4
+   }
+  ]
+ },
+ "B": {
+  "ah": [
+   {
+    "center": 46,
+    "lo": 45,
+    "hi": 47,
+    "file": "B_ah_46.wav",
+    "start": 0.575,
+    "tune": -7.1
+   },
+   {
+    "center": 48,
+    "lo": 48,
+    "hi": 49,
+    "file": "B_ah_48.wav",
+    "start": 0.6,
+    "tune": -2.7
+   },
+   {
+    "center": 50,
+    "lo": 50,
+    "hi": 51,
+    "file": "B_ah_50.wav",
+    "start": 0.6,
+    "tune": -6.2
+   },
+   {
+    "center": 52,
+    "lo": 52,
+    "hi": 53,
+    "file": "B_ah_52.wav",
+    "start": 0.1,
+    "tune": -2.2
+   },
+   {
+    "center": 54,
+    "lo": 54,
+    "hi": 55,
+    "file": "B_ah_54.wav",
+    "start": 0.075,
+    "tune": -6.5
+   },
+   {
+    "center": 56,
+    "lo": 56,
+    "hi": 57,
+    "file": "B_ah_56.wav",
+    "start": 0.105,
+    "tune": -16.7
+   },
+   {
+    "center": 58,
+    "lo": 58,
+    "hi": 59,
+    "file": "B_ah_58.wav",
+    "start": 0.475,
+    "tune": -7.7
+   },
+   {
+    "center": 60,
+    "lo": 60,
+    "hi": 61,
+    "file": "B_ah_60.wav",
+    "start": 0.44,
+    "tune": 2.2
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "B_ah_62.wav",
+    "start": 0.31,
+    "tune": -2.6
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "B_ah_64.wav",
+    "start": 0.59,
+    "tune": 6.5
+   }
+  ],
+  "oo": [
+   {
+    "center": 46,
+    "lo": 45,
+    "hi": 47,
+    "file": "B_oo_46.wav",
+    "start": 0.535,
+    "tune": -8.1
+   },
+   {
+    "center": 48,
+    "lo": 48,
+    "hi": 49,
+    "file": "B_oo_48.wav",
+    "start": 0.47,
+    "tune": 2.9
+   },
+   {
+    "center": 50,
+    "lo": 50,
+    "hi": 51,
+    "file": "B_oo_50.wav",
+    "start": 0.64,
+    "tune": 3.2
+   },
+   {
+    "center": 52,
+    "lo": 52,
+    "hi": 53,
+    "file": "B_oo_52.wav",
+    "start": 0.18,
+    "tune": 9.1
+   },
+   {
+    "center": 54,
+    "lo": 54,
+    "hi": 55,
+    "file": "B_oo_54.wav",
+    "start": 0.105,
+    "tune": -6.3
+   },
+   {
+    "center": 56,
+    "lo": 56,
+    "hi": 57,
+    "file": "B_oo_56.wav",
+    "start": 0.175,
+    "tune": 5.3
+   },
+   {
+    "center": 58,
+    "lo": 58,
+    "hi": 59,
+    "file": "B_oo_58.wav",
+    "start": 0.335,
+    "tune": -4.4
+   },
+   {
+    "center": 60,
+    "lo": 60,
+    "hi": 61,
+    "file": "B_oo_60.wav",
+    "start": 0.28,
+    "tune": -1.1
+   },
+   {
+    "center": 62,
+    "lo": 62,
+    "hi": 63,
+    "file": "B_oo_62.wav",
+    "start": 0.2,
+    "tune": 2.1
+   },
+   {
+    "center": 64,
+    "lo": 64,
+    "hi": 65,
+    "file": "B_oo_64.wav",
+    "start": 0.28,
+    "tune": 1.9
+   }
+  ]
+ }
+}

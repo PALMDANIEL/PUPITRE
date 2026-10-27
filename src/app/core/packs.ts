@@ -111,8 +111,26 @@ export class PackStore {
     return {
       id, title: rec.title, originalName: `${rec.title}.pupitre`, source: 'musicxml', partitionFile: rec.manifest.score,
       corrected: false, pages: [], status: 'ready', progress: 100, error: null, tempo: rec.manifest.tempo, timbre: rec.manifest.timbre,
-      manifest: rec.manifest, revision: 0, createdAt: rec.importedAt, updatedAt: rec.importedAt,
+      // révision = date d'import : un chant recréé (nouvelle sonorité) recharge ses pistes dans le lecteur
+      manifest: rec.manifest, revision: Date.parse(rec.importedAt) || 0, createdAt: rec.importedAt, updatedAt: rec.importedAt,
     };
+  }
+
+  /** Renommer une voix d'un chant enregistré sur le téléphone. */
+  async renameVoice(id: string, voice: string, name: string): Promise<void> {
+    const rec = await tx<PackRecord | undefined>('readonly', (s) => s.get(id) as IDBRequest<PackRecord | undefined>);
+    if (!rec) return;
+    rec.manifest = { ...rec.manifest, voices: rec.manifest.voices.map((v) => (v.id === voice ? { ...v, name } : v)) };
+    rec.importedAt = new Date().toISOString();  // le lecteur recharge le chant
+    await tx('readwrite', (s) => s.put(rec));
+    await this.load();
+  }
+
+  /** Partition MusicXML d'un chant enregistré (pour recréer son audio en ligne). */
+  async scoreFile(id: string): Promise<{ title: string; file: Blob; name: string } | null> {
+    const rec = await tx<PackRecord | undefined>('readonly', (s) => s.get(id) as IDBRequest<PackRecord | undefined>);
+    const blob = rec?.files[rec.manifest.score];
+    return rec && blob ? { title: rec.title, file: blob, name: rec.manifest.score } : null;
   }
 
   close(id: string) {

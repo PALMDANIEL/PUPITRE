@@ -2,12 +2,19 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
 export type ScoreStatus = 'queued' | 'preprocessing' | 'recognizing' | 'rendering' | 'ready' | 'failed';
-export type Timbre = 'choeur' | 'piano';
+export type Timbre = 'choeur' | 'reel' | 'piano' | 'chant';
+export type Voyelle = 'ah' | 'oo';
+/** Langue des voix chantées. */
+export type Langue = 'fr' | 'la' | 'en' | 'mos' | 'dyu';
+export const LANGUES: { id: Langue; label: string }[] = [
+  { id: 'fr', label: 'Français' }, { id: 'la', label: 'Latin' }, { id: 'en', label: 'Anglais' },
+  { id: 'mos', label: 'Mooré' }, { id: 'dyu', label: 'Dioula' },
+];
 export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'rendering'];
 
-export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string] }
+export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string]; lyrics?: string; sung?: number }
 export interface Manifest {
-  tempo: number; timbre: Timbre; tutti: string; score: string;
+  tempo: number; timbre: Timbre; tutti: string; score: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
 export interface ScoreMeta {
@@ -15,6 +22,7 @@ export interface ScoreMeta {
   partitionFile: string | null; corrected: boolean; pages: string[];
   status: ScoreStatus; progress: number; error: string | null;
   tempo: number | null; timbre: Timbre; manifest: Manifest | null; revision: number;
+  langue?: Langue | null; paroles?: Record<string, string> | null; voyelle?: Voyelle | null;
   createdAt: string; updatedAt: string;
 }
 
@@ -26,8 +34,17 @@ export const STATUS_LABEL: Record<ScoreStatus, string> = {
 const VOICE_COLORS: Record<string, string> = {
   soprano: 'var(--soprano)', alto: 'var(--alto)', tenor: 'var(--tenor)', basse: 'var(--basse)',
 };
-const CYCLE = ['var(--soprano)', 'var(--alto)', 'var(--tenor)', 'var(--basse)'];
-export const voiceColor = (id: string, index = 0) => VOICE_COLORS[id] ?? CYCLE[index % CYCLE.length];
+// autres voix (solistes d'un dialogue, voix doublées…) : une couleur stable tirée de leur nom
+const EXTRA = ['var(--accent-2)', '#c084fc', '#f97362', '#7dd3a8', '#fbbf24', '#60a5fa'];
+const BASE: Record<string, string> = { soprano: 'soprano', alto: 'alto', tenor: 'tenor', basse: 'basse', mezzo: 'alto', baryton: 'basse' };
+export const voiceColor = (id: string, _index = 0) => {
+  if (VOICE_COLORS[id]) return VOICE_COLORS[id];
+  const base = Object.keys(BASE).find((k) => id.startsWith(k));  // « soprano2 » → couleur soprano
+  if (base) return VOICE_COLORS[BASE[base]];
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return EXTRA[h % EXTRA.length];
+};
 
 export const ACCEPT = '.pdf,.png,.jpg,.jpeg,.heic,.heif,.webp,.tif,.tiff,.bmp,.mxl,.musicxml,.xml,.mid,.midi,.mscz,.mscx';
 
@@ -61,7 +78,8 @@ export class ScoresApi {
     return this.http.post<ScoreMeta>('/api/scores', body, { reportProgress: true, observe: 'events' });
   }
   rename(id: string, title: string) { return this.http.patch<ScoreMeta>(`/api/scores/${id}`, { title }); }
-  render(id: string, opts: { tempo?: number | null; timbre?: Timbre }) { return this.http.post<ScoreMeta>(`/api/scores/${id}/render`, opts); }
+  renameVoice(id: string, voice: string, name: string) { return this.http.patch<ScoreMeta>(`/api/scores/${id}/voix/${encodeURIComponent(voice)}`, { name }); }
+  render(id: string, opts: { tempo?: number | null; timbre?: Timbre; langue?: Langue; paroles?: Record<string, string> | null; voyelle?: Voyelle }) { return this.http.post<ScoreMeta>(`/api/scores/${id}/render`, opts); }
   retry(id: string) { return this.http.post<ScoreMeta>(`/api/scores/${id}/retry`, {}); }
   correct(id: string, file: File) {
     const body = new FormData();

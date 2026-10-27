@@ -158,10 +158,39 @@ Les installateurs ne sont pas encore signés par Apple / Microsoft : un avertiss
 
 Les partitions du chef de chœur sont dans **Documents/Pupitre** (menu *Fichier › Ouvrir le dossier des partitions*).
 
+## Noms des voix et paroles lus sur la partition
+Audiveris lit maintenant le texte des partitions (Tesseract, langue française complète `engine/tessdata/fra.traineddata`,
+Apache 2.0 ; `TESSDATA_PREFIX` et l'option `Language.defaultSpecification=fra` passés par `omr.py`) : **paroles** et **noms
+des portées**. Les voix prennent les noms de la partition : « S. A. » → Soprano, Alto ; « T. B. » → Ténor, Basse ;
+« LA FIANCEE » → La fiancée (accents des mots courants rétablis). Les portées de même nom sont réunies (partitions en
+dialogue) ; dans une portée de rôle, les mesures à deux voix vont au chœur du même registre. Sans nom : la tessiture
+décide (Soprano, Alto, Ténor, Basse, numérotés si besoin). Chaque voix se **renomme** (✎ dans la table de mixage,
+sur l'ordinateur et le téléphone) ; le nom est gardé quand l'audio est recréé et passe dans les packs.
+
+## Chœur réel (« aah », « ouh »)
+Sonorité *Chœur réel* : chaque note est jouée par de vrais chanteurs enregistrés (3 à 10 par note, VocalSet via epic-choir,
+CC BY 4.0, crédités dans *À propos* et `engine/choeur/LISEZ-MOI.txt`), sur « aah » ou « ouh », sans paroles. 79 enregistrements
+mono (≈ 42 Mo, `engine/choeur/`) embarqués dans l'application et le serveur : fonctionne hors ligne et sur le téléphone (en ligne).
+Chaque enregistrement est mesuré une fois (`index.json`) : instant où le chœur est posé et petit écart d'accord, compensé.
+Les quatre sonorités : *Chœur synthé*, *Chœur réel*, *Piano*, *Voix chantées*.
+
+## Voix chantées (essai)
+Sonorité *Voix chantées* (table de mixage › *Tempo et sonorité*), version de bureau seulement : chaque note est chantée
+sur sa syllabe, à sa hauteur et pour sa durée exactes (`engine/chant.py` : Piper prononce la syllabe, Praat règle la hauteur,
+la voyelle est tenue jusqu'à la fin de la note, vibrato léger, effet de petit ensemble). Trois chanteurs par pupitre (deux sur le serveur en ligne, `CHANT_ENSEMBLE`), voix de femme pour les voix
+hautes, d'homme pour les voix basses ; hauteur vivante (glissés, vibrato variable), nuances, respirations. Paroles : celles de la partition (MusicXML, MuseScore), modifiables voix par voix
+(« Sain-te Ma-ri-e », « _ » pour tenir une syllabe) ; langues : français, latin d'église, anglais, mooré, dioula
+(ces deux-là prononcés à partir de la voix française : l'accent reste). Les voix (~140 Mo) sont téléchargées au premier
+usage dans le dossier de l'application (`VOIX_DIR`, environ 220 Mo). Compter quelques minutes de calcul par chant.
+Dépendances : `engine/requirements-chant.txt` (installées par la construction des installateurs, pas sur le serveur en ligne).
+
 ## Composants tiers
 
 Livrés dans le dossier `licences-tierces` de l'installation : Audiveris (GNU AGPL v3, programme distinct appelé
 sans modification), banque de sons GeneralUser GS, music21, OpenCV, PDFium, TinySoundFont, LAME, Electron…
+Voix chantées : Piper (GNU GPL v3, avec espeak-ng), onnxruntime (MIT), Praat/parselmouth (GNU GPL v3) ;
+voix téléchargées au premier usage, SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0), créditées dans *À propos*.
+Chœur réel : VocalSet (Wilkins, Seetharaman, Wahl, Pardo 2018, CC BY 4.0) via epic-choir (thepok, CC BY 4.0).
 Le contrat de licence d'utilisation (`desktop/assets/contrat-licence.txt`) est un modèle à faire relire par un juriste.
 
 ## Développement

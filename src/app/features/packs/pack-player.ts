@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreMeta } from '../../core/api';
 import { PackStore } from '../../core/packs';
+import { RemoteReader } from '../../core/remote';
 import { Mixer } from '../score/mixer';
 import { ScoreViewer } from '../score/score-viewer';
 
@@ -27,7 +28,8 @@ import { ScoreViewer } from '../score/score-viewer';
         }
       </header>
       <div class="workspace">
-        <app-mixer [score]="s" [player]="true" />
+        <app-mixer [score]="s" [player]="true" [online]="remote.configured()" [busy]="busy()" [progress]="progress()" [failure]="failure()"
+                   (recreate)="recreate($event)" (renamed)="renameVoice($event)" />
         <app-score-viewer [score]="s" />
       </div>
     } @else {
@@ -54,6 +56,29 @@ export class PackPlayer {
   private readonly packs = inject(PackStore);
   protected readonly score = signal<ScoreMeta | null>(null);
   protected readonly missing = signal(false);
+  protected readonly remote = inject(RemoteReader);
+  protected readonly busy = signal(false);
+  protected readonly progress = signal<number | null>(null);
+  protected readonly failure = signal<string | null>(null);
+
+  protected async renameVoice(e: { voice: string; name: string }) {
+    await this.packs.renameVoice(this.id(), e.voice, e.name);
+    this.score.set(await this.packs.open(this.id()));
+  }
+
+  /** Sonorité, tempo ou voix chantées : le serveur AIT recrée le chant, qui remplace celui du téléphone. */
+  protected async recreate(opts: Parameters<RemoteReader['recreate']>[1]) {
+    const id = this.id();
+    this.busy.set(true); this.failure.set(null); this.progress.set(0);
+    try {
+      const fresh = await this.remote.recreate(id, opts, (p) => this.progress.set(p));
+      this.score.set(await this.packs.open(fresh));
+    } catch (e) {
+      this.failure.set((e as Error).message);
+    } finally {
+      this.busy.set(false); this.progress.set(null);
+    }
+  }
 
   constructor() {
     effect(() => {

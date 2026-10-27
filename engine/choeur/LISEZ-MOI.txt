@@ -1,0 +1,6 @@
+Chœur réel de Pupitre : voyelles « aah » et « ouh », nuance mezzo-forte, 3 à 10 vrais chanteurs par note.
+Extraits (mono, 6 s) de epic-choir v1.0 (thepok), dérivé de VocalSet.
+
+Choir samples derived from VocalSet (Wilkins, Seetharaman, Wahl, Pardo 2018), CC BY 4.0,
+https://doi.org/10.5281/zenodo.1442513 — epic-choir by thepok (https://github.com/thepok/epic-choir), CC BY 4.0.
+Modifications : conversion en mono, coupe à 6 secondes, nuance mezzo-forte seulement.

@@ -93,6 +93,11 @@ import { SHOP_TARGET, shopUrl } from '../../core/shop';
           <p>Écoutez votre voix en avant, réglez le tempo, téléchargez les pistes de travail pour la répétition.</p>
         </li>
       </ol>
+      <p class="thanks">Voix chantées (essai) : voix de synthèse <a href="https://github.com/OHF-Voice/piper1-gpl" target="_blank" rel="noopener">Piper</a>
+        — SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0) — et <a href="https://www.praat.org" target="_blank" rel="noopener">Praat</a> pour la hauteur des notes.
+        Chœur réel : enregistrements dérivés de VocalSet (Wilkins, Seetharaman, Wahl, Pardo 2018, CC BY 4.0,
+        <a href="https://doi.org/10.5281/zenodo.1442513" target="_blank" rel="noopener">doi:10.5281/zenodo.1442513</a>),
+        via <a href="https://github.com/thepok/epic-choir" target="_blank" rel="noopener">epic-choir</a>.</p>
     </section>
 
     @if (player && ait.hasKey()) { <p class="admin"><a routerLink="/ait">Espace AIT (administration)</a></p> }
@@ -113,6 +118,8 @@ import { SHOP_TARGET, shopUrl } from '../../core/shop';
     .lead > p:not(.eyebrow) { color: var(--ink-soft); font-size: 1.1rem; max-width: 36rem; }
 
     .licence { margin-bottom: 1.25rem; }
+    .thanks { margin-top: 1rem; font-size: .82rem; color: var(--ink-soft); }
+    .thanks a { color: inherit; }
     .admin { margin-top: 2rem; text-align: center; font-size: .82rem; }
     .admin a { color: var(--ink-soft); text-underline-offset: 3px; }
     .warn { color: var(--danger); }
