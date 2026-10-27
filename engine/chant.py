@@ -162,10 +162,21 @@ def _trim(audio: np.ndarray, rate: int) -> np.ndarray:
 
 
 def _resample(y: np.ndarray, src: int, dst: int = RATE) -> np.ndarray:
+    """
+    Conversion de fréquence d'échantillonnage à bande limitée (FFT) : la voix de synthèse (22,05 kHz) ne contient
+    rien au-dessus de 11 kHz, et il ne doit rien y apparaître. Une simple interpolation y créait des « images »
+    entendues comme des sifflements métalliques (ton parasite vers 13 kHz).
+    """
     if src == dst or len(y) < 2:
         return y
     n = int(round(len(y) * dst / src))
-    return np.interp(np.linspace(0, len(y) - 1, n), np.arange(len(y)), y)
+    spec = np.fft.rfft(y)
+    f = np.fft.rfftfreq(len(y), 1 / src)
+    spec *= 1 / np.sqrt(1 + (f / (0.47 * src)) ** 16)  # coupe douce juste sous 11 kHz : pas de sonnerie
+    out = np.zeros(n // 2 + 1, dtype=complex)
+    k = min(len(spec), len(out))
+    out[:k] = spec[:k]
+    return np.fft.irfft(out, n) * (n / len(y))
 
 
 def _sustain(region: np.ndarray, period: int, length: int) -> np.ndarray:
@@ -279,10 +290,11 @@ def sing_syllable(singer: tuple, text: str, freq: float, seconds: float, kind: s
     if swell and seconds > 0.7:  # la voix s'ouvre sur les notes longues (+1,5 dB au milieu), puis se pose
         x = np.linspace(0, 1, len(vowel))
         vowel *= 1 + 0.19 * np.sin(np.pi * np.clip(x * 1.15, 0, 1)) ** 2
-    # consonnes renforcées (+3,5 dB à l'attaque, +2 dB en finale) : ce sont elles qui rendent les mots compréhensibles
+    # consonnes renforcées (+3,5 dB à l'attaque, +2 dB en finale) : ce sont elles qui rendent les mots compréhensibles ;
+    # le renfort ne porte que sur le médium (en dessous de 4 kHz) : les « s » et « ch » n'en profitent pas
     peak = float(np.max(np.abs(vowel))) or 1.0
-    onset = np.clip(onset * k * 1.5, -peak * 1.1, peak * 1.1)
-    coda = np.clip(coda * k * 1.26, -peak * 1.1, peak * 1.1)
+    onset = np.clip(_boost_mid(onset, sr, k, 1.5), -peak * 1.1, peak * 1.1)
+    coda = np.clip(_boost_mid(coda, sr, k, 1.26), -peak * 1.1, peak * 1.1)
     # fin de note posée
     rel = min(int(0.07 * sr), len(vowel) // 3)
     if rel > 0:
@@ -294,6 +306,16 @@ def sing_syllable(singer: tuple, text: str, freq: float, seconds: float, kind: s
         full[:fade] *= np.linspace(0, 1, fade)
         full[-fade:] *= np.linspace(1, 0, fade)
     return full.astype(np.float32), len(onset) / sr
+
+
+def _boost_mid(x: np.ndarray, sr: int, k: float, boost: float) -> np.ndarray:
+    """Gain k partout, plus un renfort sur la partie médium (sous 4 kHz) seulement."""
+    if len(x) < 32:
+        return x * k
+    spec = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1 / sr)
+    spec *= 1 + (boost - 1) / (1 + (f / 4000) ** 4)
+    return np.fft.irfft(spec, len(x)) * k
 
 
 def in_tune(y: np.ndarray, onset: float, freq: float) -> bool:
@@ -313,11 +335,12 @@ def breath(seconds: float, rng) -> np.ndarray:
     n = max(int(seconds * RATE), 64)
     spec = np.fft.rfft(rng.standard_normal(n))
     f = np.fft.rfftfreq(n, 1 / RATE)
-    spec *= np.exp(-0.5 * (np.log2(np.maximum(f, 1) / 1400) / 1.1) ** 2)
+    # souffle centré vers 900 Hz, sans aigus : une inspiration, pas un sifflement
+    spec *= np.exp(-0.5 * (np.log2(np.maximum(f, 1) / 900) / 0.9) ** 2) / np.sqrt(1 + (f / 2500) ** 6)
     y = np.fft.irfft(spec, n)
     x = np.linspace(0, 1, n)
     y *= np.sin(np.pi * x ** 0.7) ** 1.5
-    return (y / (np.sqrt(np.mean(y ** 2)) or 1) * 0.011).astype(np.float32)
+    return (y / (np.sqrt(np.mean(y ** 2)) or 1) * 0.006).astype(np.float32)
 
 
 # --- Une voix entière -----------------------------------------------------------------------------------------

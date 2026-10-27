@@ -16,8 +16,8 @@ RATE = 44100
 
 # Égalisation par type de voix : (passe-haut Hz, [(fréquence, gain dB, largeur en octaves)…], aigus Hz, gain dB)
 EQ = {
-    "femme": (110, [(300, -2.0, 0.8), (3000, 3.5, 0.9), (7500, -2.5, 0.5)], 11000, 1.0),
-    "homme": (70, [(250, -2.0, 0.8), (2500, 3.0, 0.9), (6500, -2.0, 0.5)], 10000, 1.0),
+    "femme": (110, [(300, -2.0, 0.8), (2800, 2.5, 0.9), (7000, -3.5, 0.7)], 9500, -6.0),
+    "homme": (70, [(250, -2.0, 0.8), (2500, 2.5, 0.9), (6500, -3.0, 0.7)], 9000, -6.0),
 }
 TARGET_VOICE = -18.0   # niveau de travail d'une voix (dB, parties chantées)
 TARGET_MASTER = -16.0  # niveau final d'un fichier (dB, parties chantées)
@@ -78,6 +78,15 @@ def highpass(x: np.ndarray, fc: float, rate: int = RATE) -> np.ndarray:
     return np.fft.irfft(np.fft.rfft(x) / np.sqrt(1 + (fc / f) ** 8), n)
 
 
+def lowpass(x: np.ndarray, fc: float) -> np.ndarray:
+    """Passe-bas à phase nulle, pente douce (pas de sonnerie)."""
+    n = len(x)
+    if n < 64:
+        return x
+    f = np.fft.rfftfreq(n, 1 / RATE)
+    return np.fft.irfft(np.fft.rfft(x) / np.sqrt(1 + (f / fc) ** 12), n).astype(np.float32)
+
+
 def compress(x: np.ndarray, threshold_db: float = -24.0, ratio: float = 3.0, knee_db: float = 6.0) -> np.ndarray:
     """Compresseur doux (genou souple), détection RMS 12 ms, gain lissé 40 ms : égalise syllabes et notes."""
     env = np.sqrt(_moving(x.astype(np.float64) ** 2, 0.012 * RATE)) + 1e-9
@@ -94,11 +103,33 @@ def level_to(x: np.ndarray, target_db: float) -> np.ndarray:
     return (x * 10 ** ((target_db - db(active_rms(x))) / 20)).astype(np.float32)
 
 
+def deess(x: np.ndarray, split: float = 4500.0, margin_db: float = -4.0) -> np.ndarray:
+    """
+    Dé-esseur : quand les aigus (au-dessus de 4,5 kHz, la zone des « s » et « ch ») dépassent le médium de plus
+    que la marge, on les ramène à la marge ; le reste du son n'est pas touché.
+    """
+    n = len(x)
+    if n < 1024:
+        return x
+    spec = np.fft.rfft(x)
+    f = np.fft.rfftfreq(n, 1 / RATE)
+    hi_part = 1 / np.sqrt(1 + (split / np.maximum(f, 1)) ** 8)
+    hi = np.fft.irfft(spec * hi_part, n)
+    lo = x - hi
+    e_hi = np.sqrt(_moving(hi ** 2, 0.008 * RATE)) + 1e-9
+    e_lo = np.sqrt(_moving(lo ** 2, 0.008 * RATE)) + 1e-9
+    excess = 20 * np.log10(e_hi / e_lo) - margin_db
+    gain = 10 ** (-np.clip(_moving(np.maximum(excess, 0), 0.012 * RATE), 0, 18) / 20)
+    return (lo + hi * gain).astype(np.float32)
+
+
 def polish_voice(x: np.ndarray, kind: str) -> np.ndarray:
-    """Une voix chantée prête à mixer : égalisée, compressée, au niveau de travail."""
+    """Une voix chantée prête à mixer : sifflantes maîtrisées, égalisée, compressée, au niveau de travail."""
     x = level_to(x, TARGET_VOICE)
+    x = deess(x)
     x = equalize(x, kind)
     x = compress(level_to(x, TARGET_VOICE), threshold_db=TARGET_VOICE - 4)
+    x = deess(x, margin_db=-6.0)  # second passage : la compression a pu remonter quelques « s »
     return level_to(x, TARGET_VOICE)
 
 
@@ -169,5 +200,6 @@ def mix_stereo(tracks: list[tuple[np.ndarray, float, float]]) -> np.ndarray:
 def master(stereo: np.ndarray) -> np.ndarray:
     """Fichier final : salle, volume constant (−16 dB sur les parties chantées), limiteur."""
     x = reverb(stereo)
+    x = np.stack([lowpass(x[:, c], 10500) for c in range(x.shape[1])], axis=1)  # rien d'utile au-dessus de 11 kHz
     x = level_to(x, TARGET_MASTER)
     return limit(x)
