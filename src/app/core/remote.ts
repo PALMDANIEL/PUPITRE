@@ -102,7 +102,9 @@ export class RemoteReader {
 
   /** Envoie les pages (photos ou PDF) ; la lecture continue sur le serveur même si l'application est fermée. */
   async send(pages: File[], title: string): Promise<RemoteJob> {
-    const files = await Promise.all(pages.map(shrinkPhoto));
+    // chaque page reçoit sa part de la limite d'envoi (photos les plus nettes possibles)
+    const budget = Math.max(700_000, Math.floor((DIRECT_MAX_BYTES - 100_000) / Math.max(1, pages.length)));
+    const files = await Promise.all(pages.map((p) => shrinkPhoto(p, budget)));
     if (this.settings().direct) return this.sendDirect(files, title);
     return this.sendQueued(files, title);
   }

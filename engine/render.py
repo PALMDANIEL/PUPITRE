@@ -229,46 +229,100 @@ def merge_named_parts(parts):
     sung_in = lambda m: any(True for _ in m.recurse().notes)
     parts = [copy.deepcopy(p) for p in parts]
     choirs = [p for p in parts if _is_choir_name(p.partName)]
+
+    def home(low):
+        # portée de chœur du registre : clé de fa → T. B., clé de sol → S. A.
+        for c in choirs:
+            tokens = [ABBR.get(t.lower()) for t in re.findall(r"[^\W\d_]+", clean_name(c.partName))]
+            if (low and any(t in MALE for t in tokens)) or (not low and any(t in FEMALE for t in tokens)):
+                return c
+        return None
+
     if choirs:
+        # Audiveris range les portées d'une ligne par leur position, pas par leur rôle : sur une ligne « soliste, S. A.,
+        # T. B. », la portée S. A. peut se retrouver dans la partie « B. », et T. B. dans celle du soliste.
+        # Toute mesure à deux voix est du chœur : elle va à la portée de chœur de sa clé, si elle y est libre.
+        for _round in range(3):
+            changed = False
+            for p in parts:
+                for m in p.getElementsByClass(stream.Measure):
+                    if _sung_voices(m) < 2:
+                        continue
+                    target_part = home(_low_clef(m, p))
+                    if target_part is None or target_part is p:
+                        continue
+                    target = next((x for x in target_part.getElementsByClass(stream.Measure) if x.number == m.number), None)
+                    if target is not None and not sung_in(target):
+                        _move(m, target)
+                        changed = True
+            if not changed:
+                break
         for p in parts:
             if p in choirs or not clean_name(p.partName):
                 continue
             for m in p.getElementsByClass(stream.Measure):
-                if _sung_voices(m) < 2:
-                    continue  # une seule voix : c'est le rôle qui chante
-                low = _low_clef(m, p)
-                moved = False
-                for c in choirs:
-                    tokens = [ABBR.get(t.lower()) for t in re.findall(r"[^\W\d_]+", clean_name(c.partName))]
-                    if (low and any(t in MALE for t in tokens)) or (not low and any(t in FEMALE for t in tokens)):
-                        target = next((x for x in c.getElementsByClass(stream.Measure) if x.number == m.number), None)
-                        if target is not None and not sung_in(target):
-                            _move(m, target)
-                            moved = True
-                            break
-                if not moved and m.voices:  # pas de place au chœur : le rôle garde sa voix du haut, jamais coupé en deux
+                if _sung_voices(m) >= 2 and m.voices:  # pas de place au chœur : le rôle garde sa voix du haut
                     top = max((v for v in m.voices if any(True for _ in v.notes)), key=lambda v: mean_pitch(v) or 0)
                     for v in list(m.voices):
                         if v is not top:
                             m.remove(v)
-    groups, order = {}, []
+    def name_key(p):
+        # « S. » sur les lignes suivantes = « Soprano » de la première ligne ; « S. A. » = « Soprano Alto »
+        name = clean_name(p.partName)
+        if not name:
+            return f"#{id(p)}"
+        tokens = re.findall(r"[^\W\d_]+", name)
+        mapped = [ABBR.get(t.lower()) for t in tokens]
+        return "|".join(mapped) if tokens and all(mapped) else name.lower().replace(".", "").strip()
+
+    def sung_numbers(p):
+        return {m.number for m in p.getElementsByClass(stream.Measure) if sung_in(m)}
+
+    def weak(p):
+        # nom absent, générique ou mal lu par l'OCR (« I‘. », « Voice ») : on ne s'y fie pas
+        name = clean_name(p.partName)
+        if not name:
+            return True
+        tokens = re.findall(r"[^\W\d_]+", name)
+        return not tokens or (not all(ABBR.get(t.lower()) for t in tokens) and len("".join(tokens)) <= 2)
+
+    def low(p):
+        c = next(iter(p.recurse().getElementsByClass(clef.Clef)), None)
+        return c is not None and (c.sign == "F" or getattr(c, "octaveChange", 0) < 0)
+
+    # Audiveris crée une nouvelle portée logique dès que le nom change d'une ligne à l'autre (« Soprano » puis « S. »,
+    # ou un nom mal lu) : chaque portée est rangée dans la « voix » qui ne chante pas en même temps qu'elle,
+    # de même nom ; à défaut (nom absent ou mal lu), de même clé et de même registre.
+    slots = []
     for p in parts:
-        key = (clean_name(p.partName) or "").lower().replace(".", "").strip() or f"#{id(p)}"
-        if key not in groups:
-            groups[key] = []; order.append(key)
-        groups[key].append(p)
+        key, mine, w, lp, pitch = name_key(p), sung_numbers(p), weak(p), low(p), mean_pitch(p) or 60
+        free = [sl for sl in slots
+                if len(mine & sl["sung"]) <= 0.2 * max(1, min(len(mine), len(sl["sung"])))]
+        same = next((sl for sl in free if key in sl["keys"]), None)
+        if same is None and (w or all(sl_w for sl in free for sl_w in [sl["weak"]])):
+            same = next((sl for sl in free if (w or sl["weak"]) and sl["low"] == lp and abs(sl["pitch"] - pitch) <= 7), None)
+        if same is None:
+            slots.append({"parts": [p], "keys": {key}, "sung": set(mine), "weak": w, "low": lp, "pitch": pitch})
+        else:
+            same["parts"].append(p); same["keys"].add(key); same["sung"] |= mine
+            same["weak"] = same["weak"] and w
+    groups = {i: sl["parts"] for i, sl in enumerate(slots)}
+    order = list(groups)
     merged = []
     for key in order:
         ps = groups[key]
         if len(ps) == 1:
             merged.append(ps[0]); continue
         base = ps[0]
-        by_number = [{m.number: m for m in p.getElementsByClass(stream.Measure)} for p in ps[1:]]
-        for m in base.getElementsByClass(stream.Measure):
+        own = list(base.getElementsByClass(stream.Measure))
+        others = [list(p.getElementsByClass(stream.Measure)) for p in ps[1:]]
+        for k, m in enumerate(own):
             if sung_in(m):
                 continue
-            for table in by_number:
-                other = table.get(m.number)
+            for ms in others:
+                # mesures appariées par position (Audiveris donne parfois le même numéro à deux mesures :
+                # mesure coupée en fin de ligne) ; par numéro seulement si les portées n'ont pas le même nombre de mesures
+                other = ms[k] if len(ms) == len(own) else next((x for x in ms if x.number == m.number and sung_in(x)), None)
                 if other is not None and sung_in(other):
                     _move(other, m)
                     break
@@ -410,6 +464,29 @@ def fix_octaves(voice, center=None):
         whole = -round((med - center) / 12) if abs(med - center) > 7 else 0
         shift_octaves(voice, whole)
         moved += abs(whole) * len(ps)
+    # clé mal lue sur une ligne entière : clé de sol lue « avec un 8 » sur une photo (ou le 8 du ténor oublié).
+    # Seule la portion sous une clé dont l'octave diffère de celle du reste de la voix est ramenée, et seulement
+    # si ses notes sont bien décalées dans ce sens (au moins 4 notes de chaque côté).
+    measures = list(voice.getElementsByClass(stream.Measure))
+    cuts = [i for i, m in enumerate(measures) if i == 0 or m.clef is not None] + [len(measures)]
+    segs = []
+    for a, b in zip(cuts, cuts[1:]):
+        c = measures[a].clef or measures[a].getContextByClass(clef.Clef)
+        segs.append((a, b, getattr(c, "octaveChange", 0) or 0, [p for m in measures[a:b] for p in pitches_of(m)]))
+    weight = {}
+    for _a, _b, oc, ps_ in segs:
+        weight[oc] = weight.get(oc, 0) + len(ps_)
+    usual = max(weight, key=weight.get) if weight else 0
+    for a, b, oc, seg in segs:
+        k = usual - oc
+        rest = [p for m in measures[:a] + measures[b:] for p in pitches_of(m)]
+        if not k or len(seg) < 4 or len(rest) < 4:
+            continue
+        gap = statistics.median(seg) - statistics.median(rest)
+        if gap * k < 0 and abs(gap + 12 * k) < abs(gap):
+            for m in measures[a:b]:
+                shift_octaves(m, k)
+            moved += len(seg)
     ref = statistics.median(pitches_of(voice))
     for m in voice.getElementsByClass(stream.Measure):
         mp = pitches_of(m)
@@ -417,7 +494,7 @@ def fix_octaves(voice, center=None):
             continue
         gap = statistics.median(mp) - ref
         if abs(gap) > 9:
-            k = -round(gap / 12) or (-1 if gap > 0 else 1)
+            k = -1 if gap > 0 else 1  # une erreur de lecture décale d'une octave, jamais deux
             shift_octaves(m, k)
             moved += len(mp)
     return moved
@@ -664,6 +741,36 @@ def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
         shutil.copy(src, dst)
 
 
+def export_rebuilt(voices, labels, dst: pathlib.Path) -> bool:
+    """Partition reconstituée : une portée par voix, nommée, dans la bonne octave et la bonne clé, avec ses paroles
+    (les corrections de la lecture y sont appliquées). Facultative : en cas d'échec, l'audio n'en dépend pas."""
+    try:
+        sc = stream.Score()
+        for v, (_vid, name) in zip(voices, labels):
+            p = copy.deepcopy(v)
+            p.partName, p.partAbbreviation = name, None
+            ms = list(p.getElementsByClass(stream.Measure))
+            for m in ms:
+                for c in list(m.recurse().getElementsByClass(clef.Clef)):
+                    c.activeSite.remove(c)
+            mp, first = mean_pitch(p) or 60, (name or "").split(" ")[0]
+            if first in ("Basse", "Baryton") or (first not in FEMALE | {"Ténor"} and mp < 52):
+                c = clef.BassClef()
+            elif first == "Ténor" or (first not in FEMALE and mp < 59):
+                c = clef.Treble8vbClef()
+            else:
+                c = clef.TrebleClef()
+            if ms:
+                ms[0].insert(0, c)
+            sc.insert(0, p)
+        sc.write("musicxml", fp=str(dst))
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"Partition reconstituée impossible : {e}", file=sys.stderr, flush=True)
+        dst.unlink(missing_ok=True)
+        return False
+
+
 def mix(tracks, wet=0.16, pans=None):
     """Voix chantées ou chœur réel → fichier stéréo final : voix réparties dans l'espace, salle, −14 LUFS, limiteur."""
     import mixage
@@ -728,6 +835,7 @@ def main():
 
     used = set()
     labels = [(voice_id(v.partName, used), v.partName) for v in voices]  # noms lus dans la partition, ou tessiture
+    rebuilt = export_rebuilt(voices, labels, out / "reconstituee.musicxml")
     sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else real_choir(voices, labels, tempo_qpm, a) if a.timbre == "reel" else None
     wet = 0.06 if a.timbre == "reel" else 0.16  # le chœur réel a déjà sa salle dans les enregistrements
     # paroles saisies : gardées dans le manifeste, pour les retrouver à la prochaine modification
@@ -767,6 +875,7 @@ def main():
     ks = score.analyze("key")
     manifest = {
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
+        **({"rebuilt": "reconstituee.musicxml"} if rebuilt else {}),
         **({"langue": a.langue} if a.timbre == "chant" else {}),
         **({"voyelle": a.voyelle} if a.timbre == "reel" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),

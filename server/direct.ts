@@ -56,7 +56,7 @@ export async function readDirect(
       },
     });
     const manifest = JSON.parse(await fs.readFile(path.join(audio, 'manifest.json'), 'utf8')) as Manifest;
-    return await buildPack(title, manifest, audio);
+    return await buildPack(title, manifest, audio, path.join(dir, 'pages'));
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

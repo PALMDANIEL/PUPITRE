@@ -31,7 +31,16 @@
             ],
             "allowedCommonJsDependencies": [
               "jsqr",
-              "opensheetmusicdisplay"
+              "opensheetmusicdisplay",
+              "html2canvas",
+              "cssesc",
+              "font-family-papandreou",
+              "svgpath",
+              "canvg",
+              "core-js",
+              "raf",
+              "rgbcolor",
+              "dompurify"
             ]
           },
           "configurations": {

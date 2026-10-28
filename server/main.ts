@@ -415,7 +415,7 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
 app.get('/api/scores/:id/pack', async (req, res) => {
   const meta = await getScore(req.params.id, res);
   const m = meta.manifest ?? fail(409, 'L’audio de cette partition n’est pas encore prêt.');
-  const data = await buildPack(meta.title, m, path.join(dirOf(meta.id), 'audio'));
+  const data = await buildPack(meta.title, m, path.join(dirOf(meta.id), 'audio'), path.join(dirOf(meta.id), 'pages'));
   const name = packFileName(meta.title);
   res.setHeader('Content-Type', 'application/octet-stream');
   const ascii = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]|"/g, '_');

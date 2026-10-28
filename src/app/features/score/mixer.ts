@@ -2,6 +2,8 @@ import { Component, computed, effect, inject, input, output, signal, untracked }
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreStore } from '../../core/score.store';
 import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from '../../core/api';
+import { practiceTrack } from '../../core/practice';
+import { saveFile } from '../../core/save-file';
 
 @Component({
   selector: 'app-mixer',
@@ -73,7 +75,7 @@ import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'choeur'" (click)="timbre.set('choeur')">Chœur synthé</button>
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'reel'" (click)="timbre.set('reel')">Chœur réel</button>
           <button type="button" role="radio" [attr.aria-checked]="timbre() === 'piano'" (click)="timbre.set('piano')">Piano</button>
-          <button type="button" role="radio" [attr.aria-checked]="timbre() === 'chant'" (click)="timbre.set('chant')">Voix chantées <small>essai</small></button>
+          <button type="button" role="radio" [attr.aria-checked]="timbre() === 'chant'" (click)="timbre.set('chant')">Voix chantées</button>
         </div>
         @if (timbre() === 'reel') {
           <div class="lyrics">
@@ -113,24 +115,42 @@ import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from
       </details>
       }
 
-      @if (!player()) {
-
       <details>
         <summary>Télécharger pour répéter</summary>
         <p class="hint">La piste de travail met votre voix en avant, avec les autres en fond. Elle se partage facilement par message.</p>
-        <ul class="downloads">
-          @for (v of voices(); track v.id) {
-            <li>
-              <span>{{ v.name }}</span>
-              <a [href]="url(score(), 'audio', v.practice, true)">Piste de travail</a>
-              <a [href]="url(score(), 'audio', v.stem, true)">Voix seule</a>
-            </li>
-          }
-          @if (score().manifest; as m) {
-            <li><span>Tout le chœur</span><a [href]="url(score(), 'audio', m.tutti, true)">Ensemble</a></li>
-          }
-        </ul>
+        @if (player()) {
+          <p class="hint">Choisissez ensuite « Enregistrer dans Fichiers », WhatsApp ou une autre application.</p>
+          <ul class="downloads">
+            @for (v of voices(); track v.id; let i = $index) {
+              <li>
+                <span>{{ v.name }}</span>
+                <button type="button" class="link" [disabled]="!!saving()" (click)="savePractice(i)">Piste de travail</button>
+                <button type="button" class="link" [disabled]="!!saving()" (click)="saveLocal(v.stem, v.name)">Voix seule</button>
+              </li>
+            }
+            @if (score().manifest; as m) {
+              <li><span>Tout le chœur</span><button type="button" class="link" [disabled]="!!saving()" (click)="saveLocal(m.tutti, 'Tout le chœur')">Ensemble</button></li>
+            }
+          </ul>
+          @if (saving()) { <p class="hint" role="status">{{ saving() }}</p> }
+          @if (saveError()) { <p class="error" role="alert">{{ saveError() }}</p> }
+        } @else {
+          <ul class="downloads">
+            @for (v of voices(); track v.id) {
+              <li>
+                <span>{{ v.name }}</span>
+                <a [href]="url(score(), 'audio', v.practice, true)">Piste de travail</a>
+                <a [href]="url(score(), 'audio', v.stem, true)">Voix seule</a>
+              </li>
+            }
+            @if (score().manifest; as m) {
+              <li><span>Tout le chœur</span><a [href]="url(score(), 'audio', m.tutti, true)">Ensemble</a></li>
+            }
+          </ul>
+        }
       </details>
+
+      @if (!player()) {
 
       <details>
         <summary>Corriger la partition</summary>
@@ -209,7 +229,9 @@ import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from
     .downloads { list-style: none; padding: 0; margin: 0; display: grid; gap: .45rem; }
     .downloads li { display: flex; gap: .9rem; align-items: baseline; flex-wrap: wrap; font-size: .9rem; }
     .downloads span { min-width: 6.5rem; font-weight: 700; }
-    .downloads a { color: var(--accent-2); text-underline-offset: 3px; }
+    .downloads a, .downloads .link { color: var(--accent-2); text-underline-offset: 3px; }
+    .downloads .link { background: none; border: 0; padding: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+    .downloads .link:disabled { opacity: .5; cursor: wait; }
     .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
     .actions .btn { font-size: .88rem; }
     label.btn.disabled { opacity: .45; pointer-events: none; }
@@ -222,7 +244,7 @@ import { LANGUES, Langue, ScoreMeta, Timbre, Voyelle, fileUrl, voiceColor } from
 export class Mixer {
   readonly score = input.required<ScoreMeta>();
   readonly busy = input(false);
-  /** Lecteur mobile : pas de serveur, donc ni recréation de l'audio, ni correction, ni téléchargements. */
+  /** Lecteur mobile : pas de serveur ; les pistes sont enregistrées depuis le téléphone (piste de travail mixée sur place). */
   readonly player = input(false);
   /** Téléphone relié au serveur de lecture AIT : il peut recréer l'audio (sonorité, voix chantées) en ligne. */
   readonly online = input(false);
@@ -310,6 +332,29 @@ export class Mixer {
     const file = input.files?.[0];
     input.value = '';
     if (file) void this.store?.uploadCorrection(file);
+  }
+  /** Téléphone : message pendant la préparation d'un fichier à enregistrer. */
+  protected readonly saving = signal<string | null>(null);
+  protected readonly saveError = signal<string | null>(null);
+  protected async saveLocal(file: string, label: string) {
+    await this.saveAs(`Préparation de « ${label} »…`, async () => (await fetch(fileUrl(this.score(), 'audio', file))).blob(), `${this.score().title} - ${label}.mp3`);
+  }
+  protected async savePractice(i: number) {
+    const v = this.voices()[i];
+    const stems = this.voices().map((x) => fileUrl(this.score(), 'audio', x.stem));
+    await this.saveAs(`Piste de travail ${v.name} : préparation…`,
+      () => practiceTrack(stems, i, (p) => this.saving.set(`Piste de travail ${v.name} : ${p} %`)),
+      `${this.score().title} - ${v.name} (travail).mp3`);
+  }
+  private async saveAs(message: string, make: () => Promise<Blob>, name: string) {
+    this.saving.set(message); this.saveError.set(null);
+    try {
+      await saveFile(await make(), name);
+    } catch (e) {
+      this.saveError.set(`Enregistrement impossible : ${(e as Error)?.message || 'erreur inconnue'}.`);
+    } finally {
+      this.saving.set(null);
+    }
   }
   protected fmt(t: number) {
     const s = Math.max(0, Math.floor(t));

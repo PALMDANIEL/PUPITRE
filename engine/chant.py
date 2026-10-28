@@ -1,5 +1,5 @@
 """
-Voix chantées (essai) : chaque note est chantée sur sa syllabe, à sa hauteur et pour sa durée exactes.
+Voix chantées : chaque note est chantée sur sa syllabe, à sa hauteur et pour sa durée exactes.
 
 1. Plusieurs chanteurs par pupitre, comme un vrai chœur : des voix de synthèse libres et différentes (Piper :
    SIWIS et deux locutrices de MLS pour les femmes, UPMC « Pierre » et deux locuteurs de MLS pour les hommes),

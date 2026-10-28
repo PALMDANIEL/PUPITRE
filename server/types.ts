@@ -12,7 +12,7 @@ export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'r
 export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string]; lyrics?: string; sung?: number }
 
 export interface Manifest {
-  tempo: number; timbre: Timbre; tutti: string; score: string; langue?: Langue; voyelle?: Voyelle;
+  tempo: number; timbre: Timbre; tutti: string; score: string; rebuilt?: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
 

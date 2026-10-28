@@ -33,7 +33,8 @@ async function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRe
   });
 }
 
-const MIME: Record<string, string> = { mp3: 'audio/mpeg', musicxml: 'application/vnd.recordare.musicxml+xml', json: 'application/json' };
+const isPage = (name: string) => /^page-\d+\.png$/.test(name);
+const MIME: Record<string, string> = { png: 'image/png', mp3: 'audio/mpeg', musicxml: 'application/vnd.recordare.musicxml+xml', json: 'application/json' };
 
 @Injectable({ providedIn: 'root' })
 export class PackStore {
@@ -69,8 +70,9 @@ export class PackStore {
         if (info?.format !== 'pupitre-pack') throw new Error(`« ${file.name} » n’est pas un pack Pupitre.`);
         const blobs: Record<string, Blob> = {};
         for (const [name, data] of Object.entries(entries)) {
-          if (!name.startsWith('audio/') || name.endsWith('/')) continue;
-          const short = name.slice('audio/'.length);
+          const folder = /^(audio|pages)\/(.+)$/.exec(name);
+          if (!folder || name.endsWith('/')) continue;
+          const short = folder[2];
           blobs[short] = new Blob([data as BlobPart], { type: MIME[short.split('.').pop() ?? ''] ?? 'application/octet-stream' });
         }
         const manifest = { ...info.manifest, voices: info.manifest.voices.map((v: Manifest['voices'][number]) => ({ ...v, practice: '' })) } as Manifest;
@@ -79,6 +81,11 @@ export class PackStore {
         // Même chant réimporté (nouvelle version du chef de chœur) : il remplace l'ancien
         const existing = this.packs().find((p) => p.title === info.title);
         const id = existing?.id ?? crypto.randomUUID();
+        // audio recréé en ligne (pack sans pages) : on garde les pages nettoyées de la copie déjà reçues
+        if (existing && !Object.keys(blobs).some(isPage)) {
+          const old = await tx<PackRecord | undefined>('readonly', (s) => s.get(id) as IDBRequest<PackRecord | undefined>);
+          for (const [name, blob] of Object.entries(old?.files ?? {})) if (isPage(name)) blobs[name] = blob;
+        }
         const record: PackRecord = { id, title: info.title, importedAt: new Date().toISOString(), manifest, files: blobs, size: file.size };
         await tx('readwrite', (s) => s.put(record));
         this.close(id);
@@ -110,7 +117,7 @@ export class PackStore {
     registerFiles(id, urls);
     return {
       id, title: rec.title, originalName: `${rec.title}.pupitre`, source: 'musicxml', partitionFile: rec.manifest.score,
-      corrected: false, pages: [], status: 'ready', progress: 100, error: null, tempo: rec.manifest.tempo, timbre: rec.manifest.timbre,
+      corrected: false, pages: Object.keys(rec.files).filter(isPage).sort(), status: 'ready', progress: 100, error: null, tempo: rec.manifest.tempo, timbre: rec.manifest.timbre,
       // révision = date d'import : un chant recréé (nouvelle sonorité) recharge ses pistes dans le lecteur
       manifest: rec.manifest, revision: Date.parse(rec.importedAt) || 0, createdAt: rec.importedAt, updatedAt: rec.importedAt,
     };

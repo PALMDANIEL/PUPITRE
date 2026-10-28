@@ -40,11 +40,13 @@ export class AudioEngine implements OnDestroy {
       const vols = { ...this.volumes() };
       for (const [id] of decoded) {
         const g = ctx.createGain();
-        g.connect(ctx.destination);
+        g.connect(this.output());
         this.gains.set(id, g);
         vols[id] ??= 1;
       }
       this.volumes.set(vols);
+      // chaque piste est déjà à plein niveau : ensemble, elles dépasseraient le maximum (craquements sur les accords forts)
+      this.output().gain.value = 1 / Math.sqrt(Math.max(1, decoded.length));
       this.applyGains();
       this.duration.set(Math.max(0, ...decoded.map(([, b]) => b.duration)));
       this.offset = Math.min(this.offset, this.duration());
@@ -123,6 +125,19 @@ export class AudioEngine implements OnDestroy {
   }
   private context() {
     return (this.ctx ??= new AudioContext());
+  }
+  private master: GainNode | null = null;
+  /** Sortie commune : volume d'ensemble puis limiteur (jamais de saturation, même toutes voix à fond). */
+  private output(): GainNode {
+    if (!this.master) {
+      const ctx = this.context();
+      this.master = ctx.createGain();
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -3; limiter.knee.value = 3; limiter.ratio.value = 20;
+      limiter.attack.value = 0.002; limiter.release.value = 0.12;
+      this.master.connect(limiter).connect(ctx.destination);
+    }
+    return this.master;
   }
   private now() {
     return this.ctx ? Math.max(0, this.ctx.currentTime - this.startedAt) : this.offset;

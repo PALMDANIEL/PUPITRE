@@ -1,6 +1,7 @@
 import { Component, ElementRef, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreMeta, fileUrl } from '../../core/api';
+import { saveFile } from '../../core/save-file';
 
 @Component({
   selector: 'app-score-viewer',
@@ -10,6 +11,14 @@ import { ScoreMeta, fileUrl } from '../../core/api';
       @if (score().pages.length) {
         <button role="tab" type="button" [attr.aria-selected]="view() === 'scan'" (click)="view.set('scan')">Scan d’origine</button>
       }
+    </div>
+    <div class="copies">
+      <button type="button" class="btn quiet" [disabled]="!!making() || !score().manifest" (click)="saveRebuilt()">Partition reconstituée (PDF)</button>
+      @if (score().pages.length) {
+        <button type="button" class="btn quiet" [disabled]="!!making()" (click)="saveClean()">Copie nettoyée (PDF)</button>
+      }
+      @if (making()) { <span class="hint" role="status">{{ making() }}</span> }
+      @if (pdfError()) { <span class="error" role="alert">{{ pdfError() }}</span> }
     </div>
     <div class="sheet" [hidden]="view() !== 'score'">
       @if (failed()) { <p class="note">{{ failed() }}</p> }
@@ -31,6 +40,10 @@ import { ScoreMeta, fileUrl } from '../../core/api';
     .sheet { background: var(--sheet); color: #1B1F3B; border-radius: 14px; padding: clamp(.5rem, 2vw, 1.5rem); overflow-x: auto;
              box-shadow: 0 0 0 1px var(--hair), 0 30px 70px -35px rgba(0, 0, 0, .75), 0 0 60px -30px color-mix(in srgb, var(--accent-2) 60%, transparent); }
     .note { padding: 1rem; color: #565B76; }
+    .copies { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 0 0 .85rem; }
+    .copies .btn { font-size: .85rem; padding: .4rem .85rem; }
+    .copies .hint { color: var(--ink-soft); font-size: .85rem; }
+    .copies .error { color: var(--danger, #E5484D); font-size: .85rem; }
     .scan img { display: block; width: 100%; height: auto; border-radius: 6px; }
     .scan img + img { margin-top: 1.5rem; }
   `],
@@ -61,11 +74,41 @@ export class ScoreViewer {
 
   protected pageUrl(p: string) { return fileUrl(this.score(), 'pages', p); }
 
+  protected readonly making = signal<string | null>(null);
+  protected readonly pdfError = signal<string | null>(null);
+  protected saveRebuilt() {
+    void this.makePdf('Gravure de la partition…', 'partition reconstituée', async () => {
+      const s = this.score();
+      const m = s.manifest!;
+      const xml = await (await fetch(fileUrl(s, 'audio', m.rebuilt ?? m.score))).text();
+      const { rebuiltScorePdf } = await import('../../core/score-pdf');
+      return rebuiltScorePdf(xml, s.title, m.rebuilt ? m.voices.map((v) => v.name) : []);
+    });
+  }
+  protected saveClean() {
+    void this.makePdf('Préparation de la copie nettoyée…', 'copie nettoyée', async () => {
+      const { cleanCopyPdf } = await import('../../core/score-pdf');
+      return cleanCopyPdf(this.score().pages.map((p) => this.pageUrl(p)), this.score().title);
+    });
+  }
+  private async makePdf(message: string, label: string, make: () => Promise<Blob>) {
+    this.making.set(message); this.pdfError.set(null);
+    try {
+      await saveFile(await make(), `${this.score().title} - ${label}.pdf`);
+    } catch (e) {
+      console.error(e);
+      this.pdfError.set(`PDF impossible : ${(e as Error)?.message || 'erreur inconnue'}.`);
+    } finally {
+      this.making.set(null);
+    }
+  }
+
   private async loadScore(s: ScoreMeta) {
     this.failed.set(null);
     if (!s.manifest) return;
     try {
-      const res = await fetch(fileUrl(s, 'audio', 'score.musicxml'));
+      // partition reconstituée (voix séparées, octaves et clés corrigées) quand le moteur l'a produite
+      const res = await fetch(fileUrl(s, 'audio', s.manifest.rebuilt ?? 'score.musicxml'));
       if (!res.ok) throw new Error('score');
       const xml = await res.text();
       // OSMD est publié en module CommonJS : selon l'outil de compilation, la classe est sur l'export nommé ou sur « default ».
