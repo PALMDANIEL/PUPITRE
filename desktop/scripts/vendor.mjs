@@ -28,6 +28,10 @@ async function download(url, to) {
 fs.mkdirSync(vendor, { recursive: true });
 copy(path.join(root, 'dist', 'pupitre', 'browser'), path.join(vendor, 'web'));
 copy(path.join(root, 'engine', 'dist', 'pupitre-engine'), path.join(vendor, 'engine'));
+// homr : programme distinct (AGPL), lecture des notes des copies usées ; facultatif (sans lui : Audiveris seul)
+const homrDist = path.join(root, 'engine', 'dist', 'pupitre-homr');
+if (fs.existsSync(homrDist)) copy(homrDist, path.join(vendor, 'homr'));
+else console.log('  ⚠ engine/dist/pupitre-homr manquant : copies usées lues par Audiveris seul');
 const localSf = path.join(process.env.HOME ?? '', 'soundfonts', 'GeneralUser-GS.sf2');
 if (fs.existsSync(localSf) && !fs.existsSync(path.join(vendor, 'soundfont', 'GeneralUser-GS.sf2'))) {
   fs.mkdirSync(path.join(vendor, 'soundfont'), { recursive: true });
@@ -39,6 +43,9 @@ fs.writeFileSync(path.join(vendor, 'licences-tierces', 'LISEZ-MOI.txt'), `Compos
 
 - Audiveris (lecture optique des partitions) : logiciel libre sous licence GNU AGPL v3.
   Programme distinct, appelé par Pupitre sans modification. Code source : https://github.com/Audiveris/audiveris
+- homr (lecture des notes des copies usées, réseau de neurones) : logiciel libre sous licence GNU AGPL v3.
+  Programme distinct (dossier homr), appelé par Pupitre sans modification. Code source : https://github.com/liebharc/homr
+- RapidOCR (lecture des paroles) : Apache 2.0, https://github.com/RapidAI/RapidOCR ; ONNX Runtime (MIT).
 - GeneralUser GS (banque de sons) : S. Christian Collins, licence dans GeneralUser-GS.txt.
 - music21 (BSD), OpenCV (Apache 2.0), NumPy (BSD), Pillow (MIT-CMU), pypdfium2 / PDFium (Apache 2.0 / BSD),
   TinySoundFont (MIT), LAME via lameenc (LGPL), pillow-heif (BSD / LGPL libheif), Electron (MIT).

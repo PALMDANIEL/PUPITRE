@@ -4,6 +4,8 @@ export type SourceKind = 'pdf' | 'image' | 'musicxml' | 'midi' | 'musescore';
 export type Timbre = 'choeur' | 'reel' | 'piano' | 'chant';
 export const TIMBRES: Timbre[] = ['choeur', 'reel', 'piano', 'chant'];
 export type Voyelle = 'ah' | 'oo';
+/** Lecture imposée par l'utilisateur : voix par voix (chœur à quatre voix, une portée par voix : S, A, T, B) ou ordinaire */
+export type Disposition = 'satb' | 'ordinaire';
 /** Langue des paroles chantées : français, latin, anglais, mooré, dioula. */
 export type Langue = 'fr' | 'la' | 'en' | 'mos' | 'dyu';
 export const LANGUES: Langue[] = ['fr', 'la', 'en', 'mos', 'dyu'];
@@ -28,6 +30,10 @@ export interface ScoreMeta {
   langue?: Langue | null; paroles?: Record<string, string> | null;
   /** Chœur réel : voyelle chantée */
   voyelle?: Voyelle | null;
+  /** Lecture imposée ; null : choisie par le moteur d'après l'image */
+  disposition?: Disposition | null;
+  /** Lecture faite : 'voix' = voix relues une à une (4 portées par système reconnues) */
+  lecture?: 'voix' | null;
   /** Noms de voix choisis par l'utilisateur (id → nom), gardés quand l'audio est recréé */
   voiceNames?: Record<string, string> | null;
   manifest: Manifest | null;

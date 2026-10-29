@@ -1,0 +1,12 @@
+# Lecture des copies usées (version de bureau) : homr (notes, réseau de neurones entraîné sur des photos de
+# partitions, AGPL-3.0) et RapidOCR (paroles, Apache-2.0). Les modèles de homr (~150 Mo) sont téléchargés une fois
+# à la construction (python -m homr.main --init, voir installateurs.yml) puis embarqués : tout marche hors ligne.
+# Liste complète figée, installée avec --no-deps (onnxruntime et les siens viennent de requirements-chant.txt).
+homr==0.6.2
+musicxml==1.4
+rapidocr-onnxruntime==1.4.4
+pyclipper==1.4.0
+PyYAML==6.0.3
+shapely==2.2.0
+tqdm==4.70.1
+typing_extensions==4.16.0

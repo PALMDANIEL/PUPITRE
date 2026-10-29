@@ -17,12 +17,18 @@ export interface Manifest {
   tempo: number; timbre: Timbre; tutti: string; score: string; rebuilt?: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
+/** Lecture imposée : voix par voix (chœur à 4 voix, une portée par voix : S, A, T, B de haut en bas) ou ordinaire */
+export type Disposition = 'satb' | 'ordinaire';
+
 export interface ScoreMeta {
   id: string; title: string; originalName: string; source: 'pdf' | 'image' | 'musicxml' | 'midi' | 'musescore';
   partitionFile: string | null; corrected: boolean; pages: string[];
   status: ScoreStatus; progress: number; error: string | null;
   tempo: number | null; timbre: Timbre; manifest: Manifest | null; revision: number;
   langue?: Langue | null; paroles?: Record<string, string> | null; voyelle?: Voyelle | null;
+  disposition?: Disposition | null;
+  /** 'voix' : voix relues une à une (copie usée, 4 portées par système) */
+  lecture?: 'voix' | null;
   createdAt: string; updatedAt: string;
 }
 
@@ -80,6 +86,8 @@ export class ScoresApi {
   rename(id: string, title: string) { return this.http.patch<ScoreMeta>(`/api/scores/${id}`, { title }); }
   renameVoice(id: string, voice: string, name: string) { return this.http.patch<ScoreMeta>(`/api/scores/${id}/voix/${encodeURIComponent(voice)}`, { name }); }
   render(id: string, opts: { tempo?: number | null; timbre?: Timbre; langue?: Langue; paroles?: Record<string, string> | null; voyelle?: Voyelle }) { return this.http.post<ScoreMeta>(`/api/scores/${id}/render`, opts); }
+  /** Relire les notes (photo, PDF), en annonçant ou non la disposition des voix */
+  reread(id: string, disposition: Disposition | null) { return this.http.post<ScoreMeta>(`/api/scores/${id}/relire`, { disposition }); }
   retry(id: string) { return this.http.post<ScoreMeta>(`/api/scores/${id}/retry`, {}); }
   correct(id: string, file: File) {
     const body = new FormData();

@@ -73,6 +73,9 @@ function configureEnvironment() {
       ? path.join(RES, 'audiveris', 'Audiveris.app', 'Contents', 'MacOS', 'Audiveris')
       : find(path.join(RES, 'audiveris'), ['Audiveris.exe', 'Audiveris.bat']);
     if (audiveris) env.AUDIVERIS_BIN = audiveris;
+    // homr (notes des copies usées, GNU AGPL v3) : programme distinct livré à côté, comme Audiveris
+    const homr = path.join(RES, 'homr', `pupitre-homr${exe}`);
+    if (fs.existsSync(homr)) env.HOMR_BIN = homr;
     env.MUSESCORE_BIN ??= '';
   }
 }

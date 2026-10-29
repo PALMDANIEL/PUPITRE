@@ -82,7 +82,10 @@ async function processScore(id: string) {
   let partitionFile = '';
   const pagesDir = path.join(dir, 'pages');
   const update = (patch: Parameters<typeof patchMeta>[1]) => void patchMeta(id, patch).catch(() => undefined);
-  const [omrCmd, omrArgs] = engineCommand('omr', [path.join(dir, meta.sourceFile), dir]);
+  const omrIn = [path.join(dir, meta.sourceFile), dir];
+  if (meta.disposition) omrIn.push('--disposition', meta.disposition);
+  let lecture: 'voix' | null = null;
+  const [omrCmd, omrArgs] = engineCommand('omr', omrIn);
   await run(omrCmd, omrArgs, {
     label: 'La lecture des notes',
     timeoutMs: config.omrTimeoutMs * 2,
@@ -92,13 +95,14 @@ async function processScore(id: string) {
       }
       const pct = /^progress:omr:(\d+)/.exec(line);
       if (pct) update({ progress: 20 + Math.round((38 * Number(pct[1])) / 100) });
+      if (line.startsWith('disposition:')) lecture = 'voix';
       const done = /^partition:(.+)$/.exec(line);
       if (done) partitionFile = done[1];
     },
   });
   if (!partitionFile) throw new UserError('Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.');
   const pages = (await fs.readdir(pagesDir)).filter((f) => f.endsWith('.png')).sort();
-  await patchMeta(id, { pages, partitionFile, corrected: false, progress: 62 });
+  await patchMeta(id, { pages, partitionFile, lecture, corrected: false, progress: 62 });
   await renderScore(id);
 }
 

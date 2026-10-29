@@ -2,7 +2,7 @@ import { Component, computed, effect, inject, input, untracked } from '@angular/
 import { RouterLink } from '@angular/router';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreStore } from '../../core/score.store';
-import { ScoreStatus } from '../../core/api';
+import { ScoreMeta, ScoreStatus } from '../../core/api';
 import { Mixer } from './mixer';
 import { ScoreViewer } from './score-viewer';
 
@@ -40,6 +40,9 @@ interface Step { key: ScoreStatus; label: string }
           <h2>La lecture n’a pas abouti</h2>
           <p>{{ s.error }}</p>
           <button type="button" class="btn" (click)="store.retry()">Relancer le traitement</button>
+          @if (canReread(s) && s.lecture !== 'voix') {
+            <button type="button" class="btn quiet" (click)="store.reread('satb')">Relire voix par voix (4 voix SATB)</button>
+          }
         </section>
       }
 
@@ -51,6 +54,19 @@ interface Step { key: ScoreStatus; label: string }
           <app-score-viewer [score]="s" />
           <app-mixer [score]="s" [busy]="store.busy()" />
         </div>
+        @if (canReread(s) && !store.busy()) {
+          <section class="reread glass">
+            @if (s.lecture === 'voix') {
+              <p>Lue <b>voix par voix</b> : 4 portées par système reconnues (Soprano, Alto, Ténor, Basse),
+                chaque voix relue à part.</p>
+              <button type="button" class="btn quiet" (click)="store.reread('ordinaire')">Relire en lecture ordinaire</button>
+            } @else {
+              <p>Voix mélangées ou manquantes ? Si c’est un chœur à 4 voix avec <b>une portée par voix</b>
+                (Soprano, Alto, Ténor, Basse de haut en bas), relisez-la voix par voix.</p>
+              <button type="button" class="btn quiet" (click)="store.reread('satb')">Relire voix par voix (4 voix SATB)</button>
+            }
+          </section>
+        }
       } @else if (s.status !== 'failed') {
         <section class="progress glass" role="status" aria-live="polite">
           <div class="scan" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
@@ -78,6 +94,9 @@ interface Step { key: ScoreStatus; label: string }
     }
   `,
   styles: [`
+    .reread { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .8rem; margin-top: 1rem; padding: .9rem 1.1rem; }
+    .reread p { margin: 0; font-size: .88rem; color: var(--ink-soft); max-width: 44rem; }
+    .reread b { color: var(--ink); }
     .back { display: inline-flex; align-items: center; gap: .35rem; margin: 1.25rem 0 1.25rem; padding: .35rem .85rem .35rem .55rem; border-radius: 999px;
             color: var(--ink-soft); font-size: .88rem; font-weight: 600; text-decoration: none; border: 1px solid var(--hair); background: var(--raised); }
     .back:hover { color: var(--ink); border-color: var(--accent-2); }
@@ -122,6 +141,8 @@ interface Step { key: ScoreStatus; label: string }
 export class ScorePage {
   readonly id = input.required<string>();
   protected readonly store = inject(ScoreStore);
+  /** Seules les photos et les PDF passent par la lecture des notes */
+  protected canReread(s: ScoreMeta) { return s.source === 'pdf' || s.source === 'image'; }
 
   protected readonly steps = computed<Step[]>(() => {
     const source = this.store.score()?.source;

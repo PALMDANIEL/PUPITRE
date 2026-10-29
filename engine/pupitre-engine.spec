@@ -14,7 +14,7 @@ datas += [(os.path.join(here, 'choeur'), 'choeur')]
 datas += [(os.path.join(here, 'tessdata'), 'tessdata')]
 binaries = collect_dynamic_libs('pypdfium2_raw') + collect_dynamic_libs('tinysoundfont') + collect_dynamic_libs('lameenc')
 
-hidden = ['omr', 'preprocess', 'merge', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')
+hidden = ['omr', 'preprocess', 'merge', 'pupitres', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')
 hidden += ['pillow_heif', 'tinysoundfont', 'lameenc', 'pypdfium2']
 
 # Voix chantées (requirements-chant.txt) : Piper et ses données espeak-ng, onnxruntime, Praat (parselmouth).
@@ -27,13 +27,24 @@ try:
 except ImportError:
     print('Voix chantées non embarquées : installez engine/requirements-chant.txt')
 
+# Paroles des copies usées (requirements-ia.txt) : RapidOCR (Apache 2.0) et ses modèles, hors ligne.
+# homr (notes, AGPL-3.0) n'est PAS ici : programme distinct, construit par engine/homr.spec, comme Audiveris.
+try:
+    import rapidocr_onnxruntime, shapely, pyclipper  # noqa: F401
+    no_tests = lambda n: '.tests' not in n and '.test_' not in n  # noqa: E731
+    datas += collect_data_files('rapidocr_onnxruntime')
+    binaries += collect_dynamic_libs('shapely') + collect_dynamic_libs('pyclipper')
+    hidden += collect_submodules('rapidocr_onnxruntime', filter=no_tests) + ['shapely', 'pyclipper', 'yaml']
+except ImportError:
+    print('Paroles des copies usées (RapidOCR) non embarquées : installez engine/requirements-ia.txt')
+
 a = Analysis(
     [os.path.join(here, 'pupitre_engine.py')],
     pathex=[here],
     binaries=binaries,
     datas=datas,
     hiddenimports=hidden,
-    excludes=['tkinter', 'matplotlib', 'IPython', 'jupyter', 'pytest', 'sympy.testing', 'onnxruntime.training'],
+    excludes=['tkinter', 'matplotlib', 'IPython', 'jupyter', 'pytest', 'sympy.testing', 'onnxruntime.training', 'homr'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

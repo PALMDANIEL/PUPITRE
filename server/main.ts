@@ -322,6 +322,17 @@ app.post('/api/scores/:id/retry', async (req, res) => {
   res.status(202).json(next);
 });
 
+// Relire les notes d'une photo ou d'un PDF, en annonçant (ou non) la disposition des voix
+app.post('/api/scores/:id/relire', async (req, res) => {
+  const meta = await getScore(req.params.id, res);
+  assertIdle(meta);
+  if (meta.source !== 'pdf' && meta.source !== 'image') fail(400, 'Seules les photos et les PDF sont relus.');
+  const disposition = req.body?.disposition === 'satb' || req.body?.disposition === 'ordinaire' ? req.body.disposition : null;
+  const next = await patchMeta(meta.id, { disposition, partitionFile: null, corrected: false, status: 'queued', progress: 0, error: null });
+  enqueue({ id: meta.id, kind: 'process' });
+  res.status(202).json(next);
+});
+
 app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => {
   const meta = await getScore(req.params.id, res);
   assertIdle(meta);
