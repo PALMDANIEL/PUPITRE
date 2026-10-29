@@ -154,6 +154,7 @@ jobs:
             L'ordinateur vérifie sa licence auprès d'AIT quand il a Internet ; il doit se connecter au moins une fois tous les 30 jours.
             Sonorités : Chœur synthé, Chœur réel (« aah », « ouh »), Piano, Voix chantées (paroles). Les voix chantées se téléchargent une seule fois au premier usage (environ 220 Mo, Internet nécessaire ce jour-là).
             Copies : « Partition reconstituée (PDF) » (regravée proprement, une portée par voix, avec les paroles) et « Copie nettoyée (PDF) » ; sur téléphone, téléchargement des pistes (piste de travail, voix seule, ensemble).
+            Copies photocopiées ou usées (chœur à 4 voix, une portée par voix) : reconnues automatiquement, nettoyées, puis lues voix par voix (notes par IA homr, paroles lues sur l'image). Sur la version ordinateur uniquement ; la lecture d'une copie usée prend quelques minutes. Bouton « Relire voix par voix » pour forcer.
             Mac : téléchargez le fichier .dmg jusqu'au bout avant de l'ouvrir (sinon « image disque endommagée »).
             Mac : au premier lancement, si macOS refuse d'ouvrir Pupitre, *Réglages Système › Confidentialité et sécurité › Ouvrir quand même*.
             Windows : « Windows a protégé votre ordinateur » › *Informations complémentaires* › *Exécuter quand même*.
