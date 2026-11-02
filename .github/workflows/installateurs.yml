@@ -80,6 +80,8 @@ jobs:
           .github/scripts/journal.sh "Moteur" pyinstaller --noconfirm --distpath engine/dist --workpath engine/build engine/pupitre-engine.spec
           # homr : programme distinct (AGPL), livré à côté du moteur comme Audiveris
           .github/scripts/journal.sh "homr" pyinstaller --noconfirm --distpath engine/dist --workpath engine/build-homr engine/homr.spec
+          # test de fumée : le moteur et homr livrés lisent un petit chœur, sur cette machine, avant tout assemblage
+          .github/scripts/journal.sh "Test du moteur" .github/scripts/test_moteur.sh
 
       - name: Audiveris (Mac)
         if: runner.os == 'macOS'

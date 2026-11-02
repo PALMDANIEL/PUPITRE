@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config, engineCommand } from './config';
+import { journal } from './journal';
 import { ensureVoices } from './voix';
 import { dirOf, listMetas, patchMeta, readMeta } from './store';
 import { BUSY, UserError, type Job, type Manifest } from './types';
@@ -52,8 +53,11 @@ export function run(cmd: string, args: string[], opts: { label: string; timeoutM
       if (buffer) opts.onLine?.(buffer.trim());
       if (code === 0) return resolve();
       const last = tail.trim().split('\n').pop() ?? '';
+      // le moteur signale lui-même une cause lisible par une dernière ligne « PUPITRE-ERREUR: … »
+      const marked = /^PUPITRE-ERREUR:\s*(.+)$/.exec(last);
       const readable = last && !last.includes('Traceback') && !last.includes('Error') && !/^\s*File /.test(last);
-      reject(Object.assign(readable ? new UserError(last) : new Error(`${opts.label} a échoué (code ${code}) :\n${tail}`), { detail: tail }));
+      const error = marked ? new UserError(marked[1]) : readable ? new UserError(last) : new Error(`${opts.label} a échoué (code ${code}) :\n${tail}`);
+      reject(Object.assign(error, { detail: tail }));
     });
   });
 }
@@ -175,9 +179,10 @@ async function pump() {
       console.log(`  terminé : ${title}`);
     } catch (err) {
       console.error(`  échec : ${title}`, err);
+      void journal(`échec de « ${title} »`, err);
       const message = err instanceof UserError
         ? err.message
-        : 'Le traitement a échoué. Relancez-le ; si le problème persiste, essayez un scan plus net.';
+        : 'Le traitement a échoué. Relancez-le ; si le problème persiste, envoyez le journal des erreurs à AIT (menu Aide › Journal des erreurs).';
       await patchMeta(id, { status: 'failed', error: message }).catch(() => undefined);
     }
   }

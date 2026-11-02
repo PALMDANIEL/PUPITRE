@@ -198,7 +198,7 @@ def blank_staff(width, staff):
     return img, int(round(5.5 * sp)), int(round(9.5 * sp))
 
 
-def voice_pages(page_files, layout, out_dir):
+def voice_pages(page_files, layout, out_dir, pdf=True):
     """
     Repère les portées, complète la copie nettoyée (page_files réécrites), découpe chaque portée
     (out_dir/lignes/), écrit une page par voix (out_dir/voix.pdf), les premières lignes de chaque voix
@@ -245,9 +245,18 @@ def voice_pages(page_files, layout, out_dir):
             cv2.imwrite(str(lines / f"v{v + 1}-{k + 1:02d}.png"), img)
     (out_dir / "disposition.json").write_text(json.dumps(
         {"layout": layout, "systems": systems, "lignes": [[[T, B] for _i, T, B in vr] for vr in rows]}, ensure_ascii=False))
-    _save([[vr[0][0]] for vr in rows], out_dir / "entetes.pdf")
-    _save([[img for img, _T, _B in vr] for vr in rows], out_dir / "voix.pdf")
+    if pdf:
+        make_pdfs(out_dir, layout)
     return len(systems)
+
+
+def make_pdfs(out_dir, layout):
+    """entetes.pdf (première ligne de chaque voix) et voix.pdf (une page par voix) : pour la lecture par Audiveris."""
+    info = json.loads((out_dir / "disposition.json").read_text())
+    rows = [[cv2.imread(str(out_dir / "lignes" / f"v{v + 1}-{k + 1:02d}.png"), cv2.IMREAD_GRAYSCALE)
+             for k in range(len(lines))] for v, lines in enumerate(info["lignes"])]
+    _save([[vr[0]] for vr in rows], out_dir / "entetes.pdf")
+    _save(rows, out_dir / "voix.pdf")
 
 
 def _save(rows, pdf):
@@ -350,7 +359,7 @@ def _cut_point(c, T, B, sharps):
     return best if best is not None and run >= 0.5 * sp else int(left + (3 + abs(sharps)) * sp)
 
 
-def header_pages(out_dir, layout, sharps, time_sig):
+def header_pages(out_dir, layout, sharps, time_sig, pdf=True):
     """
     voix.pdf refaite : chaque ligne après la première reçoit une tête nette (clé, armure, mesure) à la place de
     la sienne, souvent effacée. Sans clé reconnue, Audiveris lit la ligne en clé de sol et oublie la mesure
@@ -361,6 +370,8 @@ def header_pages(out_dir, layout, sharps, time_sig):
     (out_dir / "disposition.json").write_text(json.dumps(info, ensure_ascii=False))
     voices = LAYOUTS[layout]
     rows = []
+    nettes = out_dir / "lignes-nettes"
+    nettes.mkdir(exist_ok=True)
     for v, (_name, clef_name) in enumerate(voices):
         vr = []
         for k, (T, B) in enumerate(info["lignes"][v]):
@@ -370,24 +381,54 @@ def header_pages(out_dir, layout, sharps, time_sig):
                 if head is None:
                     return False
                 c = np.hstack([head, c[:, _cut_point(c, T, B, sharps):]])
+            cv2.imwrite(str(nettes / f"v{v + 1}-{k + 1:02d}.png"), c)
             vr.append(c)
         rows.append(vr)
-    _save(rows, out_dir / "voix.pdf")
+    if pdf:
+        _save(rows, out_dir / "voix.pdf")
     return True
 
 
+def staff_spec(out_dir, layout, folder="lignes", first_only=False):
+    """
+    portees.json pour pupitre-homr --portees : les lignes de chaque voix (dossier « lignes » ou « lignes-nettes »),
+    la première seulement avec first_only (clé, armure et mesure d'origine).
+    """
+    info = json.loads((out_dir / "disposition.json").read_text())
+    voix = [[{"image": f"{folder}/v{v + 1}-{k + 1:02d}.png", "T": T, "B": B} for k, (T, B) in enumerate(lines)][:1 if first_only else None]
+            for v, lines in enumerate(info["lignes"])]
+    (out_dir / "portees.json").write_text(json.dumps({"voix": voix}))
+    return out_dir
+
+
+TIMES = ["4/4", "3/4", "2/4", "6/8", "2/2", "3/8", "9/8", "12/8", "3/2"]
+
+
 def key_and_time(sources):
-    """Armure (dièses > 0, bémols < 0) et mesure lues sur les premières lignes ; None si rien de lu."""
-    from music21 import converter, key, meter
-    ks, ts = [], []
+    """
+    Armure (dièses > 0, bémols < 0) et mesure lues par homr sur les premières lignes des voix ; None si rien de lu.
+    Armure : la valeur sur laquelle s'accordent le plus de voix. Mesure : celle qui rend justes le plus de mesures
+    lues (la mesure écrite en tête de ligne est parfois mal lue : 3/4 sur une voix, 4/4 sur la suivante).
+    """
+    from collections import Counter
+    from music21 import converter, key, meter, stream
+    ks, ts, durs = [], [], []
     for src in sources:
         sc = converter.parse(str(src))
-        ks += [k.sharps for k in sc.recurse().getElementsByClass(key.KeySignature)]
-        ts += [t.ratioString for t in sc.recurse().getElementsByClass(meter.TimeSignature)]
+        ks += [k.sharps for k in sc.recurse().getElementsByClass(key.KeySignature)][:1]  # la tête de la ligne
+        ts += [t.ratioString for t in sc.recurse().getElementsByClass(meter.TimeSignature)][:1]
+        for part in sc.parts:
+            ms = list(part.getElementsByClass(stream.Measure))
+            durs += [float(m.duration.quarterLength) for m in ms[1:-1]]  # sans la levée ni la fin de ligne
     if not ts:
         return None
-    sure = [k for k in set(ks) if ks.count(k) >= 2] or ks
-    return (max(sure, key=abs) if sure else 0), statistics.mode(ts)
+    candidates = set(ts) | {"4/4", "3/4"}
+    bar = lambda t: float(meter.TimeSignature(t).barDuration.quarterLength)  # noqa: E731
+    exact = {t: sum(1 for d in durs if abs(d - bar(t)) < 1e-6) for t in candidates}
+    best = max(exact.values())
+    # à compte égal, la mesure lue le plus souvent, puis 4/4
+    pick = max((t for t in candidates if exact[t] == best), key=lambda t: (ts.count(t), t == "4/4"))
+    return (Counter(ks).most_common(1)[0][0] if ks else 0), pick
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -700,8 +741,20 @@ def _system(row, bar, seen=0, silent=None, stats=None):
 
 
 def _voice_lines(path, n_sys, others=None):
-    """Lignes d'une voix lue à part (une page par voix) : n_sys lignes, une ligne manquante placée par _place."""
+    """
+    Lignes d'une voix lue à part : n_sys lignes. Si le lecteur a noté quelles lignes il a lues (v1.lignes.json,
+    portées lues une à une), chacune retrouve sa place exacte ; sinon une ligne manquante est placée par _place.
+    """
     lines, _pages = _lines([path])
+    side = pathlib.Path(path).with_suffix(".lignes.json")
+    if side.exists():
+        kept = json.loads(side.read_text())
+        if len(kept) == len(lines):
+            out = [[] for _ in range(n_sys)]
+            for i, ln in zip(kept, lines):
+                if i < n_sys:
+                    out[i] = ln
+            return out
     if len(lines) == n_sys:
         return lines
     if len(lines) > n_sys:
@@ -881,19 +934,8 @@ def assemble(out, disposition, sources, notes_by_voice=None):
           f"point rétabli : {stats.get('marques', 0)}, rythme repris d'une autre voix : {stats.get('reprises', 0)}")
 
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
-    notes = None
-    if "--notes" in args:  # --notes v1.musicxml v2.musicxml … (une lecture des notes par voix, à la fin)
-        k = args.index("--notes")
-        notes, args = args[k + 1:], args[:k]
-    if len(args) < 2 or (len(args) < 3 and not notes):
-        sys.exit(__doc__)
-    assemble(args[0], args[1], args[2:], notes)
 
 
-# ---------------------------------------------------------------------------------------------------------------
-# Disposition reconnue sur l'image (sans qu'on l'annonce)
 
 def link(bw, upper, lower):
     """
@@ -1021,6 +1063,8 @@ def _time_signature(c, T, B):
     return None
 
 
+
+
 def _glyph(char, sp):
     """Signe de la police musicale dessiné à l'échelle de la portée (encre = 1), rogné."""
     from PIL import Image, ImageDraw, ImageFont
@@ -1142,3 +1186,14 @@ def read_lyrics(bw, staff, below):
         for x0, x1, text in sorted(line["boxes"]):
             out += [(x, t, verse) for x, t in _tokens(text, x0, x1)]
     return sorted(out, key=lambda e: (e[2], e[0]))
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    notes = None
+    if "--notes" in args:  # --notes v1.musicxml v2.musicxml … (une lecture des notes par voix, à la fin)
+        k = args.index("--notes")
+        notes, args = args[k + 1:], args[:k]
+    if len(args) < 2 or (len(args) < 3 and not notes):
+        sys.exit(__doc__)
+    assemble(args[0], args[1], args[2:], notes)

@@ -133,9 +133,21 @@ function buildMenu() {
     ] },
     { label: 'Aide', submenu: [
       ...(mac ? [] : [{ label: 'À propos de Pupitre', click: about }, { label: 'Licence…', click: licence }]),
+      { label: 'Journal des erreurs', click: () => void openJournal() },
       { label: 'Contacter AIT', click: () => dialog.showMessageBox({ type: 'info', title: 'Contacter AIT', message: `${CREDITS.company} · ${CREDITS.companyLong}`, detail: `${CREDITS.city}, ${CREDITS.country}\nTéléphone : ${CREDITS.phones.map((p) => p.label).join('\n')}` }) },
     ] },
   ]));
+}
+
+/** Journal des échecs (Documents/Pupitre/journal.txt) : à envoyer à AIT quand un traitement échoue sans explication. */
+async function openJournal() {
+  const file = path.join(app.getPath('documents'), 'Pupitre', 'journal.txt');
+  if (!fs.existsSync(file)) {
+    void dialog.showMessageBox({ type: 'info', title: 'Journal des erreurs', message: 'Aucune erreur enregistrée.', detail: `Le journal est écrit ici quand un traitement échoue :\n${file}` });
+    return;
+  }
+  const err = await shell.openPath(file);
+  if (err) shell.showItemInFolder(file);
 }
 
 /** Liens externes (téléphone, sites) : ouverts par le système, jamais dans la fenêtre de Pupitre. */

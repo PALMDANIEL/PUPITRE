@@ -15,17 +15,33 @@ except ImportError:  # HEIC indisponible : les autres formats fonctionnent
 IMAGES = {".png", ".jpg", ".jpeg", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp"}
 
 
+def best_angle(bw, span=3.0):
+    """
+    Angle (degrés) qui remet les lignes de portée à l'horizontale : celui qui rend le profil des rangées le plus
+    contrasté (chaque ligne tombe alors sur une seule rangée). Recherche grossière puis fine, sur l'image réduite
+    de moitié : durée constante (une demi-seconde), même sur une photocopie bruitée. 0 si l'image n'a pas de
+    lignes marquées (le gain de contraste doit dépasser 10 %).
+    """
+    small = cv2.resize(255 - bw, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA).astype(np.float32)
+    h, w = small.shape
+
+    def sharpness(angle):
+        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+        rows = cv2.warpAffine(small, M, (w, h), flags=cv2.INTER_NEAREST).sum(1)
+        return float(np.var(rows))
+
+    best = max(np.arange(-span, span + 0.01, 0.25), key=sharpness)
+    best = max(np.arange(best - 0.25, best + 0.26, 0.05), key=sharpness)
+    return float(best) if sharpness(best) > 1.1 * sharpness(0.0) else 0.0
+
+
 def deskew(bw):
-    inv = 255 - bw
-    lines = cv2.HoughLinesP(inv, 1, np.pi / 1800, 200, minLineLength=bw.shape[1] // 3, maxLineGap=20)
-    if lines is None:
-        return bw
-    angles = [np.degrees(np.arctan2(y2 - y1, x2 - x1)) for x1, y1, x2, y2 in lines[:, 0]]
-    angles = [a for a in angles if abs(a) < 5]
-    if not angles:
+    """Redresse la page d'après ses lignes de portée (jusqu'à 5°)."""
+    angle = best_angle(bw, 5.0)
+    if abs(angle) < 0.05:
         return bw
     h, w = bw.shape
-    M = cv2.getRotationMatrix2D((w / 2, h / 2), float(np.median(angles)), 1.0)
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
     return cv2.warpAffine(bw, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=255)
 
 
@@ -105,20 +121,22 @@ def clean_page(gray):
     bw = cv2.adaptiveThreshold(flat, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, 15)
 
     h, w = bw.shape
+    # Taches et traits de bord : décidés d'un coup pour toutes les composantes (un masque de la page entière par
+    # tache faisait exploser le temps sur une photocopie tachée : des minutes, puis l'arrêt par la surveillance)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
-    for i in range(1, n):
-        x, y, cw, ch, _a = stats[i]
-        near_edge = x < w * 0.07 or x + cw > w * 0.93 or y < h * 0.02 or y + ch > h * 0.98
-        long_thin = (ch > h * 0.5 and cw < w * 0.06) or (cw > w * 0.5 and ch < h * 0.03)
-        if near_edge and long_thin:
-            bw[lab == i] = 255
+    x, y, cw, ch = stats[:, 0], stats[:, 1], stats[:, 2], stats[:, 3]
+    near_edge = (x < w * 0.07) | (x + cw > w * 0.93) | (y < h * 0.02) | (y + ch > h * 0.98)
+    long_thin = ((ch > h * 0.5) & (cw < w * 0.06)) | ((cw > w * 0.5) & (ch < h * 0.03))
+    erase = near_edge & long_thin
+    erase[0] = False  # fond
+    bw[erase[lab]] = 255
     m = int(min(h, w) * 0.03)
     bw[:, :m] = 255; bw[:, -m:] = 255; bw[:m, :] = 255; bw[-m:, :] = 255
 
     n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < 6:
-            bw[lab == i] = 255
+    specks = stats[:, cv2.CC_STAT_AREA] < 6
+    specks[0] = False
+    bw[specks[lab]] = 255
     return deskew(bw)
 
 
@@ -130,19 +148,10 @@ def level(bw):
     Remet la page d'aplomb d'après ses lignes de portée, même en pointillés (photocopie) : on cherche l'angle
     qui rend le profil des rangées le plus contrasté (les lignes tombent alors chacune sur une seule rangée).
     """
-    small = cv2.resize(255 - bw, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA).astype(np.float32)
-    h, w = small.shape
-
-    def sharpness(angle):
-        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
-        rows = cv2.warpAffine(small, M, (w, h), flags=cv2.INTER_NEAREST).sum(1)
-        return float(np.var(rows))
-
-    best = max(np.arange(-3, 3.01, 0.25), key=sharpness)
-    best = max(np.arange(best - 0.25, best + 0.26, 0.05), key=sharpness)
+    best = best_angle(bw, 3.0)
     H, W = bw.shape
     if abs(best) >= 0.05:
-        M = cv2.getRotationMatrix2D((W / 2, H / 2), float(best), 1.0)
+        M = cv2.getRotationMatrix2D((W / 2, H / 2), best, 1.0)
         bw = cv2.warpAffine(bw, M, (W, H), flags=cv2.INTER_NEAREST, borderValue=255)
     return unshear(bw)
 
@@ -155,10 +164,17 @@ def unshear(bw):
     ink = (bw < 128).astype(np.uint8)
     H, W = bw.shape
     tall = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40)))
-    lines = cv2.HoughLinesP(tall * 255, 1, np.pi / 720, 80, minLineLength=150, maxLineGap=10)
-    if lines is None:
-        return bw
-    slopes = [(x2 - x1) / (y2 - y1) for x1, y1, x2, y2 in lines[:, 0] if abs(y2 - y1) > 150 and abs(x2 - x1) < 0.05 * abs(y2 - y1)]
+    # pente de chaque grand trait vertical (barre de mesure, accolade) : droite x = a·y + b ajustée sur ses pixels.
+    # (pas de transformée de Hough : sa durée dépend du contenu de l'image, et pouvait dépasser l'heure)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(tall, 8)
+    slopes = []
+    for k in range(1, n):
+        x, y, w, h, _a = st[k]
+        if h < 150 or w > 0.05 * h:
+            continue
+        ys, xs = np.nonzero(lab[y:y + h, x:x + w] == k)
+        if len(ys) >= 100:
+            slopes.append(float(np.polyfit(ys, xs, 1)[0]))
     if len(slopes) < 5:
         return bw
     k = float(np.median(slopes))
@@ -390,6 +406,7 @@ def main(src, out_dir):
             else:
                 best.append(cleaned); other.append(plain)
             cv2.imwrite(str(out / f"page-{i:02d}.png"), best[-1])
+            print(f"actif:page {i}/{len(pages)}", flush=True)  # signe de vie : omr.py le relaie à la surveillance
     # clean.pdf : la meilleure version pour Audiveris ; alt.pdf : l'autre, essayée si la première échoue.
     for name, imgs in (("clean.pdf", best), ("alt.pdf", other)):
         pil = [Image.fromarray(a) for a in imgs]

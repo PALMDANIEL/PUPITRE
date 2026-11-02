@@ -15,6 +15,7 @@ import { checkAccess, type AccessPayload } from '../licence/acces';
 import { checkAdmin } from '../licence/admin';
 import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '../licence/core';
 import * as admin from './admin';
+import { journal } from './journal';
 import * as pay from './paiement';
 import { directNumbers as paymentNumbers } from './passerelles';
 
@@ -416,6 +417,7 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
     if (owner) { void admin.countUse(owner).catch(() => undefined); void admin.event(owner, 'lecture', { title, pages: files.length }).catch(() => undefined); }
   } catch (e) {
     console.error('Lecture directe :', e, (e as { detail?: string }).detail ?? '');
+    void journal('lecture directe', e);
     send({ status: 'failed', error: e instanceof UserError ? e.message : 'La lecture a échoué. Reprenez la photo : page bien à plat, en pleine lumière.' });
   } finally {
     clearInterval(ping);

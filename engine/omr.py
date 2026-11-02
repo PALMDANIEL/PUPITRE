@@ -8,7 +8,7 @@ Usage : python3 omr.py <source> <dossier_travail> [--disposition satb|ordinaire]
 Écrit <dossier_travail>/pages/page-NN.png et <dossier_travail>/partition.mxl|.musicxml,
 affiche « progress:omr:<0-100> » pendant la lecture et « partition:<fichier> » à la fin.
 """
-import os, pathlib, re, shutil, subprocess, sys, time
+import os, pathlib, re, shutil, subprocess, sys, threading, time
 
 HERE = pathlib.Path(__file__).resolve().parent
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
@@ -159,65 +159,56 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int, sheets: list[int
 # Audiveris : HOMR_BIN (version installable : pupitre-homr), sinon homr installé à côté (développement).
 
 
-def homr_command(png):
-    """Commande qui lit une page avec homr, ou None s'il n'est pas là."""
+def homr_base():
+    """Commande de pupitre-homr (sans argument), ou None s'il n'est pas là."""
     exe = os.environ.get("HOMR_BIN")
     if not exe and getattr(sys, "frozen", False):  # à côté du moteur : …/engine/pupitre-engine → …/homr/pupitre-homr
         exe = str(pathlib.Path(sys.executable).resolve().parent.parent / "homr" /
                   ("pupitre-homr.exe" if os.name == "nt" else "pupitre-homr"))
     if exe and os.path.exists(exe):
-        return [exe, str(png)]
+        return [exe]
     if not getattr(sys, "frozen", False):
         import importlib.util
         if importlib.util.find_spec("homr") is not None:
-            return [sys.executable, str(HERE / "lire_homr.py"), str(png)]
+            return [sys.executable, str(HERE / "lire_homr.py")]
     return None
 
 
-def homr_notes(voix: pathlib.Path, n: int):
-    """Notes des pages des voix lues par homr : [v1.musicxml…], ou None (absent, échec)."""
-    if homr_command("x") is None:
-        return None
-    import pypdfium2 as pdfium
-    out = voix / "homr"
-    shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
-    files = []
+def homr_staves(folder: pathlib.Path) -> bool:
+    """
+    Fait lire par homr les portées décrites dans <folder>/portees.json (une image par ligne de chaque voix) ;
+    écrit <folder>/sortie/. Signe de vie à chaque portée lue (un petit PC met plusieurs secondes par portée).
+    """
+    base = homr_base()
+    if base is None:
+        return False
+    shutil.rmtree(folder / "sortie", ignore_errors=True)
     try:
-        for i, page in enumerate(pdfium.PdfDocument(str(voix / "voix.pdf"))):
-            png = out / f"v{i + 1}.png"
-            page.render(scale=300 / 72).to_pil().convert("L").save(png)
-            print("actif:omr", flush=True)
-            cmd = homr_command(png)
-            proc = subprocess.Popen(cmd, cwd=out, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **QUIET)
-            started = time.time()
-            while True:  # signe de vie toutes les 20 s : une page peut prendre plusieurs minutes sur un petit PC
-                try:
-                    proc.wait(timeout=20)
-                    break
-                except subprocess.TimeoutExpired:
-                    print("actif:omr", flush=True)
-                    if time.time() - started > TIMEOUT:
-                        proc.kill()
-                        raise
-            xml = out / f"v{i + 1}.musicxml"
-            if not xml.exists():
-                print(f"homr n'a rien lu sur la page de la voix {i + 1}", file=sys.stderr)
-                return None
-            files.append(xml)
-    except (OSError, subprocess.TimeoutExpired) as e:
+        proc = subprocess.Popen([*base, "--portees", str(folder)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, **QUIET)
+        # pas de limite de durée ici : une mise en veille de l'ordinateur ferait « dépasser » une limite horaire ;
+        # un homr bloqué est arrêté par la surveillance du serveur (aucun signe de vie pendant 5 minutes)
+        for line in proc.stdout:
+            if line.startswith("portee:"):
+                print("actif:omr", flush=True)
+        proc.wait()
+    except OSError as e:
         print(f"homr indisponible : {e}", file=sys.stderr)
-        return None
-    return files if len(files) == n else None
+        return False
+    return proc.returncode == 0 and (folder / "sortie" / "v1.musicxml").exists()
 
 
 def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
-    """Disposition déclarée : une page par voix, lue par Audiveris, puis voix réunies (pupitres.py)."""
+    """
+    Disposition reconnue ou déclarée : chaque voix lue à part, puis voix réunies (pupitres.py).
+    Chemin principal : portées découpées lues une à une par homr (aucun Audiveris, quelques dizaines de secondes) ;
+    sinon une page par voix lue par Audiveris.
+    """
     import pupitres
     voix = work / "voix"
     shutil.rmtree(voix, ignore_errors=True)
     try:
-        n_sys = pupitres.voice_pages(sorted(pages_dir.glob("page-*.png")), layout, voix)
+        n_sys = pupitres.voice_pages(sorted(pages_dir.glob("page-*.png")), layout, voix, pdf=False)
     except Exception as e:  # noqa: BLE001 : on garde la lecture ordinaire
         print(f"Découpage par voix impossible : {e}", file=sys.stderr)
         return None
@@ -226,44 +217,79 @@ def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
         return None
     print(f"Lecture voix par voix : {n_sys} systèmes", file=sys.stderr)
     n = len(pupitres.LAYOUTS[layout])
-    # 1) premières lignes de chaque voix (clé, armure et mesure y sont intactes) : armure et mesure du chant ;
-    # 2) les autres lignes reçoivent une tête nette à la place de la leur, souvent effacée
+    target = work / "partition.musicxml"
+    keep = bool(os.environ.get("PUPITRE_GARDER"))  # PUPITRE_GARDER=1 : dossier des voix gardé (banc d'essai)
+
+    def finish():
+        if not target.exists():
+            return None
+        if not keep:
+            shutil.rmtree(voix, ignore_errors=True)
+        return target
+
+    if homr_base() is not None:
+        try:
+            # 1) première ligne de chaque voix (sa clé, son armure et sa mesure y sont intactes) : armure et mesure du chant
+            pupitres.staff_spec(voix, layout, "lignes", first_only=True)
+            time_sig, key = None, None
+            if homr_staves(voix):
+                read = pupitres.key_and_time(sorted((voix / "sortie").glob("v*.musicxml")))
+                if read:
+                    key, time_sig = read
+            shutil.rmtree(voix / "sortie-entetes", ignore_errors=True)
+            if (voix / "sortie").exists():
+                (voix / "sortie").rename(voix / "sortie-entetes")
+            if key is None:  # homr n'a rien lu en tête : l'image (signes après la clé)
+                key = pupitres.key_from_image(voix, layout)
+            key = 0 if key is None else key
+            time_sig = time_sig or "4/4"
+            # 2) toutes les lignes, chacune avec une tête nette (clé, armure, mesure) à la place de la sienne
+            if pupitres.header_pages(voix, layout, key, time_sig, pdf=False):
+                print(f"Têtes de ligne redessinées : armure {key:+d}, mesure {time_sig}", file=sys.stderr)
+                pupitres.staff_spec(voix, layout, "lignes-nettes")
+            else:
+                pupitres.staff_spec(voix, layout, "lignes")
+            if homr_staves(voix):
+                notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
+                if all(f.exists() for f in notes):
+                    print("Portées lues une à une par homr, paroles lues sur l'image", file=sys.stderr)
+                    r = subprocess.run(step("pupitres", target, voix / "disposition.json", "--notes", *notes), **QUIET)
+                    if r.returncode == 0:
+                        return finish()
+                    target.unlink(missing_ok=True)
+        except Exception as e:  # noqa: BLE001 : Audiveris prend le relais
+            print(f"Lecture par portées impossible : {e}", file=sys.stderr)
+    print("Lecture des voix par Audiveris", file=sys.stderr)
+    pupitres.make_pdfs(voix, layout)
     heads = audiveris(voix / "entetes.pdf", voix / "omr-entetes", n)
     try:
         read = pupitres.key_and_time(heads) if heads else None
-        seen = pupitres.key_from_image(voix, layout)  # armure : l'image d'abord (Audiveris la perd souvent)
+        seen = pupitres.key_from_image(voix, layout)
         known = (seen if seen is not None else read[0], read[1]) if read else None
         if known and pupitres.header_pages(voix, layout, *known):
             print(f"Têtes de ligne redessinées : armure {known[0]:+d}, mesure {known[1]}", file=sys.stderr)
     except Exception as e:  # noqa: BLE001 : on lit alors les lignes telles quelles
         print(f"Têtes de ligne non redessinées : {e}", file=sys.stderr)
-    found = audiveris(voix / "voix.pdf", voix / "omr", n)  # notes, et paroles (homr ne lit pas le texte)
-    target = work / "partition.musicxml"
-    notes = homr_notes(voix, n)
-    if notes:
-        print("Notes lues par homr, paroles par Audiveris", file=sys.stderr)
-        if subprocess.run(step("pupitres", target, voix / "disposition.json", *(found or []), "--notes", *notes),
-                          **QUIET).returncode == 0:
-            found = None  # fait
-        else:
-            target.unlink(missing_ok=True)
-    if found and subprocess.run(step("pupitres", target, voix / "disposition.json", *found), **QUIET).returncode:
+    found = audiveris(voix / "voix.pdf", voix / "omr", n)
+    if not found or subprocess.run(step("pupitres", target, voix / "disposition.json", *found), **QUIET).returncode:
         target.unlink(missing_ok=True)
         return None
-    if not target.exists():
-        return None
-    if not os.environ.get("PUPITRE_GARDER"):  # PUPITRE_GARDER=1 : pages des voix gardées (banc d'essai)
-        shutil.rmtree(voix, ignore_errors=True)
-    return target
+    return finish()
 
 
 def main(src, work, layout=None):
     src, work = pathlib.Path(src), pathlib.Path(work)
     pre, pages_dir = work / "pre", work / "pages"
     shutil.rmtree(pre, ignore_errors=True)
-    prep = subprocess.run(step("preprocess", src, pre), capture_output=True, text=True, **QUIET)
-    if prep.returncode:
-        last = (prep.stderr.strip().splitlines() or ["Le nettoyage de l’image a échoué."])[-1]
+    proc = subprocess.Popen(step("preprocess", src, pre), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **QUIET)
+    errors = []
+    threading.Thread(target=lambda: errors.extend(proc.stderr), daemon=True).start()
+    for line in proc.stdout:  # une ligne par page nettoyée : signe de vie pour la surveillance du serveur
+        if line.startswith("actif:"):
+            print("actif:omr", flush=True)
+    proc.wait()
+    if proc.returncode:
+        last = (("".join(errors)).strip().splitlines() or ["Le nettoyage de l’image a échoué."])[-1]
         sys.exit(last if "Error" not in last and "Traceback" not in last else "Le nettoyage de l’image a échoué.")
     shutil.rmtree(pages_dir, ignore_errors=True)
     pages_dir.mkdir(parents=True)
@@ -344,6 +370,15 @@ def main(src, work, layout=None):
     print(f"partition:{target.name}", flush=True)
 
 
+def _fail(e: BaseException) -> None:
+    """Cause lisible sur la dernière ligne (affichée à l'utilisateur) ; la trace complète va dans le journal."""
+    import traceback
+    traceback.print_exc()
+    short = " ".join(str(e).split())[:160] or type(e).__name__
+    sys.exit(f"PUPITRE-ERREUR: La lecture a été interrompue ({type(e).__name__} : {short}). "
+             "Réessayez ; si cela se répète, envoyez le journal des erreurs à AIT.")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     layout = None
@@ -353,4 +388,9 @@ if __name__ == "__main__":
         del args[k:k + 2]
     if len(args) != 2 or (layout and layout not in ("satb", "ordinaire")):
         sys.exit(__doc__)
-    main(args[0], args[1], layout)
+    try:
+        main(args[0], args[1], layout)
+    except SystemExit:
+        raise
+    except Exception as e:  # noqa: BLE001
+        _fail(e)
