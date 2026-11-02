@@ -265,6 +265,7 @@ def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, t
         notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
         if ok and all(f.exists() for f in notes):
             print("Portées lues une à une par homr, paroles lues sur l'image", file=sys.stderr)
+            print("lecture:homr", flush=True)  # repère sans accent (test de fumée, journaux Windows)
             r = subprocess.run(step("pupitres", target, voix / "disposition.json", "--notes", *notes), **QUIET)
             chrono("voix réunies")
             if r.returncode == 0 and target.exists():

@@ -10,11 +10,17 @@ engine="$dist/pupitre-engine/pupitre-engine$ext"
 export HOMR_BIN="$dist/pupitre-homr/pupitre-homr$ext"
 work="${RUNNER_TEMP:-/tmp}/test-moteur"
 rm -rf "$work"; mkdir -p "$work"
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8   # comme Pupitre le fait pour le moteur (Windows : cp1252 sinon)
+# banque de sons : l'audio en a besoin, elle n'est assemblée que plus tard dans la construction
+if [ -z "${SOUNDFONT:-}" ]; then
+  curl -fsSL -o "$work/GeneralUser-GS.sf2" https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2
+  export SOUNDFONT="$work/GeneralUser-GS.sf2"
+fi
 cp engine/tests/echantillon-4-voix.pdf "$work/source.pdf"
 
 echo "== Lecture voix par voix (homr + RapidOCR, sans Audiveris)"
 "$engine" omr "$work/source.pdf" "$work" --disposition satb 2>&1 | tee "$work/lecture.log"
-grep -q "Portées lues une à une par homr" "$work/lecture.log" || { echo "::error::homr n'a pas lu les portées (repli sur Audiveris)"; exit 1; }
+grep -q "^lecture:homr" "$work/lecture.log" || { echo "::error::homr n'a pas lu les portées (repli sur Audiveris)"; exit 1; }
 test -s "$work/partition.musicxml" || { echo "::error::aucune partition produite"; exit 1; }
 
 echo "== Même lecture en deux temps (hébergement limité à 5 minutes par requête)"
@@ -25,6 +31,8 @@ test -s "$work/deux/etat.zip" || { echo "::error::étape 1 sans état"; exit 1; 
 test -s "$work/deux/partition.musicxml" || { echo "::error::étape 2 sans partition"; exit 1; }
 
 echo "== Création de l'audio"
-"$engine" render "$work/partition.musicxml" "$work/audio" --timbre choeur --omr 2>&1 | tail -3
+"$engine" render "$work/partition.musicxml" "$work/audio" --timbre choeur --omr > "$work/audio.log" 2>&1 \
+  || { tail -40 "$work/audio.log"; echo "::error::la création de l'audio a échoué"; exit 1; }
+tail -2 "$work/audio.log"
 test -s "$work/audio/tutti.mp3" || { echo "::error::aucun audio produit"; exit 1; }
 echo "Test de fumée réussi"
