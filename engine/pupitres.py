@@ -21,6 +21,8 @@ import copy, json, pathlib, statistics, sys
 import cv2
 import numpy as np
 
+import imgio
+
 # (nom, clé) de chaque portée d'un système, de haut en bas
 LAYOUTS = {
     "satb": [("Soprano", "G"), ("Alto", "G"), ("Ténor", "G8"), ("Basse", "F")],
@@ -211,7 +213,7 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
     rows = [[] for _ in range(n)]
     systems = []
     for pf in page_files:
-        bw = cv2.imread(str(pf), cv2.IMREAD_GRAYSCALE)
+        bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
         staves = complete(bw, find_staves(bw), n)
         faint = [s for s in staves if s[4] == "pâle"]
         for s in faint:  # retracées : sur la copie nettoyée et pour la lecture
@@ -235,16 +237,16 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
             for v, s in enumerate(group):
                 rows[v].append(blank_staff(bw.shape[1], s) if s[4] == "absente" else cut_staff(bw, s))
         if faint or bars_drawn:
-            cv2.imwrite(str(pf), bw)  # copie nettoyée : portées pâles et barres retracées
+            imgio.imwrite(str(pf), bw)  # copie nettoyée : portées pâles et barres retracées
     if not systems:
         return 0
     lines = out_dir / "lignes"
     lines.mkdir(parents=True, exist_ok=True)
     for v, vr in enumerate(rows):
         for k, (img, _T, _B) in enumerate(vr):
-            cv2.imwrite(str(lines / f"v{v + 1}-{k + 1:02d}.png"), img)
+            imgio.imwrite(str(lines / f"v{v + 1}-{k + 1:02d}.png"), img)
     (out_dir / "disposition.json").write_text(json.dumps(
-        {"layout": layout, "systems": systems, "lignes": [[[T, B] for _i, T, B in vr] for vr in rows]}, ensure_ascii=False))
+        {"layout": layout, "systems": systems, "lignes": [[[T, B] for _i, T, B in vr] for vr in rows]}, ensure_ascii=False), encoding="utf-8")
     if pdf:
         make_pdfs(out_dir, layout)
     return len(systems)
@@ -252,8 +254,8 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
 
 def make_pdfs(out_dir, layout):
     """entetes.pdf (première ligne de chaque voix) et voix.pdf (une page par voix) : pour la lecture par Audiveris."""
-    info = json.loads((out_dir / "disposition.json").read_text())
-    rows = [[cv2.imread(str(out_dir / "lignes" / f"v{v + 1}-{k + 1:02d}.png"), cv2.IMREAD_GRAYSCALE)
+    info = json.loads((out_dir / "disposition.json").read_text(encoding="utf-8"))
+    rows = [[imgio.imread(str(out_dir / "lignes" / f"v{v + 1}-{k + 1:02d}.png"), cv2.IMREAD_GRAYSCALE)
              for k in range(len(lines))] for v, lines in enumerate(info["lignes"])]
     _save([[vr[0]] for vr in rows], out_dir / "entetes.pdf")
     _save(rows, out_dir / "voix.pdf")
@@ -365,9 +367,9 @@ def header_pages(out_dir, layout, sharps, time_sig, pdf=True):
     la sienne, souvent effacée. Sans clé reconnue, Audiveris lit la ligne en clé de sol et oublie la mesure
     (il ne sait plus où placer les barres). Rend False si rien n'a pu être dessiné.
     """
-    info = json.loads((out_dir / "disposition.json").read_text())
+    info = json.loads((out_dir / "disposition.json").read_text(encoding="utf-8"))
     info.update({"armure": sharps, "mesure": time_sig})  # gardées pour l'assemblage
-    (out_dir / "disposition.json").write_text(json.dumps(info, ensure_ascii=False))
+    (out_dir / "disposition.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
     voices = LAYOUTS[layout]
     rows = []
     nettes = out_dir / "lignes-nettes"
@@ -375,13 +377,13 @@ def header_pages(out_dir, layout, sharps, time_sig, pdf=True):
     for v, (_name, clef_name) in enumerate(voices):
         vr = []
         for k, (T, B) in enumerate(info["lignes"][v]):
-            c = cv2.imread(str(out_dir / "lignes" / f"v{v + 1}-{k + 1:02d}.png"), cv2.IMREAD_GRAYSCALE)
+            c = imgio.imread(str(out_dir / "lignes" / f"v{v + 1}-{k + 1:02d}.png"), cv2.IMREAD_GRAYSCALE)
             if k:
                 head = draw_header(c.shape[0], T, B, clef_name, sharps, time_sig)
                 if head is None:
                     return False
                 c = np.hstack([head, c[:, _cut_point(c, T, B, sharps):]])
-            cv2.imwrite(str(nettes / f"v{v + 1}-{k + 1:02d}.png"), c)
+            imgio.imwrite(str(nettes / f"v{v + 1}-{k + 1:02d}.png"), c)
             vr.append(c)
         rows.append(vr)
     if pdf:
@@ -394,10 +396,10 @@ def staff_spec(out_dir, layout, folder="lignes", first_only=False):
     portees.json pour pupitre-homr --portees : les lignes de chaque voix (dossier « lignes » ou « lignes-nettes »),
     la première seulement avec first_only (clé, armure et mesure d'origine).
     """
-    info = json.loads((out_dir / "disposition.json").read_text())
+    info = json.loads((out_dir / "disposition.json").read_text(encoding="utf-8"))
     voix = [[{"image": f"{folder}/v{v + 1}-{k + 1:02d}.png", "T": T, "B": B} for k, (T, B) in enumerate(lines)][:1 if first_only else None]
             for v, lines in enumerate(info["lignes"])]
-    (out_dir / "portees.json").write_text(json.dumps({"voix": voix}))
+    (out_dir / "portees.json").write_text(json.dumps({"voix": voix}), encoding="utf-8")
     return out_dir
 
 
@@ -462,7 +464,7 @@ def _staff_counts(sources):
     counts = {}
     for src in sources:
         for log in pathlib.Path(src).parent.glob("*.log"):
-            for line in log.read_text(errors="replace").splitlines():
+            for line in log.read_text(errors="replace", encoding="utf-8").splitlines():
                 m = re.search(r"\[[^\]#]*#(\d+)\].*Systems:(.*)", line)
                 if m:
                     counts[int(m.group(1))] = len(re.findall(r"\[[^\]]*\]", m.group(2)))
@@ -748,7 +750,7 @@ def _voice_lines(path, n_sys, others=None):
     lines, _pages = _lines([path])
     side = pathlib.Path(path).with_suffix(".lignes.json")
     if side.exists():
-        kept = json.loads(side.read_text())
+        kept = json.loads(side.read_text(encoding="utf-8"))
         if len(kept) == len(lines):
             out = [[] for _ in range(n_sys)]
             for i, ln in zip(kept, lines):
@@ -862,7 +864,7 @@ def assemble(out, disposition, sources, notes_by_voice=None):
     par voix (homr, plus sûr sur une copie usée) ; les paroles viennent alors de la lecture d'Audiveris.
     """
     from music21 import key, meter, note, stream
-    info = json.loads(pathlib.Path(disposition).read_text())
+    info = json.loads(pathlib.Path(disposition).read_text(encoding="utf-8"))
     voices = LAYOUTS[info["layout"]]
     n_sys = len(info["systems"])
     lyric_sheets = None
@@ -974,7 +976,7 @@ def detect(page_files, worn=False):
     """
     sizes = []
     for pf in page_files:
-        bw = cv2.imread(str(pf), cv2.IMREAD_GRAYSCALE)
+        bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
         sizes += [len(g) for g in systems_on(bw, find_staves(bw))]
     need = 2 * len(sizes) / 3 if worn else len(sizes)
     if not sizes or max(sizes) > 4 or sizes.count(4) < max(1, need):
@@ -1086,11 +1088,11 @@ def key_from_image(out_dir, layout):
     if _music_font() is None:
         return None
     from preprocess import line_strokes
-    info = json.loads((out_dir / "disposition.json").read_text())
+    info = json.loads((out_dir / "disposition.json").read_text(encoding="utf-8"))
     found = []
     for v, _voice in enumerate(LAYOUTS[layout]):
         T, B = info["lignes"][v][0]
-        c = cv2.imread(str(out_dir / "lignes" / f"v{v + 1}-01.png"), cv2.IMREAD_GRAYSCALE)
+        c = imgio.imread(str(out_dir / "lignes" / f"v{v + 1}-01.png"), cv2.IMREAD_GRAYSCALE)
         sp = (B - T) / 4
         strokes = line_strokes(c)
         rows = [strokes[max(0, int(round(T + k * sp)) - 2):int(round(T + k * sp)) + 3].any(0) for k in range(5)]

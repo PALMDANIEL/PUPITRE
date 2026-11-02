@@ -38,6 +38,12 @@ RUN /opt/venv/bin/pip install --no-cache-dir --no-deps -r /tmp/requirements-chan
    && curl -fsSL -O "https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/$v.onnx.json"; done \
  && ls -l /opt/voix
 
+# Copies usées (version de bureau et serveur) : homr (notes, GNU AGPL v3) et RapidOCR (paroles) ; les modèles de homr
+# (~150 Mo) sont téléchargés une fois ici, le serveur n'a besoin d'aucun accès Internet ensuite.
+COPY engine/requirements-ia.txt /tmp/requirements-ia.txt
+RUN /opt/venv/bin/pip install --no-cache-dir --no-deps -r /tmp/requirements-ia.txt \
+ && /opt/venv/bin/python -c "import sys; sys.argv=['homr','--init']; from homr.main import main; main()"
+
 # Banque de sons GeneralUser GS (S. Christian Collins) et sa licence
 RUN mkdir -p /opt/soundfont \
  && curl -fsSL -o /opt/soundfont/GeneralUser-GS.sf2 https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2 \

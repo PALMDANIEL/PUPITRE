@@ -800,7 +800,7 @@ def sing_voices(voices, labels, tempo_qpm, a):
     missing = chant.missing_voices()
     if missing:
         sys.exit(f"Voix de synthèse introuvables dans {chant.voice_dir()} : {', '.join(missing)}")
-    typed = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
+    typed = json.loads(pathlib.Path(a.paroles).read_text(encoding="utf-8")) if a.paroles else {}
     sung = []
     for i, v in enumerate(voices):
         vid, vname = labels[i]
@@ -839,7 +839,7 @@ def main():
     sung = sing_voices(voices, labels, tempo_qpm, a) if a.timbre == "chant" else real_choir(voices, labels, tempo_qpm, a) if a.timbre == "reel" else None
     wet = 0.06 if a.timbre == "reel" else 0.16  # le chœur réel a déjà sa salle dans les enregistrements
     # paroles saisies : gardées dans le manifeste, pour les retrouver à la prochaine modification
-    typed_lyrics = json.loads(pathlib.Path(a.paroles).read_text()) if a.paroles else {}
+    typed_lyrics = json.loads(pathlib.Path(a.paroles).read_text(encoding="utf-8")) if a.paroles else {}
     entries = []
     for i, v in enumerate(voices):
         vid, vname = labels[i]
@@ -883,7 +883,7 @@ def main():
         "key": f"{fr_name(ks.tonic, octave=False)} {'majeur' if ks.mode == 'major' else 'mineur'}",
         "voices": entries,
     }
-    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Terminé : {len(voices)} voix, tonalité {manifest['key']}, fichiers dans {out}")
 
 

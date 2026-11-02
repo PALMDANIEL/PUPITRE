@@ -31,7 +31,7 @@ def pack_dir() -> pathlib.Path:
 
 @functools.lru_cache(maxsize=None)
 def _index() -> dict:
-    return json.loads((pack_dir() / "index.json").read_text())
+    return json.loads((pack_dir() / "index.json").read_text(encoding="utf-8"))
 
 
 def available() -> bool:

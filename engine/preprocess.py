@@ -4,6 +4,7 @@ Usage : python3 preprocess.py <source.pdf|image|dossier_de_pages> <dossier_sorti
 Images : JPG, PNG, HEIC/HEIF (iPhone), WEBP, TIFF (plusieurs pages), BMP. Un dossier = ses fichiers dans l'ordre des noms.
 """
 import sys, cv2, numpy as np, pathlib, tempfile
+import imgio
 from PIL import Image, ImageOps
 
 try:
@@ -36,11 +37,26 @@ def best_angle(bw, span=3.0):
 
 
 def deskew(bw):
-    """Redresse la page d'après ses lignes de portée (jusqu'à 5°)."""
-    angle = best_angle(bw, 5.0)
+    """
+    Redresse la page (jusqu'à 5°) d'après ses longues lignes de portée (Hough probabiliste, éprouvé sur le banc d'essai).
+    Sur une page très chargée d'encre (photocopie noircie, fond sale), la transformée de Hough devient très lente
+    (des minutes) : on cherche alors l'angle par le profil des rangées, de durée constante.
+    """
+    inv = 255 - bw
+    h, w = bw.shape
+    if np.count_nonzero(inv) > 0.08 * inv.size:
+        angle = best_angle(bw, 5.0)
+    else:
+        lines = cv2.HoughLinesP(inv, 1, np.pi / 1800, 200, minLineLength=w // 3, maxLineGap=20)
+        if lines is None:
+            return bw
+        angles = [np.degrees(np.arctan2(y2 - y1, x2 - x1)) for x1, y1, x2, y2 in lines[:, 0]]
+        angles = [a for a in angles if abs(a) < 5]
+        if not angles:
+            return bw
+        angle = float(np.median(angles))
     if abs(angle) < 0.05:
         return bw
-    h, w = bw.shape
     M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
     return cv2.warpAffine(bw, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=255)
 
@@ -405,14 +421,14 @@ def main(src, out_dir):
                 best.append(plain); other.append(cleaned)
             else:
                 best.append(cleaned); other.append(plain)
-            cv2.imwrite(str(out / f"page-{i:02d}.png"), best[-1])
+            imgio.imwrite(str(out / f"page-{i:02d}.png"), best[-1])
             print(f"actif:page {i}/{len(pages)}", flush=True)  # signe de vie : omr.py le relaie à la surveillance
     # clean.pdf : la meilleure version pour Audiveris ; alt.pdf : l'autre, essayée si la première échoue.
     for name, imgs in (("clean.pdf", best), ("alt.pdf", other)):
         pil = [Image.fromarray(a) for a in imgs]
         pil[0].save(out / name, save_all=True, append_images=pil[1:], resolution=300)
     # photocopie usée (lignes en tirets) : omr.py tente alors la lecture voix par voix
-    (out / "usee").write_text(str(worn)) if worn else (out / "usee").unlink(missing_ok=True)
+    (out / "usee").write_text(str(worn), encoding="utf-8") if worn else (out / "usee").unlink(missing_ok=True)
     print(f"Pages préparées : {len(best)} (dont {digital} numériques{f', {worn} usées' if worn else ''})")
 
 

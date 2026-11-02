@@ -130,6 +130,16 @@ Le code `PUPA1…` est valable pour toute la chorale (tous ses téléphones) jus
 collent avec l'adresse du serveur dans *Mes chants › Réglages du serveur de lecture*. Registre :
 `~/.pupitre-ait/registre-acces.csv`. Les partitions de chaque chorale sont séparées sur le serveur.
 
+### Copies usées (photocopies) sur le téléphone
+
+Une copie à 4 voix usée est lue **voix par voix, en trois requêtes courtes** (`/api/lire` → `/api/lire/suite` →
+`/api/recreer`) : chacune tient dans les 5 minutes d'une fonction Vercel (mesuré : environ 1 min, 1 min 15 et
+30 s sur un Mac ; comptez 2 à 3 fois plus sur un serveur d'un seul cœur). L'image du serveur (`Dockerfile`,
+`Dockerfile.vercel`) embarque homr et ses modèles. Si une lecture dépasse tout de même la limite, deux remèdes :
+passer le projet Vercel en offre Pro (limite portée à 800 s dans les réglages de la fonction), ou installer l'image
+Docker sur un serveur dédié (`deploy/LISEZ-MOI.md`, 2 cœurs suffisent, aucune limite de durée) et indiquer son adresse
+dans *Réglages du serveur de lecture* du téléphone. Le téléphone et le serveur doivent être de la même version.
+
 ### Le dossier `~/.pupitre-ait` — à sauvegarder
 
 | Fichier | Rôle |
@@ -186,12 +196,16 @@ Dépendances : `engine/requirements-chant.txt` (installées par la construction 
 
 ## Composants tiers
 
-Livrés dans le dossier `licences-tierces` de l'installation : Audiveris (GNU AGPL v3, programme distinct appelé
-sans modification), banque de sons GeneralUser GS, music21, OpenCV, PDFium, TinySoundFont, LAME, Electron…
+Livrés dans le dossier `licences-tierces` de l'installation : Audiveris et homr (GNU AGPL v3, programmes distincts
+appelés par Pupitre ; leur code source est public : github.com/Audiveris/audiveris, github.com/liebharc/homr),
+RapidOCR (Apache 2.0), banque de sons GeneralUser GS, music21, OpenCV, PDFium, TinySoundFont, LAME, Electron…
 Voix chantées : Piper (GNU GPL v3, avec espeak-ng), onnxruntime (MIT), Praat/parselmouth (GNU GPL v3) ;
 voix téléchargées au premier usage, SIWIS et MLS (CC BY 4.0), UPMC « Pierre » (CC BY-SA 4.0), créditées dans *À propos*.
 Chœur réel : VocalSet (Wilkins, Seetharaman, Wahl, Pardo 2018, CC BY 4.0) via epic-choir (thepok, CC BY 4.0).
 Le contrat de licence d'utilisation (`desktop/assets/contrat-licence.txt`) est un modèle à faire relire par un juriste.
+**Avant la vente** : faire valider par un juriste l'usage de homr et d'Audiveris (AGPL v3) dans un produit payant ; Pupitre les
+lance comme programmes distincts, sans les modifier, mais `engine/lire_homr.py` (point d'entrée de `pupitre-homr`)
+appelle les modules de homr : son code source doit rester public (dépôt PALMDANIEL/PUPITRE).
 
 ## Développement
 

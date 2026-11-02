@@ -138,7 +138,7 @@ def main(out, count):
             for quality in ("net", "photo"):
                 case = out / f"{work}-{layout_name}-{quality}"
                 case.mkdir(parents=True, exist_ok=True)
-                (case / "truth.json").write_text(json.dumps(t))
+                (case / "truth.json").write_text(json.dumps(t), encoding="utf-8")
                 if quality == "net":
                     save_pdf(pages, case / "source.pdf")
                 elif len(pages) == 1:

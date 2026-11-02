@@ -59,7 +59,7 @@ def run_case(case: pathlib.Path, reuse: bool):
     names = NAMES if len(voices) == 4 else [f"V{i+1}" for i in range(len(voices))]
     res["ranges"] = {names[i]: (min(v), max(v)) for i, v in enumerate(voices) if v}
     if truth_file.exists():
-        truth = json.loads(truth_file.read_text())
+        truth = json.loads(truth_file.read_text(encoding="utf-8"))
         res["acc"] = {}
         for i, name in enumerate(NAMES):
             got = voices[i] if i < len(voices) and len(voices) == 4 else []
@@ -92,7 +92,7 @@ def main():
         allv = [v[0] for r in scored for v in r["acc"].values() if v]
         four = sum(1 for r in scored if r.get("voices") == 4)
         print(f"\nCas notés : {len(scored)}/{len(results)} · 4 voix : {four}/{len(scored)} · justesse moyenne (note exacte) : {sum(allv)/max(len(allv),1):.0%}")
-    (pathlib.Path(a.corpus) / "_resultats.json").write_text(json.dumps(results, ensure_ascii=False, indent=1))
+    (pathlib.Path(a.corpus) / "_resultats.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 if __name__ == "__main__":

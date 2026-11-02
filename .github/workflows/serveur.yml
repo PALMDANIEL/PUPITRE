@@ -39,6 +39,14 @@ jobs:
           echo "$S" | python3 -c "import sys,json; x=json.load(sys.stdin); print(x['status'], x['error'], [(v['name'], v['range']) for v in (x['manifest'] or {}).get('voices', [])])"
           echo "$S" | grep -q '"status":"ready"' || { docker logs essai | tail -60; echo "::error title=Serveur::la lecture du PDF a échoué"; exit 1; }
           curl -fs -o pack.pupitre -H "Authorization: Pupitre $CODE" "localhost:3000/api/scores/$ID/pack" && unzip -l pack.pupitre
+      - name: Essai en trois requêtes (copie usée, comme le téléphone sur un hébergement limité à 5 minutes)
+        shell: bash
+        run: |
+          docker rm -f essai > /dev/null 2>&1 || true
+          CODE=$(npx tsx .github/scripts/code-essai.ts "$RUNNER_TEMP/cle-essai.pem")
+          docker run -d --name essai2 -p 3001:3000 -v "$RUNNER_TEMP/cle-essai.pem:/cle.pem:ro" -e ACCESS_PUBLIC_KEY_FILE=/cle.pem -e LECTURE_DIRECTE=1 -e PORT=3000 pupitre-serveur
+          for i in $(seq 1 60); do curl -fs localhost:3001/api/health && break; sleep 2; done; echo
+          python3 .github/scripts/test_etapes.py http://localhost:3001 "$CODE" engine/tests/echantillon-4-voix.pdf || { docker logs essai2 | tail -60; echo "::error title=Serveur::la lecture en trois requêtes a échoué"; exit 1; }
       - name: Publication (ghcr.io)
         if: github.event_name != 'pull_request'
         shell: bash

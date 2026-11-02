@@ -10,7 +10,7 @@ import { enqueue, recover } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, LANGUES, TIMBRES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre, type Voyelle } from './types';
 import { buildPack, packFileName } from './pack';
-import { readDirect, recreateDirect } from './direct';
+import { readDirect, recreateDirect, resumeDirect } from './direct';
 import { checkAccess, type AccessPayload } from '../licence/acces';
 import { checkAdmin } from '../licence/admin';
 import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '../licence/core';
@@ -360,8 +360,10 @@ app.delete('/api/scores/:id', async (req, res) => {
  * Réponse en lignes JSON : {"status","progress"} au fil de la lecture, puis {"pack": base64} ou {"error"}.
  */
 /** Téléphone : recréer l'audio d'un chant enregistré (tempo, sonorité, voix chantées) à partir de sa partition. */
-app.post('/api/recreer', upload.single('file'), async (req, res) => {
-  const file = req.file;
+app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'pages', maxCount: 12 }]), async (req, res) => {
+  const received = (req.files ?? {}) as Record<string, Express.Multer.File[]>;
+  const file = received['file']?.[0];
+  const pages = (received['pages'] ?? []).filter((p) => p.mimetype === 'image/png' || /\.png$/i.test(p.originalname)).map((p) => p.buffer);
   if (!file || !/\.(musicxml|xml)$/i.test(utf8Name(file.originalname))) fail(400, 'Partition manquante (fichier MusicXML du chant).');
   const body = (req.body ?? {}) as Record<string, string>;
   const title = (typeof body.titre === 'string' && body.titre.trim().slice(0, 140)) || 'Chant';
@@ -383,7 +385,7 @@ app.post('/api/recreer', upload.single('file'), async (req, res) => {
   const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
   const ping = setInterval(() => send({ ping: true }), 10_000);
   try {
-    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e));
+    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e), pages);
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
     if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);
@@ -411,13 +413,47 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
   const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
   const ping = setInterval(() => send({ ping: true }), 10_000); // garde la connexion ouverte pendant les longues lectures
   try {
-    const pack = await readDirect(files, title, (e) => send(e));
+    const result = await readDirect(files, title, (e) => send(e), req.body?.disposition === 'satb' ? 'satb' : null);
+    if (!Buffer.isBuffer(result) && 'etat' in result) {
+      // copie usée : étape 1 faite ; le téléphone relance l'étape 2 (/api/lire/suite) avec cet état (limite de 5 minutes)
+      send({ status: 'etape', progress: 30, title, etat: result.etat.toString('base64'), pages: result.pages.map((p) => p.toString('base64')) });
+      return;
+    }
+    if (!Buffer.isBuffer(result)) {
+      // copie usée lue voix par voix : le téléphone demande l'audio dans une seconde requête (limite de 5 minutes)
+      send({ status: 'partition', progress: 60, title, partition: result.partition.toString('base64'), pages: result.pages.map((p) => p.toString('base64')) });
+      const who = ownerOf(res);
+      if (who) { void admin.countUse(who).catch(() => undefined); void admin.event(who, 'lecture', { title, pages: files.length }).catch(() => undefined); }
+      return;
+    }
+    const pack = result;
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
     if (owner) { void admin.countUse(owner).catch(() => undefined); void admin.event(owner, 'lecture', { title, pages: files.length }).catch(() => undefined); }
   } catch (e) {
     console.error('Lecture directe :', e, (e as { detail?: string }).detail ?? '');
     void journal('lecture directe', e);
+    send({ status: 'failed', error: e instanceof UserError ? e.message : 'La lecture a échoué. Reprenez la photo : page bien à plat, en pleine lumière.' });
+  } finally {
+    clearInterval(ping);
+    res.end();
+  }
+});
+
+/** Seconde requête de la lecture voix par voix d'une copie usée : portées lues par homr, voix réunies. */
+app.post('/api/lire/suite', upload.single('etat'), async (req, res) => {
+  const state = req.file ?? fail(400, 'État de la lecture manquant.');
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
+  const ping = setInterval(() => send({ ping: true }), 10_000);
+  try {
+    const r = await resumeDirect(state.buffer, (e) => send(e));
+    send({ status: 'partition', progress: 60, partition: r.partition.toString('base64'), pages: [] });
+  } catch (e) {
+    console.error('Lecture directe (suite) :', e, (e as { detail?: string }).detail ?? '');
+    void journal('lecture directe (suite)', e);
     send({ status: 'failed', error: e instanceof UserError ? e.message : 'La lecture a échoué. Reprenez la photo : page bien à plat, en pleine lumière.' });
   } finally {
     clearInterval(ping);

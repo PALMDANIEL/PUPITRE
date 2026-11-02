@@ -1,6 +1,7 @@
 """
 Lecture d'une partition (PDF ou image) : nettoyage -> Audiveris -> partition MusicXML unique.
-Usage : python3 omr.py <source> <dossier_travail> [--disposition satb|ordinaire]
+Usage : python3 omr.py <source> <dossier_travail> [--disposition satb|ordinaire] [--etape1]
+        python3 omr.py --reprise <etat.zip> <dossier_travail>     (suite d'une lecture commencée avec --etape1)
   Sans --disposition, la disposition est reconnue sur l'image : si les systèmes comptent quatre portées
   (chœur S, A, T, B, une portée par voix) et que la copie est usée, ou que la lecture ordinaire mélange les
   portées, chaque voix est relue à part. Affiche alors « disposition:satb ».
@@ -48,7 +49,7 @@ def systems(folder: pathlib.Path):
     (« Systems: #1[1, 2] #2[3] #3[4] » : le 2e système de deux portées a été coupé en deux)."""
     sheets = []
     for log in sorted(folder.rglob("*.log")):
-        for line in log.read_text(errors="replace").splitlines():
+        for line in log.read_text(errors="replace", encoding="utf-8").splitlines():
             if "Systems:" in line:
                 sheets.append([len(g.split(",")) for g in re.findall(r"\[([^\]]*)\]", line.split("Systems:")[1])])
     return sheets
@@ -85,7 +86,7 @@ def failed_sheets(folder: pathlib.Path) -> set[int]:
     """Pages sur lesquelles Audiveris a planté (une seule suffit à ce qu'il n'exporte rien du tout)."""
     bad = set()
     for log in folder.rglob("*.log"):
-        for line in log.read_text(errors="replace").splitlines():
+        for line in log.read_text(errors="replace", encoding="utf-8").splitlines():
             if "Error processing stub" in line and (m := re.search(r"\[[^\]#]*#(\d+)\]", line)):
                 bad.add(int(m.group(1)))
     return bad
@@ -185,7 +186,7 @@ def homr_staves(folder: pathlib.Path) -> bool:
     shutil.rmtree(folder / "sortie", ignore_errors=True)
     try:
         proc = subprocess.Popen([*base, "--portees", str(folder)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                text=True, **QUIET)
+                                text=True, encoding="utf-8", errors="replace", **QUIET)
         # pas de limite de durée ici : une mise en veille de l'ordinateur ferait « dépasser » une limite horaire ;
         # un homr bloqué est arrêté par la surveillance du serveur (aucun signe de vie pendant 5 minutes)
         for line in proc.stdout:
@@ -198,11 +199,19 @@ def homr_staves(folder: pathlib.Path) -> bool:
     return proc.returncode == 0 and (folder / "sortie" / "v1.musicxml").exists()
 
 
-def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
+_T0 = time.monotonic()
+
+
+def chrono(label: str) -> None:
+    """Durée écrite dans le journal du moteur (aide à repérer l'étape lente sur un petit ordinateur)."""
+    print(f"[{time.monotonic() - _T0:6.1f} s] {label}", file=sys.stderr, flush=True)
+
+
+def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
     """
-    Disposition reconnue ou déclarée : chaque voix lue à part, puis voix réunies (pupitres.py).
-    Chemin principal : portées découpées lues une à une par homr (aucun Audiveris, quelques dizaines de secondes) ;
-    sinon une page par voix lue par Audiveris.
+    Étape 1 de la lecture voix par voix : portées repérées, lignes découpées, paroles lues sur l'image, puis première
+    ligne de chaque voix lue par homr (sa clé, son armure et sa mesure y sont intactes). Rend (voix, armure, mesure),
+    ou None (pas de système à quatre portées, homr absent) : on lit alors par Audiveris ou en lecture ordinaire.
     """
     import pupitres
     voix = work / "voix"
@@ -216,49 +225,61 @@ def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
         print("Aucun système complet trouvé pour la disposition annoncée", file=sys.stderr)
         return None
     print(f"Lecture voix par voix : {n_sys} systèmes", file=sys.stderr)
+    chrono("portées repérées, lignes découpées, paroles lues")
+    if homr_base() is None:
+        return voix, None, None
+    pupitres.staff_spec(voix, layout, "lignes", first_only=True)
+    time_sig, key = None, None
+    try:
+        if homr_staves(voix):
+            read = pupitres.key_and_time(sorted((voix / "sortie").glob("v*.musicxml")))
+            if read:
+                key, time_sig = read
+    except Exception as e:  # noqa: BLE001 : armure et mesure par défaut
+        print(f"Armure et mesure non lues : {e}", file=sys.stderr)
+    shutil.rmtree(voix / "sortie-entetes", ignore_errors=True)
+    if (voix / "sortie").exists():
+        (voix / "sortie").rename(voix / "sortie-entetes")
+    if key is None:  # homr n'a rien lu en tête : l'image (signes après la clé)
+        key = pupitres.key_from_image(voix, layout)
+    chrono("premières lignes lues (armure, mesure)")
+    return voix, (0 if key is None else key), (time_sig or "4/4")
+
+
+def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str):
+    """
+    Étape 2 : toutes les lignes, chacune avec une tête nette (clé, armure, mesure) à la place de la sienne, lues une
+    à une par homr, puis voix réunies. Rend le chemin de la partition, ou None.
+    """
+    import pupitres
     n = len(pupitres.LAYOUTS[layout])
     target = work / "partition.musicxml"
-    keep = bool(os.environ.get("PUPITRE_GARDER"))  # PUPITRE_GARDER=1 : dossier des voix gardé (banc d'essai)
+    try:
+        if pupitres.header_pages(voix, layout, key, time_sig, pdf=False):
+            print(f"Têtes de ligne redessinées : armure {key:+d}, mesure {time_sig}", file=sys.stderr)
+            pupitres.staff_spec(voix, layout, "lignes-nettes")
+        else:
+            pupitres.staff_spec(voix, layout, "lignes")
+        ok = homr_staves(voix)
+        chrono("toutes les portées lues par homr")
+        notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
+        if ok and all(f.exists() for f in notes):
+            print("Portées lues une à une par homr, paroles lues sur l'image", file=sys.stderr)
+            r = subprocess.run(step("pupitres", target, voix / "disposition.json", "--notes", *notes), **QUIET)
+            chrono("voix réunies")
+            if r.returncode == 0 and target.exists():
+                return target
+            target.unlink(missing_ok=True)
+    except Exception as e:  # noqa: BLE001 : Audiveris prend le relais
+        print(f"Lecture par portées impossible : {e}", file=sys.stderr)
+    return None
 
-    def finish():
-        if not target.exists():
-            return None
-        if not keep:
-            shutil.rmtree(voix, ignore_errors=True)
-        return target
 
-    if homr_base() is not None:
-        try:
-            # 1) première ligne de chaque voix (sa clé, son armure et sa mesure y sont intactes) : armure et mesure du chant
-            pupitres.staff_spec(voix, layout, "lignes", first_only=True)
-            time_sig, key = None, None
-            if homr_staves(voix):
-                read = pupitres.key_and_time(sorted((voix / "sortie").glob("v*.musicxml")))
-                if read:
-                    key, time_sig = read
-            shutil.rmtree(voix / "sortie-entetes", ignore_errors=True)
-            if (voix / "sortie").exists():
-                (voix / "sortie").rename(voix / "sortie-entetes")
-            if key is None:  # homr n'a rien lu en tête : l'image (signes après la clé)
-                key = pupitres.key_from_image(voix, layout)
-            key = 0 if key is None else key
-            time_sig = time_sig or "4/4"
-            # 2) toutes les lignes, chacune avec une tête nette (clé, armure, mesure) à la place de la sienne
-            if pupitres.header_pages(voix, layout, key, time_sig, pdf=False):
-                print(f"Têtes de ligne redessinées : armure {key:+d}, mesure {time_sig}", file=sys.stderr)
-                pupitres.staff_spec(voix, layout, "lignes-nettes")
-            else:
-                pupitres.staff_spec(voix, layout, "lignes")
-            if homr_staves(voix):
-                notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
-                if all(f.exists() for f in notes):
-                    print("Portées lues une à une par homr, paroles lues sur l'image", file=sys.stderr)
-                    r = subprocess.run(step("pupitres", target, voix / "disposition.json", "--notes", *notes), **QUIET)
-                    if r.returncode == 0:
-                        return finish()
-                    target.unlink(missing_ok=True)
-        except Exception as e:  # noqa: BLE001 : Audiveris prend le relais
-            print(f"Lecture par portées impossible : {e}", file=sys.stderr)
+def read_voices_audiveris(work: pathlib.Path, voix: pathlib.Path, layout: str):
+    """Repli (homr absent ou en échec) : une page par voix, lue par Audiveris, puis voix réunies."""
+    import pupitres
+    n = len(pupitres.LAYOUTS[layout])
+    target = work / "partition.musicxml"
     print("Lecture des voix par Audiveris", file=sys.stderr)
     pupitres.make_pdfs(voix, layout)
     heads = audiveris(voix / "entetes.pdf", voix / "omr-entetes", n)
@@ -274,14 +295,68 @@ def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
     if not found or subprocess.run(step("pupitres", target, voix / "disposition.json", *found), **QUIET).returncode:
         target.unlink(missing_ok=True)
         return None
-    return finish()
+    return target
 
 
-def main(src, work, layout=None):
+def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str, stage1_only: bool = False):
+    """
+    Disposition reconnue ou déclarée : chaque voix lue à part, puis voix réunies (pupitres.py). Chemin principal :
+    portées découpées lues une à une par homr (sans Audiveris) ; sinon une page par voix lue par Audiveris.
+    stage1_only : s'arrête après l'étape 1 et écrit work/etat.zip (hébergement limité à 5 minutes par requête :
+    la suite se fait dans une autre requête, voir resume_by_voice). Rend le chemin de la partition ou de l'état.
+    """
+    prepared = prepare_voices(pages_dir, work, layout)
+    if prepared is None:
+        return None
+    voix, key, time_sig = prepared
+    keep = bool(os.environ.get("PUPITRE_GARDER"))  # PUPITRE_GARDER=1 : dossier des voix gardé (banc d'essai)
+    if stage1_only and key is not None:
+        return save_state(work, voix, key, time_sig)
+    target = read_voices(work, voix, layout, key, time_sig) if key is not None else None
+    if target is None:
+        target = read_voices_audiveris(work, voix, layout)
+    if target is not None and not keep:
+        shutil.rmtree(voix, ignore_errors=True)
+    return target
+
+
+def save_state(work: pathlib.Path, voix: pathlib.Path, key: int, time_sig: str) -> pathlib.Path:
+    """État de l'étape 1 (lignes découpées, disposition, armure, mesure) : de quoi reprendre dans une autre requête."""
+    import json, zipfile
+    out = work / "etat.zip"
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:  # les PNG sont déjà compressés
+        z.writestr("etat.json", json.dumps({"armure": key, "mesure": time_sig}))
+        z.write(voix / "disposition.json", "disposition.json")
+        for f in sorted((voix / "lignes").glob("*.png")):
+            z.write(f, f"lignes/{f.name}")
+    shutil.rmtree(voix, ignore_errors=True)
+    return out
+
+
+def resume_by_voice(state: pathlib.Path, work: pathlib.Path, layout: str):
+    """Étape 2 depuis l'état de l'étape 1 : lecture des portées par homr et assemblage. Rend la partition ou None."""
+    import json, zipfile
+    voix = work / "voix"
+    shutil.rmtree(voix, ignore_errors=True)
+    voix.mkdir(parents=True)
+    with zipfile.ZipFile(state) as z:
+        for name in z.namelist():
+            if name.startswith("/") or ".." in name:
+                sys.exit("PUPITRE-ERREUR: État de lecture invalide.")
+        z.extractall(voix)
+    info = json.loads((voix / "etat.json").read_text(encoding="utf-8"))
+    target = read_voices(work, voix, layout, int(info["armure"]), str(info["mesure"]))
+    if target is not None:
+        shutil.rmtree(voix, ignore_errors=True)
+    return target
+
+
+def main(src, work, layout=None, stage1=False):
     src, work = pathlib.Path(src), pathlib.Path(work)
     pre, pages_dir = work / "pre", work / "pages"
     shutil.rmtree(pre, ignore_errors=True)
-    proc = subprocess.Popen(step("preprocess", src, pre), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **QUIET)
+    proc = subprocess.Popen(step("preprocess", src, pre), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", **QUIET)
     errors = []
     threading.Thread(target=lambda: errors.extend(proc.stderr), daemon=True).start()
     for line in proc.stdout:  # une ligne par page nettoyée : signe de vie pour la surveillance du serveur
@@ -297,6 +372,7 @@ def main(src, work, layout=None):
     for p in pages:
         shutil.copy(p, pages_dir / p.name)
     print(f"pages:{len(pages)}", flush=True)
+    chrono("pages nettoyées")
 
     for old in ("partition.mxl", "partition.musicxml"):
         (work / old).unlink(missing_ok=True)
@@ -314,11 +390,12 @@ def main(src, work, layout=None):
             layout = guess  # photocopie usée : barres et accolades coupées, la lecture ordinaire mêle les voix
 
     def by_voice(chosen):
-        target = read_by_voice(pages_dir, work, chosen)
+        target = read_by_voice(pages_dir, work, chosen, stage1_only=stage1)
         if target:
             shutil.rmtree(pre, ignore_errors=True)
             print(f"disposition:{chosen}", flush=True)
-            print(f"partition:{target.name}", flush=True)
+            # état de l'étape 1 (hébergement limité à 5 minutes par requête) ou partition terminée
+            print(f"etat:{target.name}" if target.suffix == ".zip" else f"partition:{target.name}", flush=True)
         return target
 
     if layout and layout != "ordinaire":
@@ -379,17 +456,39 @@ def _fail(e: BaseException) -> None:
              "Réessayez ; si cela se répète, envoyez le journal des erreurs à AIT.")
 
 
+def resume(state, work, layout="satb"):
+    """Seconde requête de la lecture voix par voix : reprend l'état de l'étape 1 (etat.zip)."""
+    work = pathlib.Path(work)
+    for old in ("partition.mxl", "partition.musicxml"):
+        (work / old).unlink(missing_ok=True)
+    target = resume_by_voice(pathlib.Path(state), work, layout)
+    if target is None:
+        sys.exit("PUPITRE-ERREUR: La lecture des voix n'a pas abouti. Reprenez la photo : page bien à plat, en pleine lumière.")
+    print(f"disposition:{layout}", flush=True)
+    print(f"partition:{target.name}", flush=True)
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     layout = None
+    state = None
+    stage1 = "--etape1" in args  # lecture en deux requêtes : la première s'arrête après l'étape 1 (voir read_by_voice)
+    args = [a for a in args if a != "--etape1"]
+    if "--reprise" in args:  # seconde requête : omr.py --reprise <etat.zip> <dossier_travail>
+        k = args.index("--reprise")
+        state = args[k + 1]
+        del args[k:k + 2]
     if "--disposition" in args:
         k = args.index("--disposition")
         layout = args[k + 1] if k + 1 < len(args) else None
         del args[k:k + 2]
-    if len(args) != 2 or (layout and layout not in ("satb", "ordinaire")):
+    if len(args) != (1 if state else 2) or (layout and layout not in ("satb", "ordinaire")):
         sys.exit(__doc__)
     try:
-        main(args[0], args[1], layout)
+        if state:
+            resume(state, args[0], layout or "satb")
+        else:
+            main(args[0], args[1], layout, stage1)
     except SystemExit:
         raise
     except Exception as e:  # noqa: BLE001

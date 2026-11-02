@@ -15,7 +15,9 @@ import { BUSY, UserError, type Job, type Manifest } from './types';
  */
 export function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env, windowsHide: true });
+    // UTF-8 pour Python : sous Windows il lit et écrit les fichiers texte en cp1252 (paroles en « ɛ », « ɔ », titres accentués)
+    const env = { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env, windowsHide: true });
     let tail = '';
     let buffer = '';
     let lastSign = Date.now();

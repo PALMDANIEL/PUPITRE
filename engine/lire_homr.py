@@ -30,7 +30,7 @@ def read_staves(folder: pathlib.Path) -> None:
     from homr.transformer.staff2score import Staff2Score
     from homr.transformer.vocabulary import EncodedSymbol, remove_duplicated_symbols
 
-    spec = json.loads((folder / "portees.json").read_text())
+    spec = json.loads((folder / "portees.json").read_text(encoding="utf-8"))
     out = folder / "sortie"
     out.mkdir(exist_ok=True)
     config = Config()
@@ -42,7 +42,7 @@ def read_staves(folder: pathlib.Path) -> None:
         symbols: list = []
         kept: list[int] = []
         for k, line in enumerate(lines):
-            img = cv2.imread(str(folder / line["image"]), cv2.IMREAD_GRAYSCALE)
+            img = cv2.imdecode(np.fromfile(str(folder / line["image"]), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)  # chemin Unicode (Windows)
             T, B = float(line["T"]), float(line["B"])
             sp = (B - T) / 4
             # étendue de la portée : colonnes où au moins 3 des 5 lignes ont de l'encre
@@ -72,7 +72,7 @@ def read_staves(folder: pathlib.Path) -> None:
             kept.append(k)
         xml = generate_xml(XmlGeneratorArguments(), [remove_duplicated_symbols(symbols)], "")
         xml.write(str(out / f"v{v}.musicxml"))
-        (out / f"v{v}.lignes.json").write_text(json.dumps(kept))
+        (out / f"v{v}.lignes.json").write_text(json.dumps(kept), encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -15,11 +15,51 @@ import { ensureVoices } from './voix';
 
 export interface DirectEvent { status: ScoreStatus; progress: number }
 
+/**
+ * Copie usée lue voix par voix : sur un hébergement limité à 5 minutes par requête, la lecture des notes et la
+ * création de l'audio ne tiennent pas dans la même. On renvoie alors la partition lue et les pages nettoyées ;
+ * le téléphone demande l'audio dans une seconde requête (/api/recreer, avec ces mêmes fichiers).
+ */
+export interface DirectPartition { partition: Buffer; pages: Buffer[] }
+/** Étape 1 faite (nettoyage, portées repérées, premières lignes lues) : l'état repart avec le téléphone, qui lance l'étape 2. */
+export interface DirectState { etat: Buffer; pages: Buffer[] }
+
+async function pagesOf(dir: string): Promise<Buffer[]> {
+  const names = (await fs.readdir(path.join(dir, 'pages')).catch(() => [] as string[])).filter((f) => /^page-\d+\.png$/.test(f)).sort();
+  return Promise.all(names.map((f) => fs.readFile(path.join(dir, 'pages', f))));
+}
+
+/** Étape 2 : lecture des portées par homr et assemblage, à partir de l'état de l'étape 1. */
+export async function resumeDirect(state: Buffer, onEvent: (e: DirectEvent) => void): Promise<DirectPartition> {
+  const dir = path.join(os.tmpdir(), `pupitre-suite-${randomUUID()}`);
+  await fs.mkdir(dir, { recursive: true });
+  try {
+    const zipFile = path.join(dir, 'etat.zip');
+    await fs.writeFile(zipFile, state);
+    onEvent({ status: 'recognizing', progress: 35 });
+    let partition = '';
+    const [cmd, args] = engineCommand('omr', ['--reprise', zipFile, dir]);
+    await run(cmd, args, {
+      label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2,
+      onLine: (line) => {
+        if (line.startsWith('actif:')) onEvent({ status: 'recognizing', progress: 45 });
+        const done = /^partition:(.+)$/.exec(line);
+        if (done) partition = done[1];
+      },
+    });
+    if (!partition) throw new UserError('Aucune portée n’a été reconnue. Reprenez la photo : page bien à plat, en pleine lumière.');
+    return { partition: await fs.readFile(path.join(dir, partition)), pages: [] };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
 export async function readDirect(
   files: { name: string; ext: string; data: Buffer }[],
   title: string,
   onEvent: (e: DirectEvent) => void,
-): Promise<Buffer> {
+  disposition: 'satb' | null = null,
+): Promise<Buffer | DirectPartition | DirectState> {
   const dir = path.join(os.tmpdir(), `pupitre-direct-${randomUUID()}`);
   await fs.mkdir(dir, { recursive: true });
   try {
@@ -33,18 +73,28 @@ export async function readDirect(
     }
     onEvent({ status: 'preprocessing', progress: 5 });
     let partition = '';
-    const [omrCmd, omrArgs] = engineCommand('omr', [source, dir]);
+    let state = '';
+    let byVoice = false;
+    // hébergement limité à 5 minutes par requête : une copie lue voix par voix s'arrête après l'étape 1 (--etape1)
+    const [omrCmd, omrArgs] = engineCommand('omr', [source, dir, ...(disposition ? ['--disposition', disposition] : []), ...(config.direct ? ['--etape1'] : [])]);
     await run(omrCmd, omrArgs, {
       label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2,
       onLine: (line) => {
         if (line.startsWith('pages:')) onEvent({ status: 'recognizing', progress: 20 });
         const pct = /^progress:omr:(\d+)/.exec(line);
         if (pct) onEvent({ status: 'recognizing', progress: 20 + Math.round((38 * Number(pct[1])) / 100) });
+        if (line.startsWith('disposition:')) byVoice = true;
+        const stateLine = /^etat:(.+)$/.exec(line);
+        if (stateLine) state = stateLine[1];
         const done = /^partition:(.+)$/.exec(line);
         if (done) partition = done[1];
       },
     });
+    if (state) return { etat: await fs.readFile(path.join(dir, state)), pages: await pagesOf(dir) };
     if (!partition) throw new UserError('Aucune portée n’a été reconnue. Reprenez la photo : page bien à plat, en pleine lumière.');
+    if (byVoice && config.direct && partition.endsWith('.musicxml')) {
+      return { partition: await fs.readFile(path.join(dir, partition)), pages: await pagesOf(dir) };
+    }
     onEvent({ status: 'rendering', progress: 62 });
     const audio = path.join(dir, 'audio');
     const [renderCmd, renderArgs] = engineCommand('render', [path.join(dir, partition), audio, '--timbre', 'choeur', '--omr', '--sans-travail']);
@@ -71,6 +121,7 @@ export async function recreateDirect(
   title: string,
   opts: { tempo: number | null; timbre: Timbre; langue: Langue; paroles: Record<string, string> | null; voyelle: Voyelle },
   onEvent: (e: DirectEvent) => void,
+  pages: Buffer[] = [],
 ): Promise<Buffer> {
   const dir = path.join(os.tmpdir(), `pupitre-recreer-${randomUUID()}`);
   await fs.mkdir(dir, { recursive: true });
@@ -107,7 +158,13 @@ export async function recreateDirect(
       },
     });
     const manifest = JSON.parse(await fs.readFile(path.join(audio, 'manifest.json'), 'utf8')) as Manifest;
-    return await buildPack(title, manifest, audio);
+    // pages nettoyées de la copie (lecture en deux temps) : jointes au pack comme dans la lecture d'un seul tenant
+    const pagesDir = path.join(dir, 'pages');
+    if (pages.length) {
+      await fs.mkdir(pagesDir);
+      for (const [i, p] of pages.entries()) await fs.writeFile(path.join(pagesDir, `page-${String(i + 1).padStart(2, '0')}.png`), p);
+    }
+    return await buildPack(title, manifest, audio, pages.length ? pagesDir : undefined);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

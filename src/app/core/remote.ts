@@ -144,8 +144,18 @@ export class RemoteReader {
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
           for (const line of lines.filter(Boolean)) {
-            const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; pack?: string; title?: string };
+            const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; pack?: string; title?: string; partition?: string; pages?: string[]; etat?: string };
             if (msg.error) throw new RemoteError(msg.error);
+            if (msg.etat) {
+              // copie usée lue voix par voix : étape 1 faite sur le serveur, l'étape 2 part dans une autre requête
+              await this.continueByVoice(job.id, msg.title ?? title, msg.etat, msg.pages ?? []);
+              return;
+            }
+            if (msg.partition) {
+              // copie usée lue voix par voix : les notes sont lues, l'audio se crée dans une seconde requête
+              await this.finishFromScore(job.id, msg.title ?? title, msg.partition, msg.pages ?? []);
+              return;
+            }
             if (msg.pack) {
               const bytes = Uint8Array.from(atob(msg.pack), (c) => c.charCodeAt(0));
               const local = await this.packs.import([new File([bytes], `${msg.title ?? title}.pupitre`)]);
@@ -162,6 +172,94 @@ export class RemoteReader {
       }
     })();
     return job;
+  }
+
+  /**
+   * Suite d'une lecture voix par voix (copie usée) : l'état de l'étape 1 repart vers /api/lire/suite, qui lit les portées
+   * et renvoie la partition ; l'audio est ensuite créé par finishFromScore. Trois requêtes courtes au lieu d'une
+   * seule : le serveur en ligne coupe chaque requête à 5 minutes.
+   */
+  private async continueByVoice(jobId: string, title: string, stateB64: string, pagesB64: string[]): Promise<void> {
+    const s = this.settings();
+    const bytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const body = new FormData();
+    body.append('etat', new File([bytes(stateB64)], 'etat.zip'));
+    this.update(jobId, { status: 'recognizing', progress: 32 });
+    let res: Response;
+    try {
+      res = await fetch(`${s.url}/api/lire/suite`, { method: 'POST', body, headers: this.headers(s) });
+    } catch {
+      throw new RemoteError('Le serveur ne répond pas. Vérifiez la connexion Internet.');
+    }
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => null) as { error?: string } | null;
+      throw new RemoteError(err?.error ?? `Erreur du serveur (${res.status}).`);
+    }
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines.filter(Boolean)) {
+        const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; partition?: string };
+        if (msg.error) throw new RemoteError(msg.error);
+        if (msg.partition) {
+          await this.finishFromScore(jobId, title, msg.partition, pagesB64);
+          return;
+        }
+        if (msg.status) this.update(jobId, { status: msg.status, progress: Math.min(58, msg.progress ?? 40) });
+      }
+    }
+    throw new RemoteError('La connexion a été coupée avant la fin de la lecture. Réessayez.');
+  }
+
+  /**
+   * Deuxième temps d'une lecture voix par voix : la partition lue (et les pages nettoyées de la copie) repartent
+   * vers /api/recreer, qui crée l'audio et renvoie le pack. Chaque requête reste sous la limite de 5 minutes.
+   */
+  private async finishFromScore(jobId: string, title: string, partitionB64: string, pagesB64: string[]): Promise<void> {
+    const s = this.settings();
+    const bytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const body = new FormData();
+    body.append('file', new File([bytes(partitionB64)], 'score.musicxml'));
+    body.append('titre', title);
+    body.append('timbre', 'choeur');
+    pagesB64.forEach((p, i) => body.append('pages', new File([bytes(p)], `page-${String(i + 1).padStart(2, '0')}.png`, { type: 'image/png' })));
+    this.update(jobId, { status: 'rendering', progress: 62 });
+    let res: Response;
+    try {
+      res = await fetch(`${s.url}/api/recreer`, { method: 'POST', body, headers: this.headers(s) });
+    } catch {
+      throw new RemoteError('Le serveur ne répond pas. Vérifiez la connexion Internet.');
+    }
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => null) as { error?: string } | null;
+      throw new RemoteError(err?.error ?? `Erreur du serveur (${res.status}).`);
+    }
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines.filter(Boolean)) {
+        const msg = JSON.parse(line) as { progress?: number; error?: string; pack?: string; title?: string };
+        if (msg.error) throw new RemoteError(msg.error);
+        if (msg.pack) {
+          const local = await this.packs.import([new File([bytes(msg.pack)], `${msg.title ?? title}.pupitre`)]);
+          if (!local) throw new RemoteError(this.packs.error() ?? 'Pack reçu illisible.');
+          this.update(jobId, { status: 'ready', progress: 100, title: msg.title ?? title });
+          return;
+        }
+        if (typeof msg.progress === 'number') this.update(jobId, { status: 'rendering', progress: 62 + Math.round(msg.progress * 0.36) });
+      }
+    }
+    throw new RemoteError('La connexion a été coupée avant la fin. Réessayez.');
   }
 
   /**
