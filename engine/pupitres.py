@@ -25,7 +25,11 @@ import imgio
 
 # (nom, clé) de chaque portée d'un système, de haut en bas
 LAYOUTS = {
+    # quatre portées par système, une par voix
     "satb": [("Soprano", "G"), ("Alto", "G"), ("Ténor", "G8"), ("Basse", "F")],
+    # écriture serrée : soprano et alto sur la portée de sol, ténor et basse sur celle de fa (deux voix par portée,
+    # lues en accords et séparées par render.py) ; une portée instrumentale au-dessus (contrechant) est laissée de côté
+    "grand": [("", "G"), ("", "F")],
 }
 
 
@@ -214,18 +218,27 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
     systems = []
     for pf in page_files:
         bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
-        staves = complete(bw, find_staves(bw), n)
+        if layout == "satb":
+            staves = complete(bw, find_staves(bw), n)
+            groups = [list(range(k, k + n)) for k in range(0, len(staves) - len(staves) % n, n)]
+        else:  # écriture serrée : les deux dernières portées de chaque système (une portée instrumentale peut les précéder)
+            staves = [(*s, "vue") for s in find_staves(bw)]
+            groups = [g[-n:] for g in system_indexes(bw, staves) if len(g) >= n]
         faint = [s for s in staves if s[4] == "pâle"]
         for s in faint:  # retracées : sur la copie nettoyée et pour la lecture
             redraw(bw, s)
         bars_drawn = False
-        for k in range(0, len(staves) - len(staves) % n, n):
-            group = staves[k:k + n]
+        for idx in groups:
+            group = [staves[i] for i in idx]
             bars = bar_lines(bw, group)
             lyrics = []
-            for j, s in enumerate(group):
-                nxt = staves[k + j + 1][0] if k + j + 1 < len(staves) else bw.shape[0]
-                lyrics.append(read_lyrics(bw, s, nxt) if s[4] != "absente" else [])
+            for j, i in enumerate(idx):
+                s = staves[i]
+                nxt = staves[i + 1][0] if i + 1 < len(staves) else bw.shape[0]
+                # écriture serrée : les paroles sont entre les deux portées du système (sous celle de sol) ; sous la portée
+                # de fa il n'y a que les accords, les titres (« COUPLETS ») ou les couplets suivants imprimés en bas de page
+                keep = s[4] != "absente" and (layout == "satb" or j == 0)
+                lyrics.append(read_lyrics(bw, s, nxt) if keep else [])
             for s in group:  # barres retracées sur chaque portée (souvent presque effacées dans la portée)
                 if s[4] != "absente":
                     for x in bars:
@@ -549,6 +562,40 @@ def _moved(p, read, target, read_key, keysig):
     return q
 
 
+def _plausible_accidental(step, alter, sharps):
+    """
+    Une altération écrite en plus de l'armure est-elle vraisemblable dans un chant simple ? Dièses : sensible et
+    notes voisines (fa, sol, do, ré) ; bémols : seulement dans une armure à bémols. Les autres (mi♭ ou si♭ sans bémol
+    à l'armure, la♯, mi♯…) sont presque toujours une tache de la copie prise pour une altération.
+    """
+    if alter > 0:
+        return step in "FGCD" or sharps < 0
+    if alter < 0:
+        return sharps < 0
+    return True
+
+
+def _clean_accidentals(lines, keysig):
+    """
+    Retire les altérations invraisemblables (voir _plausible_accidental) quand elles sont rares dans le chant
+    (moins de 6 % des notes : un chant chromatique, comme un choral de Bach, en a bien plus et les garde toutes).
+    Rend le nombre d'altérations retirées.
+    """
+    from music21 import pitch
+    pitches = [p for row in lines for notes in row for n in notes if not n.isRest for p in n.pitches]
+    explicit = [p for p in pitches if p.accidental is not None
+                and p.accidental.alter != (keysig.accidentalByStep(p.step).alter if keysig.accidentalByStep(p.step) else 0)]
+    if not pitches or len(explicit) / len(pitches) >= 0.06:
+        return 0
+    removed = 0
+    for p in explicit:
+        if not _plausible_accidental(p.step, p.accidental.alter, keysig.sharps):
+            a = keysig.accidentalByStep(p.step)
+            p.accidental = pitch.Accidental(a.name) if a else None
+            removed += 1
+    return removed
+
+
 def _syllable(text):
     """
     Syllabe plausible ? Lettres seulement (accents compris, apostrophe, tiret), 1 à 8, avec une voyelle : sur une
@@ -559,7 +606,7 @@ def _syllable(text):
     return bool(re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿƐɛƆɔŊŋ'’]{1,8}", t)) and bool(re.search(r"[aeiouyàâäéèêëìîïòôöùûüÿɛɔAEIOUYÀÂÄÉÈÊËÌÎÏÒÔÖÙÛÜƐƆ]", t))
 
 
-def _line_notes(measures, target, keysig, state):
+def _line_notes(measures, target, keysig, state, drop_head_chords=True):
     """
     Notes et silences d'une ligne, mesure par mesure, à la clé et à l'armure de la voix.
     Clé et armure lues par Audiveris suivies d'une ligne à l'autre de la voix (state : il ne les réécrit que
@@ -588,7 +635,7 @@ def _line_notes(measures, target, keysig, state):
                 else:
                     read_key = mark
             c = copy.deepcopy(n)
-            if first and c.isChord and n.offset == 0:
+            if drop_head_chords and first and c.isChord and n.offset == 0:
                 # accord au premier temps d'une ligne, là où était la tête d'origine : débris de clé ou de nom
                 # de voix (« B ») pris pour des notes ; une voix seule ne chante qu'une note à la fois
                 c = note.Rest(quarterLength=n.quarterLength)
@@ -650,7 +697,7 @@ def _sings(notes):
 PARTNERS = {0: [1, 2, 3], 1: [0, 2, 3], 2: [3, 1, 0], 3: [2, 1, 0]}
 
 
-def _borrow_rhythms(row, sizes_of, bar, stats=None):
+def _borrow_rhythms(row, sizes_of, bar, stats=None):  # noqa: C901
     """
     Écriture homorythmique (cantique, chœur à 4 voix) : une mesure dont les valeurs ne font toujours pas le compte prend
     le rythme d'une autre voix qui chante autant de notes dans la même mesure et dont le compte est juste
@@ -665,6 +712,8 @@ def _borrow_rhythms(row, sizes_of, bar, stats=None):
                 stats["justes"] = stats.get("justes", 0) + (abs(_length(m) - k * bar) < 1e-6)
             if _one_mark(m, k * bar) and stats is not None:
                 stats["marques"] = stats.get("marques", 0) + 1
+    if len(row) != 4:  # reprise du rythme de la voix sœur : seulement avec quatre voix (soprano ↔ alto, ténor ↔ basse)
+        return
     for v, sizes in sizes_of.items():
         for i, k in enumerate(sizes):
             m = row[v][i]
@@ -893,7 +942,7 @@ def assemble(out, disposition, sources, notes_by_voice=None):
     states = [{} for _ in voices]
     stats = {}
     for s in range(n_sys):
-        row = [_line_notes(sheets[v][s], _clef(c), ks, states[v]) if s < len(sheets[v]) else []
+        row = [_line_notes(sheets[v][s], _clef(c), ks, states[v], info["layout"] == "satb") if s < len(sheets[v]) else []
                for v, (_n, c) in enumerate(voices)]
         read = info["systems"][s].get("paroles")
         if lyric_sheets and not (read and any(read)):
@@ -905,10 +954,14 @@ def assemble(out, disposition, sources, notes_by_voice=None):
                 if v < len(read) and read[v]:
                     _put_read_lyrics(row[v], read[v], info["systems"][s].get("barres", []), accents)
         lines.append(_system(row, bar, info["systems"][s].get("mesures", 0), silent, stats))
+    cleaned = _clean_accidentals(lines, ks)
+    if cleaned:
+        print(f"Altérations invraisemblables retirées : {cleaned}", file=sys.stderr)
     parts = []
     for v, (name, clef_name) in enumerate(voices):
         flat = stream.Part()
-        flat.partName = name
+        if name:
+            flat.partName = name
         flat.id = f"P{v + 1}"
         flat.append(_clef(clef_name))
         flat.append(copy.deepcopy(ks))
@@ -920,7 +973,7 @@ def assemble(out, disposition, sources, notes_by_voice=None):
     score = stream.Score()
     for v, flat in enumerate(parts):
         measured = flat.makeNotation()  # mesures, liaisons au passage de la barre, ligatures
-        measured.partName, measured.id = flat.partName, flat.id
+        measured.partName, measured.id = (flat.partName if name else None), flat.id
         score.insert(0, measured)
     try:
         score.write("musicxml", fp=out)
@@ -931,9 +984,11 @@ def assemble(out, disposition, sources, notes_by_voice=None):
                 x.duration.quarterLength = min(simple, key=lambda q: abs(q - float(x.duration.quarterLength)))
         score.write("musicxml", fp=out, makeNotation=False)
     count = len(score.parts[0].getElementsByClass(stream.Measure)) if parts else 0
-    print(f"Voix réunies : {', '.join(n for n, _c in voices)} ; {n_sys} systèmes, {count} mesures ; "
+    print(f"Voix réunies : {', '.join(n or 'portée' for n, _c in voices)} ; {n_sys} systèmes, {count} mesures ; "
           f"mesures au compte juste : {stats.get('justes', 0)}/{stats.get('mesures', 0)}, "
           f"point rétabli : {stats.get('marques', 0)}, rythme repris d'une autre voix : {stats.get('reprises', 0)}")
+    # part des mesures dont les valeurs lues font exactement la mesure : repère de fiabilité de la lecture (omr.py)
+    print(f"exactitude:{stats.get('justes', 0) / max(1, stats.get('mesures', 0)):.2f}", flush=True)
 
 
 
@@ -957,31 +1012,41 @@ def link(bw, upper, lower):
     return float(ink.mean(0).max()) if ink.size else 0.0
 
 
+def system_indexes(bw, staves, joined=0.75):
+    """Portées d'une page regroupées en systèmes d'après leurs liaisons : [[indice, …], …]."""
+    groups = []
+    for k in range(len(staves)):
+        if k and link(bw, staves[k - 1], staves[k]) >= joined:
+            groups[-1].append(k)
+        else:
+            groups.append([k])
+    return groups
+
+
 def systems_on(bw, staves, joined=0.75):
     """Portées d'une page regroupées en systèmes d'après leurs liaisons : [[portée, …], …]."""
-    groups = []
-    for k, s in enumerate(staves):
-        if k and link(bw, staves[k - 1], s) >= joined:
-            groups[-1].append(s)
-        else:
-            groups.append([s])
-    return groups
+    return [[staves[k] for k in g] for g in system_indexes(bw, staves, joined)]
 
 
 def detect(page_files, worn=False):
     """
-    Chœur à quatre voix, une portée par voix ? Oui si tous les systèmes comptent quatre portées ; sur une copie
-    usée (worn), les deux tiers suffisent (une portée trop pâle n'est pas vue), jamais plus de quatre.
-    Rend la disposition (« satb ») ou None.
+    Disposition du chœur, d'après le nombre de portées de chaque système (liées par leurs barres de mesure) :
+    « satb » : quatre portées, une par voix (sur une copie usée, les deux tiers suffisent : une portée trop pâle
+    n'est pas vue) ; « grand » : deux portées (sol et fa), avec au plus une portée de plus au-dessus (instrument),
+    et au moins un système à deux portées. Rend la disposition ou None.
     """
     sizes = []
     for pf in page_files:
         bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
         sizes += [len(g) for g in systems_on(bw, find_staves(bw))]
-    need = 2 * len(sizes) / 3 if worn else len(sizes)
-    if not sizes or max(sizes) > 4 or sizes.count(4) < max(1, need):
+    if not sizes:
         return None
-    return "satb"
+    need = 2 * len(sizes) / 3 if worn else len(sizes)
+    if max(sizes) <= 4 and sizes.count(4) >= max(1, need):
+        return "satb"
+    if set(sizes) <= {2, 3} and 2 in sizes:
+        return "grand"
+    return None
 
 
 def bar_count(bw, group):

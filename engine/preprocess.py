@@ -126,6 +126,13 @@ def is_digital(gray):
     return np.mean(gray > 245) > 0.8 and np.mean((gray > 60) & (gray < 200)) < 0.08
 
 
+def speck_density(bw):
+    """Petites taches d'encre (moins de 12 points) par mégapixel : mesure de saleté de la copie."""
+    ink = (bw < 128).astype(np.uint8)
+    n, _lab, st, _ = cv2.connectedComponentsWithStats(ink, 8)
+    return float(np.count_nonzero(st[1:, cv2.CC_STAT_AREA] < 12)) / (ink.size / 1e6)
+
+
 def plain_page(gray):
     """Simple seuillage : le nettoyage complet abîme les pages déjà propres (Audiveris peut alors planter)."""
     return cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY)[1]
@@ -371,6 +378,8 @@ def pdf_pages(pdf, tmp):
     return pages
 
 
+
+
 def image_pages(path):
     """Toutes les pages d'une image (un TIFF peut en contenir plusieurs), orientées selon l'appareil photo."""
     try:
@@ -408,13 +417,14 @@ def main(src, out_dir):
         pages = load_pages(src, t)
         if not pages:
             sys.exit("Le fichier ne contient aucune page lisible.")
-        best, other, digital, worn = [], [], 0, 0
+        best, other, digital, worn, specks = [], [], 0, 0, []
         for i, (raw, photo) in enumerate(pages, 1):
             if photo:
                 raw = upright(crop_page(raw))
             gray = to_gray(raw)
             plain = plain_page(gray)
             worn += dashed_lines(plain)
+            specks.append(speck_density(plain))
             plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray))
             if is_digital(gray):
                 digital += 1
@@ -429,6 +439,8 @@ def main(src, out_dir):
         pil[0].save(out / name, save_all=True, append_images=pil[1:], resolution=300)
     # photocopie usée (lignes en tirets) : omr.py tente alors la lecture voix par voix
     (out / "usee").write_text(str(worn), encoding="utf-8") if worn else (out / "usee").unlink(missing_ok=True)
+    # saleté de la copie : petites taches par mégapixel (médiane des pages) ; omr.py décide d'après elle (SALETE)
+    (out / "salete").write_text(f"{float(np.median(specks)):.0f}", encoding="utf-8")
     print(f"Pages préparées : {len(best)} (dont {digital} numériques{f', {worn} usées' if worn else ''})")
 
 
