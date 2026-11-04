@@ -8,6 +8,9 @@ Deux usages :
       <dossier>/portees.json : {"voix": [[{"image": "chemin.png", "T": haut, "B": bas}, …], …]}
       T et B : hauteur (pixels de l'image) de la 1re et de la 5e ligne de la portée.
       Écrit <dossier>/sortie/v1.musicxml … (une partie par voix) et v1.lignes.json (indices des lignes lues).
+      "passes": N (facultatif, 1 à 3) : chaque portée est lue N fois avec une préparation d'image un peu différente
+      (flou, taille) ; les lectures supplémentaires sont écrites dans sortie-1/, sortie-2/. L'appelant vote entre elles
+      mesure par mesure : un accord des lectures est un gage de fiabilité, un désaccord signale une mesure à vérifier.
 Les modèles doivent être présents (python -m homr.main --init, fait à la construction).
 
 Lire les portées une à une évite la détection des portées de homr, lente et fragile sur une photocopie usée
@@ -18,6 +21,10 @@ import json
 import os
 import pathlib
 import sys
+
+
+# préparations de l'image d'une portée, une par passe : (flou gaussien, facteur de largeur de la portée)
+VARIANTS = [(0.7, 1.0), (0.0, 1.0), (1.2, 0.97)]
 
 
 def read_staves(folder: pathlib.Path) -> None:
@@ -31,16 +38,18 @@ def read_staves(folder: pathlib.Path) -> None:
     from homr.transformer.vocabulary import EncodedSymbol, remove_duplicated_symbols
 
     spec = json.loads((folder / "portees.json").read_text(encoding="utf-8"))
-    out = folder / "sortie"
-    out.mkdir(exist_ok=True)
+    passes = max(1, min(len(VARIANTS), int(spec.get("passes", 1))))
+    outs = [folder / ("sortie" if k == 0 else f"sortie-{k}") for k in range(passes)]
+    for o in outs:
+        o.mkdir(exist_ok=True)
     config = Config()
     config.use_gpu_inference = False  # modèles « fp32 » pour processeur, ceux que --init télécharge
     model = Staff2Score(config)
-    total = sum(len(v) for v in spec["voix"])
+    total = sum(len(v) for v in spec["voix"]) * passes
     done = 0
     for v, lines in enumerate(spec["voix"], 1):
-        symbols: list = []
-        kept: list[int] = []
+        symbols = [[] for _ in range(passes)]
+        kept: list[list[int]] = [[] for _ in range(passes)]
         for k, line in enumerate(lines):
             img = cv2.imdecode(np.fromfile(str(folder / line["image"]), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)  # chemin Unicode (Windows)
             T, B = float(line["T"]), float(line["B"])
@@ -51,28 +60,32 @@ def read_staves(folder: pathlib.Path) -> None:
             left, right = (int(xs[0]), int(xs[-1])) if len(xs) else (0, img.shape[1] - 1)
             x0, x1 = max(0, int(left - 2 * sp)), min(img.shape[1], int(right + 2 * sp))
             y0, y1 = max(0, int(T - 4 * sp)), min(img.shape[0], int(B + 4 * sp))
-            crop = img[y0:y1, x0:x1]
-            size = get_tr_omr_canvas_size(crop.shape)
-            # réduction lissée (INTER_AREA) : une portée binaire réduite sans lissage perd ses traits fins ; le réseau
-            # a appris sur des images en niveaux de gris, comme celles que homr lui prépare à partir d'une photo
-            mode = os.environ.get("HOMR_REDUCTION", "flou")
-            if mode == "area":
-                crop = cv2.resize(crop, (int(size[0]), int(size[1])), interpolation=cv2.INTER_AREA)
-            elif mode == "flou":
-                crop = cv2.resize(cv2.GaussianBlur(crop, (0, 0), 0.7), (int(size[0]), int(size[1])), interpolation=cv2.INTER_AREA)
-            canvas = center_image_on_canvas(crop, size)
+            crop0 = img[y0:y1, x0:x1]
+            size = get_tr_omr_canvas_size(crop0.shape)
             eprint(f"Voix {v}, ligne {k + 1}/{len(lines)}")
-            result = [s for s in model.predict(canvas) if s.position != "lower"]  # une seule portée, pas d'accolade
-            done += 1
-            print(f"portee:{done}/{total}", flush=True)
-            if not result:
-                continue
-            result.append(EncodedSymbol("newline"))
-            symbols.extend(result)
-            kept.append(k)
-        xml = generate_xml(XmlGeneratorArguments(), [remove_duplicated_symbols(symbols)], "")
-        xml.write(str(out / f"v{v}.musicxml"))
-        (out / f"v{v}.lignes.json").write_text(json.dumps(kept), encoding="utf-8")
+            for p in range(passes):
+                blur, width = VARIANTS[p]
+                # réduction lissée (INTER_AREA) : une portée binaire réduite sans lissage perd ses traits fins ; le réseau
+                # a appris sur des images en niveaux de gris, comme celles que homr lui prépare à partir d'une photo
+                src = cv2.GaussianBlur(crop0, (0, 0), blur) if blur else crop0
+                if width != 1.0:  # portée un peu plus étroite : le réseau voit une échelle légèrement différente
+                    src = cv2.resize(src, (max(8, int(src.shape[1] * width)), src.shape[0]), interpolation=cv2.INTER_AREA)
+                    size_p = get_tr_omr_canvas_size(src.shape)
+                else:
+                    size_p = size
+                crop = cv2.resize(src, (int(size_p[0]), int(size_p[1])), interpolation=cv2.INTER_AREA)
+                canvas = center_image_on_canvas(crop, size_p)
+                result = [s for s in model.predict(canvas) if s.position != "lower"]  # une seule portée, pas d'accolade
+                done += 1
+                print(f"portee:{done}/{total}", flush=True)
+                if result:
+                    result.append(EncodedSymbol("newline"))
+                    symbols[p].extend(result)
+                    kept[p].append(k)
+        for p in range(passes):
+            xml = generate_xml(XmlGeneratorArguments(), [remove_duplicated_symbols(symbols[p])], "")
+            xml.write(str(outs[p] / f"v{v}.musicxml"))
+            (outs[p] / f"v{v}.lignes.json").write_text(json.dumps(kept[p]), encoding="utf-8")
 
 
 if __name__ == "__main__":

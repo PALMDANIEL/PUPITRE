@@ -3,6 +3,9 @@ import { AudioEngine } from '../../core/audio-engine';
 import { ScoreMeta, fileUrl } from '../../core/api';
 import { saveFile } from '../../core/save-file';
 
+/** Orange des notes dont la lecture est à vérifier (lisible sur la feuille blanche) */
+const DOUBT_COLOR = '#E8590C';
+
 @Component({
   selector: 'app-score-viewer',
   template: `
@@ -120,11 +123,31 @@ export class ScoreViewer {
         cursorsOptions: [{ type: 0, color: '#34479A', alpha: 0.3, follow: true }],
       } as any);
       await this.osmd.load(xml);
+      this.markDoubtful(s);
       this.osmd.render();
       this.collectStamps();
     } catch (err) {
       console.error('Affichage de la partition impossible', err);
       this.failed.set('La partition lue ne peut pas être affichée, mais l’audio reste disponible.');
+    }
+  }
+
+  /** Notes des mesures où les passes de lecture ne s'accordent pas : en orange, pour les comparer au scan d'origine. */
+  private markDoubtful(s: ScoreMeta) {
+    const doubtful = Object.keys(s.manifest?.fiabilite?.a_verifier ?? {}).map(Number).filter((n) => n > 0);
+    const measures = this.osmd?.Sheet?.SourceMeasures;
+    if (!doubtful.length || !measures) return;
+    for (const n of doubtful) {
+      for (const container of measures[n - 1]?.VerticalSourceStaffEntryContainers ?? []) {
+        for (const entry of container?.StaffEntries ?? []) {
+          for (const voice of entry?.VoiceEntries ?? []) {
+            for (const note of voice?.Notes ?? []) {
+              note.NoteheadColor = DOUBT_COLOR;
+              note.StemColorXml = DOUBT_COLOR;
+            }
+          }
+        }
+      }
     }
   }
 

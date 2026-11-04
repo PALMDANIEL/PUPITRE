@@ -15,6 +15,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 # Copie tachée (photocopie, vieux scan) à partir de ce nombre de petites taches par mégapixel : lue portée par portée par
 # le réseau de neurones. Mesures : pages nettes 0 à 2 ; photos de test 0 à 40 ; « Dieu nous te louons » 99, « Fa damba » 683.
 SALETE = int(os.environ.get("PUPITRE_SALETE", 60))
+# Passes de lecture de chaque portée par homr (1 à 3) : avec plusieurs, les lectures votent mesure par mesure (précision
+# et indice de confiance). Trois sur ordinateur ; un seul sur l'hébergement limité à 5 minutes par requête (Vercel).
+PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES", 3))))
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
     (p for p in ("/Applications/Audiveris.app/Contents/MacOS/Audiveris", "/opt/audiveris/bin/Audiveris") if os.path.exists(p)),
     "audiveris")
@@ -262,16 +265,18 @@ def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, t
     try:
         if layout == "satb" and pupitres.header_pages(voix, layout, key, time_sig, pdf=False):
             print(f"Têtes de ligne redessinées : armure {key:+d}, mesure {time_sig}", file=sys.stderr)
-            pupitres.staff_spec(voix, layout, "lignes-nettes")
+            pupitres.staff_spec(voix, layout, "lignes-nettes", passes=PASSES)
         else:
-            pupitres.staff_spec(voix, layout, "lignes")
+            pupitres.staff_spec(voix, layout, "lignes", passes=PASSES)
         ok = homr_staves(voix)
         chrono("toutes les portées lues par homr")
         notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
         if ok and all(f.exists() for f in notes):
             print("Portées lues une à une par homr, paroles lues sur l'image", file=sys.stderr)
             print("lecture:homr", flush=True)  # repère sans accent (test de fumée, journaux Windows)
-            r = subprocess.run(step("pupitres", target, voix / "disposition.json", "--notes", *notes),
+            extra = sorted(d for d in voix.glob("sortie-[1-9]") if (d / "v1.musicxml").exists())
+            more = ["--variantes", *map(str, extra)] if extra else []
+            r = subprocess.run(step("pupitres", target, voix / "disposition.json", *more, "--notes", *notes),
                                capture_output=True, text=True, encoding="utf-8", errors="replace", **QUIET)
             sys.stderr.write(r.stdout)
             chrono("voix réunies")
@@ -408,12 +413,15 @@ def main(src, work, layout=None, stage1=False):
             dirty = False
         if guess:
             print(f"Disposition reconnue : {guess}{' (copie usée)' if worn else ''}{' (copie tachée)' if dirty else ''}", file=sys.stderr)
-        if guess and (worn or dirty):
+        mode = os.environ.get("PUPITRE_LECTEUR", "auto")  # auto | homr | audiveris : forcer un lecteur (banc d'essai)
+        if mode == "audiveris":
+            guess = None
+        if guess and (mode == "homr" or (mode == "auto" and (worn or dirty))):
             # photocopie ou vieux scan : barres et accolades coupées, taches ; Audiveris lit mal les notes et comble ce
             # qu'il ne comprend pas par des silences. Le réseau de neurones lit chaque portée. Une page nette ou une
             # photo propre reste lue par Audiveris (meilleur sur elles : 100 % contre 60 % sur le banc d'essai).
             layout = guess
-            min_exact = 0.0 if worn else 0.7
+            min_exact = 0.0 if ((worn or mode == "homr") and layout == "satb") else 0.7  # deux portées : accords mal lus par homr, Audiveris prend le relais
 
     def by_voice(chosen):
         target = read_by_voice(pages_dir, work, chosen, stage1_only=stage1, min_exact=min_exact)

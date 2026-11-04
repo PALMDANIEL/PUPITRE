@@ -61,7 +61,7 @@ COPY --from=web /app/dist ./dist
 
 ENV NODE_ENV=production NO_OPEN=1 PORT=80 \
     ACCES_EN_LIGNE=1 LECTURE_DIRECTE=1 STORE=files STORAGE_DIR=/tmp/pupitre \
-    OMR_BUDGET_S=170 OMR_TIMEOUT_S=230 RENDER_TIMEOUT_MS=120000 CHANT_TIMEOUT_MS=280000 CHANT_ENSEMBLE=2 \
+    PUPITRE_PASSES=1 OMR_BUDGET_S=170 OMR_TIMEOUT_S=230 RENDER_TIMEOUT_MS=120000 CHANT_TIMEOUT_MS=280000 CHANT_ENSEMBLE=2 \
     CORS_ORIGINS=https://localhost,capacitor://localhost \
     PYTHON_BIN=/opt/venv/bin/python3 SOUNDFONT=/opt/soundfont/GeneralUser-GS.sf2 AUDIVERIS_BIN=/opt/audiveris/bin/Audiveris VOIX_DIR=/opt/voix \
     HOME=/tmp/home XDG_CONFIG_HOME=/tmp/home/.config XDG_CACHE_HOME=/tmp/home/.cache XDG_DATA_HOME=/tmp/home/.local/share \

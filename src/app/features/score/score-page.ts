@@ -2,7 +2,7 @@ import { Component, computed, effect, inject, input, untracked } from '@angular/
 import { RouterLink } from '@angular/router';
 import { AudioEngine } from '../../core/audio-engine';
 import { ScoreStore } from '../../core/score.store';
-import { ScoreMeta, ScoreStatus } from '../../core/api';
+import { Fiabilite, ScoreMeta, ScoreStatus } from '../../core/api';
 import { Mixer } from './mixer';
 import { ScoreViewer } from './score-viewer';
 
@@ -32,6 +32,19 @@ interface Step { key: ScoreStatus; label: string }
           </dl>
         }
       </header>
+
+      @if (s.manifest?.fiabilite; as f) {
+        <section class="reliability glass" [class.good]="doubtful(f).length === 0" aria-label="Fiabilité de la lecture">
+          <p class="score"><b>{{ percent(f.moyenne) }} %</b> <span>de fiabilité</span></p>
+          @if (doubtful(f).length) {
+            <p>La lecture a été faite {{ f.passes }} fois et comparée mesure par mesure. Les passes divergent aux
+              {{ doubtful(f).length === 1 ? 'mesure' : 'mesures' }} <b>{{ doubtful(f).join(', ') }}</b> (notes en orange dans la
+              partition) : comparez-les au scan d’origine et corrigez si besoin.</p>
+          } @else {
+            <p>La lecture a été faite {{ f.passes }} fois et toutes les passes s’accordent sur chaque mesure.</p>
+          }
+        </section>
+      }
 
       @if (store.actionError()) { <p class="error" role="alert">{{ store.actionError() }}</p> }
 
@@ -94,6 +107,12 @@ interface Step { key: ScoreStatus; label: string }
     }
   `,
   styles: [`
+    .reliability { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.2rem; margin: 0 0 1rem; padding: .8rem 1.1rem; border-left: 3px solid #E8590C; }
+    .reliability.good { border-left-color: #2F9E6B; }
+    .reliability p { margin: 0; font-size: .88rem; color: var(--ink-soft); max-width: 46rem; }
+    .reliability .score b { font-size: 1.5rem; color: var(--ink); font-family: var(--font-display, inherit); }
+    .reliability .score span { font-size: .8rem; }
+    .reliability b { color: var(--ink); }
     .reread { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .8rem; margin-top: 1rem; padding: .9rem 1.1rem; }
     .reread p { margin: 0; font-size: .88rem; color: var(--ink-soft); max-width: 44rem; }
     .reread b { color: var(--ink); }
@@ -142,6 +161,9 @@ export class ScorePage {
   readonly id = input.required<string>();
   protected readonly store = inject(ScoreStore);
   /** Seules les photos et les PDF passent par la lecture des notes */
+  /** Numéros des mesures à vérifier (lecture divergente entre les passes), dans l'ordre */
+  protected doubtful(f: Fiabilite) { return Object.keys(f.a_verifier).map(Number).sort((a, b) => a - b); }
+  protected percent(x: number) { return Math.round(x * 100); }
   protected canReread(s: ScoreMeta) { return s.source === 'pdf' || s.source === 'image'; }
 
   protected readonly steps = computed<Step[]>(() => {

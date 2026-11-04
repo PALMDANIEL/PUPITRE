@@ -20,9 +20,13 @@ export interface DirectEvent { status: ScoreStatus; progress: number }
  * création de l'audio ne tiennent pas dans la même. On renvoie alors la partition lue et les pages nettoyées ;
  * le téléphone demande l'audio dans une seconde requête (/api/recreer, avec ces mêmes fichiers).
  */
-export interface DirectPartition { partition: Buffer; pages: Buffer[] }
+export interface DirectPartition { partition: Buffer; pages: Buffer[]; fiabilite?: string }
 /** Étape 1 faite (nettoyage, portées repérées, premières lignes lues) : l'état repart avec le téléphone, qui lance l'étape 2. */
 export interface DirectState { etat: Buffer; pages: Buffer[] }
+
+async function readReliability(dir: string): Promise<string | undefined> {
+  return fs.readFile(path.join(dir, 'fiabilite.json'), 'utf8').catch(() => undefined);
+}
 
 async function pagesOf(dir: string): Promise<Buffer[]> {
   const names = (await fs.readdir(path.join(dir, 'pages')).catch(() => [] as string[])).filter((f) => /^page-\d+\.png$/.test(f)).sort();
@@ -48,7 +52,7 @@ export async function resumeDirect(state: Buffer, onEvent: (e: DirectEvent) => v
       },
     });
     if (!partition) throw new UserError('Aucune portée n’a été reconnue. Reprenez la photo : page bien à plat, en pleine lumière.');
-    return { partition: await fs.readFile(path.join(dir, partition)), pages: [] };
+    return { partition: await fs.readFile(path.join(dir, partition)), pages: [], fiabilite: await readReliability(dir) };
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -93,7 +97,7 @@ export async function readDirect(
     if (state) return { etat: await fs.readFile(path.join(dir, state)), pages: await pagesOf(dir) };
     if (!partition) throw new UserError('Aucune portée n’a été reconnue. Reprenez la photo : page bien à plat, en pleine lumière.');
     if (byVoice && config.direct && partition.endsWith('.musicxml')) {
-      return { partition: await fs.readFile(path.join(dir, partition)), pages: await pagesOf(dir) };
+      return { partition: await fs.readFile(path.join(dir, partition)), pages: await pagesOf(dir), fiabilite: await readReliability(dir) };
     }
     onEvent({ status: 'rendering', progress: 62 });
     const audio = path.join(dir, 'audio');
@@ -122,12 +126,14 @@ export async function recreateDirect(
   opts: { tempo: number | null; timbre: Timbre; langue: Langue; paroles: Record<string, string> | null; voyelle: Voyelle },
   onEvent: (e: DirectEvent) => void,
   pages: Buffer[] = [],
+  fiabilite?: string,
 ): Promise<Buffer> {
   const dir = path.join(os.tmpdir(), `pupitre-recreer-${randomUUID()}`);
   await fs.mkdir(dir, { recursive: true });
   try {
     const source = path.join(dir, 'score.musicxml');
     await fs.writeFile(source, score);
+    if (fiabilite) await fs.writeFile(path.join(dir, 'fiabilite.json'), fiabilite); // lue par render.py, à côté de la partition
     const audio = path.join(dir, 'audio');
     // --omr : les partitions lues par photo nomment « Piano » chaque portée ; l'ordre des voix suit la page
     const args = [source, audio, '--timbre', opts.timbre, '--omr', '--sans-travail'];

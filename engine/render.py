@@ -873,9 +873,18 @@ def main():
     export_musicxml(pathlib.Path(a.src), out / "score.musicxml", score)
     ts = next(iter(score.recurse().getElementsByClass(meter.TimeSignature)), None)
     ks = score.analyze("key")
+    # fiabilité de la lecture (vote entre plusieurs passes, pupitres.py) : à côté de la partition lue
+    reliability = None
+    try:
+        fid = pathlib.Path(a.src).with_name("fiabilite.json")
+        if fid.exists():
+            reliability = json.loads(fid.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        reliability = None
     manifest = {
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
         **({"rebuilt": "reconstituee.musicxml"} if rebuilt else {}),
+        **({"fiabilite": reliability} if reliability else {}),
         **({"langue": a.langue} if a.timbre == "chant" else {}),
         **({"voyelle": a.voyelle} if a.timbre == "reel" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),

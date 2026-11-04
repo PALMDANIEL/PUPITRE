@@ -144,7 +144,7 @@ export class RemoteReader {
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
           for (const line of lines.filter(Boolean)) {
-            const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; pack?: string; title?: string; partition?: string; pages?: string[]; etat?: string };
+            const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; pack?: string; title?: string; partition?: string; pages?: string[]; etat?: string; fiabilite?: string };
             if (msg.error) throw new RemoteError(msg.error);
             if (msg.etat) {
               // copie usée lue voix par voix : étape 1 faite sur le serveur, l'étape 2 part dans une autre requête
@@ -153,7 +153,7 @@ export class RemoteReader {
             }
             if (msg.partition) {
               // copie usée lue voix par voix : les notes sont lues, l'audio se crée dans une seconde requête
-              await this.finishFromScore(job.id, msg.title ?? title, msg.partition, msg.pages ?? []);
+              await this.finishFromScore(job.id, msg.title ?? title, msg.partition, msg.pages ?? [], msg.fiabilite);
               return;
             }
             if (msg.pack) {
@@ -204,10 +204,10 @@ export class RemoteReader {
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines.filter(Boolean)) {
-        const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; partition?: string };
+        const msg = JSON.parse(line) as { status?: ScoreStatus; progress?: number; error?: string; partition?: string; fiabilite?: string };
         if (msg.error) throw new RemoteError(msg.error);
         if (msg.partition) {
-          await this.finishFromScore(jobId, title, msg.partition, pagesB64);
+          await this.finishFromScore(jobId, title, msg.partition, pagesB64, msg.fiabilite);
           return;
         }
         if (msg.status) this.update(jobId, { status: msg.status, progress: Math.min(58, msg.progress ?? 40) });
@@ -220,13 +220,14 @@ export class RemoteReader {
    * Deuxième temps d'une lecture voix par voix : la partition lue (et les pages nettoyées de la copie) repartent
    * vers /api/recreer, qui crée l'audio et renvoie le pack. Chaque requête reste sous la limite de 5 minutes.
    */
-  private async finishFromScore(jobId: string, title: string, partitionB64: string, pagesB64: string[]): Promise<void> {
+  private async finishFromScore(jobId: string, title: string, partitionB64: string, pagesB64: string[], fiabilite?: string): Promise<void> {
     const s = this.settings();
     const bytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const body = new FormData();
     body.append('file', new File([bytes(partitionB64)], 'score.musicxml'));
     body.append('titre', title);
     body.append('timbre', 'choeur');
+    if (fiabilite) body.append('fiabilite', fiabilite);
     pagesB64.forEach((p, i) => body.append('pages', new File([bytes(p)], `page-${String(i + 1).padStart(2, '0')}.png`, { type: 'image/png' })));
     this.update(jobId, { status: 'rendering', progress: 62 });
     let res: Response;

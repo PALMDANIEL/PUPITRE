@@ -404,7 +404,7 @@ def header_pages(out_dir, layout, sharps, time_sig, pdf=True):
     return True
 
 
-def staff_spec(out_dir, layout, folder="lignes", first_only=False):
+def staff_spec(out_dir, layout, folder="lignes", first_only=False, passes=1):
     """
     portees.json pour pupitre-homr --portees : les lignes de chaque voix (dossier « lignes » ou « lignes-nettes »),
     la première seulement avec first_only (clé, armure et mesure d'origine).
@@ -412,7 +412,7 @@ def staff_spec(out_dir, layout, folder="lignes", first_only=False):
     info = json.loads((out_dir / "disposition.json").read_text(encoding="utf-8"))
     voix = [[{"image": f"{folder}/v{v + 1}-{k + 1:02d}.png", "T": T, "B": B} for k, (T, B) in enumerate(lines)][:1 if first_only else None]
             for v, lines in enumerate(info["lignes"])]
-    (out_dir / "portees.json").write_text(json.dumps({"voix": voix}), encoding="utf-8")
+    (out_dir / "portees.json").write_text(json.dumps({"voix": voix, "passes": passes}), encoding="utf-8")
     return out_dir
 
 
@@ -660,6 +660,38 @@ def _line_notes(measures, target, keysig, state, drop_head_chords=True):
     return out
 
 
+def _signature(measure):
+    """Ce qui fait la lecture d'une mesure : pour chaque note, ses hauteurs et sa durée (silence : aucune hauteur)."""
+    return tuple((() if n.isRest else tuple(sorted(p.midi for p in n.pitches)), round(float(n.quarterLength), 3)) for n in measure)
+
+
+def _vote(candidates, bar):
+    """
+    Plusieurs lectures de la même ligne (lire_homr, passes 1 à 3) : vote mesure par mesure. On ne garde que les lectures qui
+    comptent le plus souvent le même nombre de mesures ; pour chaque mesure, on préfère celles qui font exactement la
+    durée de la mesure, puis la lecture sur laquelle s'accordent le plus de passes (à égalité, la première passe).
+    Rend (mesures choisies, confiance de chacune : part des passes qui lisent la même chose).
+    """
+    from collections import Counter
+    if len(candidates) == 1:
+        return candidates[0], [1.0] * len(candidates[0])
+    counts = Counter(len(c) for c in candidates)
+    top = max(counts.values())
+    length = next(len(c) for c in candidates if counts[len(c)] == top)  # à égalité : la plus prioritaire
+    kept = [c for c in candidates if len(c) == length]
+    voted, conf = [], []
+    for i in range(length):
+        options = [c[i] for c in kept]
+        sigs = [_signature(o) for o in options]
+        valid = [k for k, o in enumerate(options) if abs(_length(o) - bar) < 1e-6]
+        pool = valid or list(range(len(options)))
+        best = max(pool, key=lambda k: (sum(sigs[k] == s for s in sigs), -k))
+        voted.append(options[best])
+        agree = sum(sigs[best] == s for s in sigs) / len(candidates)
+        conf.append(agree if best in valid or not valid else min(agree, 0.5))
+    return voted, conf
+
+
 def _length(notes):
     return sum(float(n.duration.quarterLength) for n in notes)
 
@@ -775,6 +807,8 @@ def _system(row, bar, seen=0, silent=None, stats=None):
     sizes_of = {v: (sp if sum(sp) == count else [1] * len(ms))
                 for v, (ms, sp) in enumerate(zip(row, spans)) if count and (sum(sp) == count or len(ms) == count)}
     _borrow_rhythms(row, sizes_of, bar, stats)
+    if stats is not None:
+        stats["count"] = count
     out = []
     for v, (ms, sp) in enumerate(zip(row, spans)):
         if v in sizes_of:
@@ -907,10 +941,12 @@ def _best_syllables(lyric_sheets, s, v, row):
     return mine
 
 
-def assemble(out, disposition, sources, notes_by_voice=None):
+def assemble(out, disposition, sources, notes_by_voice=None, variants=None):
     """
     sources : lecture d'Audiveris (pages des voix). notes_by_voice : lecture des notes faite à part, une page
     par voix (homr, plus sûr sur une copie usée) ; les paroles viennent alors de la lecture d'Audiveris.
+    variants : dossiers des passes supplémentaires de lire_homr (sortie-1, sortie-2) : vote mesure par mesure ; écrit
+    fiabilite.json (confiance de chaque mesure) à côté de la partition.
     """
     from music21 import key, meter, note, stream
     info = json.loads(pathlib.Path(disposition).read_text(encoding="utf-8"))
@@ -924,7 +960,9 @@ def assemble(out, disposition, sources, notes_by_voice=None):
         except SystemExit:
             lyric_sheets = None
         sheets = [_voice_lines(f, n_sys) for f in notes_by_voice]
+        vsheets = [[_voice_lines(pathlib.Path(d) / f"v{v + 1}.musicxml", n_sys) for v in range(len(voices))] for d in (variants or [])]
     else:
+        vsheets = []
         sheets = _sheets(sources, len(voices), n_sys)
         lyric_sheets = None
     accents = _accents(lyric_sheets if lyric_sheets else sheets)
@@ -940,10 +978,19 @@ def assemble(out, disposition, sources, notes_by_voice=None):
     lines = []  # [système][voix] -> notes, toutes les voix de même durée
     silent = [True] * len(voices)
     states = [{} for _ in voices]
+    vstates = [[{} for _ in voices] for _ in vsheets]
     stats = {}
+    confidence = {}  # numéro de mesure (1, 2, …) -> plus faible confiance des voix à cette mesure
+    offset = 0
     for s in range(n_sys):
         row = [_line_notes(sheets[v][s], _clef(c), ks, states[v], info["layout"] == "satb") if s < len(sheets[v]) else []
                for v, (_n, c) in enumerate(voices)]
+        conf_row = [[1.0] * len(m) for m in row]
+        if vsheets:  # passes supplémentaires de homr : vote mesure par mesure
+            for v, (_n, c) in enumerate(voices):
+                cands = [row[v]] + [_line_notes(vs[v][s], _clef(c), ks, vstates[i][v], info["layout"] == "satb") if s < len(vs[v]) else []
+                                    for i, vs in enumerate(vsheets)]
+                row[v], conf_row[v] = _vote([c for c in cands if c] or [[]], bar)
         read = info["systems"][s].get("paroles")
         if lyric_sheets and not (read and any(read)):
             chosen = [_best_syllables(lyric_sheets, s, v, row) for v in range(len(voices))]
@@ -954,6 +1001,13 @@ def assemble(out, disposition, sources, notes_by_voice=None):
                 if v < len(read) and read[v]:
                     _put_read_lyrics(row[v], read[v], info["systems"][s].get("barres", []), accents)
         lines.append(_system(row, bar, info["systems"][s].get("mesures", 0), silent, stats))
+        for v in range(len(voices)):  # confiance de chaque mesure -> numéros de mesure de la partition finale
+            at = offset
+            for m, c in zip(row[v], conf_row[v]):
+                for b in range(at + 1, at + max(1, round(_length(m) / bar)) + 1):
+                    confidence[b] = min(confidence.get(b, 1.0), c)
+                at += max(1, round(_length(m) / bar))
+        offset += stats.get("count", 0)
     cleaned = _clean_accidentals(lines, ks)
     if cleaned:
         print(f"Altérations invraisemblables retirées : {cleaned}", file=sys.stderr)
@@ -984,6 +1038,13 @@ def assemble(out, disposition, sources, notes_by_voice=None):
                 x.duration.quarterLength = min(simple, key=lambda q: abs(q - float(x.duration.quarterLength)))
         score.write("musicxml", fp=out, makeNotation=False)
     count = len(score.parts[0].getElementsByClass(stream.Measure)) if parts else 0
+    if vsheets:
+        doubtful = {str(b): round(c, 2) for b, c in sorted(confidence.items()) if c < 1.0 and b <= count}
+        mean = sum(confidence.get(b, 1.0) for b in range(1, count + 1)) / max(1, count)
+        pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
+            {"passes": 1 + len(vsheets), "moyenne": round(mean, 3), "mesures": count, "a_verifier": doubtful},
+            ensure_ascii=False), encoding="utf-8")
+        print(f"Fiabilité : {mean:.0%} (passes : {1 + len(vsheets)}), mesures à vérifier : {len(doubtful)}/{count}", file=sys.stderr)
     print(f"Voix réunies : {', '.join(n or 'portée' for n, _c in voices)} ; {n_sys} systèmes, {count} mesures ; "
           f"mesures au compte juste : {stats.get('justes', 0)}/{stats.get('mesures', 0)}, "
           f"point rétabli : {stats.get('marques', 0)}, rythme repris d'une autre voix : {stats.get('reprises', 0)}")
@@ -1257,10 +1318,13 @@ def read_lyrics(bw, staff, below):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    notes = None
-    if "--notes" in args:  # --notes v1.musicxml v2.musicxml … (une lecture des notes par voix, à la fin)
-        k = args.index("--notes")
-        notes, args = args[k + 1:], args[:k]
+    groups = {"--notes": [], "--variantes": []}
+    for flag in groups:  # chaque option prend les arguments qui la suivent jusqu'à la suivante
+        if flag in args:
+            k = args.index(flag)
+            end = min([args.index(o) for o in groups if o != flag and o in args and args.index(o) > k] + [len(args)])
+            groups[flag], args = args[k + 1:end], args[:k] + args[end:]
+    notes = groups["--notes"] or None
     if len(args) < 2 or (len(args) < 3 and not notes):
         sys.exit(__doc__)
-    assemble(args[0], args[1], args[2:], notes)
+    assemble(args[0], args[1], args[2:], notes, groups["--variantes"] or None)

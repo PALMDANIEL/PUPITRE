@@ -342,6 +342,7 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
   if (KINDS[ext] !== 'musicxml') fail(415, 'La version corrigée doit être un fichier MusicXML (.musicxml, .mxl ou .xml).');
   const partitionFile = `corrected${ext}`;
   await fs.writeFile(path.join(dirOf(meta.id), partitionFile), file.buffer);
+  await fs.rm(path.join(dirOf(meta.id), 'fiabilite.json'), { force: true }); // la partition corrigée n'est plus la lecture
   const next = await patchMeta(meta.id, { partitionFile, corrected: true, status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: 'render' });
   res.status(202).json(next);
@@ -379,13 +380,19 @@ app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: '
       paroles = Object.fromEntries(Object.entries(raw).filter(([k, v]) => /^[a-z0-9]{1,20}$/.test(k) && typeof v === 'string').map(([k, v]) => [k, (v as string).slice(0, 8000)]));
     } catch { fail(400, 'Paroles invalides.'); }
   }
+  // fiabilité de la lecture (téléphone : transmise d'une requête à l'autre) : vérifiée avant d'être gardée
+  let reliability: string | undefined;
+  try {
+    const r = typeof body.fiabilite === 'string' ? JSON.parse(body.fiabilite) as Record<string, unknown> : null;
+    if (r && typeof r.moyenne === 'number' && r.a_verifier && typeof r.a_verifier === 'object') reliability = JSON.stringify(r).slice(0, 20_000);
+  } catch { /* ignorée */ }
   res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
   const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
   const ping = setInterval(() => send({ ping: true }), 10_000);
   try {
-    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e), pages);
+    const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e), pages, reliability);
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
     if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);
@@ -421,7 +428,7 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
     }
     if (!Buffer.isBuffer(result)) {
       // copie usée lue voix par voix : le téléphone demande l'audio dans une seconde requête (limite de 5 minutes)
-      send({ status: 'partition', progress: 60, title, partition: result.partition.toString('base64'), pages: result.pages.map((p) => p.toString('base64')) });
+      send({ status: 'partition', progress: 60, title, partition: result.partition.toString('base64'), pages: result.pages.map((p) => p.toString('base64')), fiabilite: result.fiabilite });
       const who = ownerOf(res);
       if (who) { void admin.countUse(who).catch(() => undefined); void admin.event(who, 'lecture', { title, pages: files.length }).catch(() => undefined); }
       return;
@@ -450,7 +457,7 @@ app.post('/api/lire/suite', upload.single('etat'), async (req, res) => {
   const ping = setInterval(() => send({ ping: true }), 10_000);
   try {
     const r = await resumeDirect(state.buffer, (e) => send(e));
-    send({ status: 'partition', progress: 60, partition: r.partition.toString('base64'), pages: [] });
+    send({ status: 'partition', progress: 60, partition: r.partition.toString('base64'), pages: [], fiabilite: r.fiabilite });
   } catch (e) {
     console.error('Lecture directe (suite) :', e, (e as { detail?: string }).detail ?? '');
     void journal('lecture directe (suite)', e);
