@@ -16,6 +16,16 @@ export interface RemoteJob { id: string; title: string; status: ScoreStatus; pro
 const DIRECT_MAX_BYTES = 4_200_000;
 
 const SETTINGS_KEY = 'pupitre-serveur';
+const DEVICE_KEY = 'pupitre-appareil';
+
+/** Identifiant de ce téléphone (tiré au sort une fois) : un code de chorale n'est valable que sur un téléphone. */
+function deviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem(DEVICE_KEY, id); }
+    return id;
+  } catch { return ''; }
+}
 const JOBS_KEY = 'pupitre-lectures';
 
 function read<T>(key: string, fallback: T): T {
@@ -77,7 +87,7 @@ export class RemoteReader {
     } catch { /* hors ligne ou code refusé : on garde les dernières dates connues */ }
   }
 
-  private headers(s = this.settings()): HeadersInit { return { Authorization: `Pupitre ${s.code}` }; }
+  private headers(s = this.settings()): HeadersInit { return { Authorization: `Pupitre ${s.code}`, 'X-Pupitre-Appareil': deviceId() }; }
 
   private async call<T>(path: string, init: RequestInit = {}, s = this.settings()): Promise<T> {
     if (!s.url || !s.code) throw new RemoteError('Indiquez d’abord le serveur et le code de votre chorale dans les réglages.');
@@ -325,6 +335,7 @@ export class RemoteReader {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${s.url}/api/scores`);
       xhr.setRequestHeader('Authorization', `Pupitre ${s.code}`);
+      xhr.setRequestHeader('X-Pupitre-Appareil', deviceId());
       xhr.upload.onprogress = (e) => { if (e.lengthComputable) this.uploadProgress.set(Math.round((100 * e.loaded) / e.total)); };
       xhr.onerror = () => { this.uploading.set(false); reject(new RemoteError('Envoi impossible : vérifiez la connexion Internet.')); };
       xhr.onload = async () => {

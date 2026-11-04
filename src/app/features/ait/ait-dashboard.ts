@@ -98,6 +98,9 @@ function chime(ctx: AudioContext) {
                 {{ seen(i) }}{{ i.machine ? ' · ' + i.machine : '' }}{{ i.os ? ' · ' + i.os : '' }}{{ i.app_version ? ' · v' + i.app_version : '' }}{{ i.kind === 'acces' ? ' · ' + i.uses + ' photo(s) lue(s)' : '' }}
               </span>
               <span class="small">{{ i.issued ? 'du ' + date(i.issued) + ' ' : '' }}{{ i.expires ? 'au ' + date(i.expires) : '· sans date de fin' }}{{ i.reason ? ' · motif : ' + i.reason : '' }}</span>
+              @if (i.kind === 'acces' && i.device) {
+                <button type="button" class="act" (click)="freeDevice(i)">Libérer le téléphone</button>
+              }
               @if (i.status === 'active') {
                 <button type="button" class="act off" (click)="item(i, 'revoked')">Désactiver</button>
               } @else {
@@ -318,6 +321,12 @@ export class AitDashboard {
     const reason = status === 'revoked' ? prompt(`Désactiver ${i.id} (${i.client}) ? Motif (facultatif) :`, '') : '';
     if (reason === null) return;
     try { await this.ait.admin(`/elements/${encodeURIComponent(i.id)}/statut`, { method: 'POST', body: { status, reason } }, this.base); await this.refresh(); }
+    catch (e) { this.error.set((e as Error).message); }
+  }
+
+  protected async freeDevice(i: ServerItem) {
+    if (!confirm(`Libérer le téléphone lié à ${i.id} (${i.client}) ? Le prochain téléphone qui utilisera ce code sera lié à sa place.`)) return;
+    try { await this.ait.admin(`/elements/${encodeURIComponent(i.id)}/appareil`, { method: 'POST', body: {} }, this.base); await this.refresh(); }
     catch (e) { this.error.set((e as Error).message); }
   }
 

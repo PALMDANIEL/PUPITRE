@@ -27,7 +27,7 @@ export const ADMIN_SERVER = 'https://pupitre-lecture.vercel.app';
 export interface ServerItem {
   id: string; kind: 'licence' | 'acces'; client: string; contact: string | null; machine: string | null;
   issued: string | null; expires: string | null; status: 'active' | 'revoked'; reason: string | null;
-  first_seen: string | null; last_seen: string | null; app_version: string | null; os: string | null; uses: number;
+  first_seen: string | null; last_seen: string | null; app_version: string | null; os: string | null; uses: number; device?: string | null;
 }
 export interface ServerEvent { at: string; kind: string; item_id: string | null; client: string | null; detail: Record<string, unknown> | null }
 export type Overview = Record<'licences' | 'licences_desactivees' | 'codes' | 'codes_desactives' | 'en_ligne' | 'actifs_7j' | 'clients' | 'lectures' | 'lectures_24h', number>;

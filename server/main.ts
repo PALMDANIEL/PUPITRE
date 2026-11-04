@@ -67,7 +67,7 @@ if (config.online) {
     if (origin && config.corsOrigins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Pupitre-Appareil');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     }
@@ -94,6 +94,11 @@ if (config.online) {
       const st = await admin.statusOf(acc.id);
       if (st?.status === 'revoked') {
         res.status(401).json({ error: `Le code de « ${acc.client} » a été désactivé par AIT${st.reason ? ` (${st.reason})` : ''}. Contactez AIT au ${PHONE}.` });
+        return;
+      }
+      const device = String(req.headers['x-pupitre-appareil'] ?? '').slice(0, 64);
+      if (!(await admin.bindDevice(acc.id, device))) {
+        res.status(401).json({ error: `Le code de « ${acc.client} » est déjà utilisé sur un autre téléphone (un code = un téléphone). Pour changer de téléphone, contactez AIT au ${PHONE}.` });
         return;
       }
       void admin.touch(acc.id, { ip: clientIp(req), version: String(req.headers['x-pupitre-version'] ?? '') || undefined }).catch(() => undefined);
@@ -198,6 +203,10 @@ if (config.online) {
     const reason = typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 200) : null;
     const n = await admin.setStatus(req.params.id, status, reason);
     if (!n) fail(404, 'Licence ou code introuvable dans le registre.');
+    res.json({ ok: true });
+  });
+  app.post('/api/admin/elements/:id/appareil', async (req, res) => {
+    if (!(await admin.freeDevice(req.params.id))) fail(404, 'Code introuvable dans le registre.');
     res.json({ ok: true });
   });
   app.post('/api/admin/clients/statut', async (req, res) => {

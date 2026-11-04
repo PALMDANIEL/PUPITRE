@@ -11,7 +11,7 @@ export interface Item {
   id: string; kind: ItemKind; client: string; contact: string | null; machine: string | null;
   issued: string | null; expires: string | null; status: 'active' | 'revoked'; reason: string | null;
   revoked_at: string | null; registered_at: string; first_seen: string | null; last_seen: string | null;
-  app_version: string | null; os: string | null; ip: string | null; uses: number;
+  app_version: string | null; os: string | null; ip: string | null; uses: number; device?: string | null;
 }
 
 const SCHEMA = `
@@ -44,6 +44,7 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS ait_events_at ON ait_events (at DESC);
   ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS text text;
+  ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS device text;
   CREATE TABLE IF NOT EXISTS ait_prices (
     product text PRIMARY KEY,
     kind text NOT NULL,
@@ -135,6 +136,31 @@ export async function statusOf(id: string): Promise<{ status: 'active' | 'revoke
   if (!d) return null;
   const { rows } = await d.query(`SELECT status, reason FROM ait_items WHERE id = $1`, [id]);
   return rows[0] ?? null;
+}
+
+/**
+ * Un code de chorale = un téléphone. Le premier appareil qui se présente est lié au code ; un autre est refusé
+ * jusqu'à ce qu'AIT libère l'appareil (tableau de bord). Rend false si le code est déjà lié à un autre appareil
+ * (ou lié alors que l'appareil ne s'annonce pas : ancienne version de l'application).
+ */
+export async function bindDevice(id: string, device: string): Promise<boolean> {
+  const d = await db();
+  if (!d) return true;
+  if (!device) {
+    const { rows } = await d.query(`SELECT device FROM ait_items WHERE id = $1`, [id]);
+    return !rows[0]?.device;
+  }
+  const { rowCount } = await d.query(`UPDATE ait_items SET device = $2 WHERE id = $1 AND (device IS NULL OR device = $2)`, [id, device]);
+  if (rowCount) return true;
+  await event(id, 'appareil-refuse', { device: device.slice(0, 8) });
+  return false;
+}
+
+export async function freeDevice(id: string) {
+  const d = (await db())!;
+  const { rowCount } = await d.query(`UPDATE ait_items SET device = NULL WHERE id = $1`, [id]);
+  if (rowCount) await event(id, 'appareil-libere');
+  return rowCount ?? 0;
 }
 
 export async function countUse(id: string) {
