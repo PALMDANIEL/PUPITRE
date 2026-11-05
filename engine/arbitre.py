@@ -131,7 +131,11 @@ def line_faults(line, length, median):
 
 
 def composite(x, y, voices, length, medians):
-    """Voix par voix, la meilleure des deux lectures (ex. ténor juste chez Audiveris, basse juste chez homr)."""
+    """
+    Voix par voix, la meilleure des deux lectures (ex. ténor juste chez Audiveris, basse juste chez homr). Rend les
+    notes réunies et les voix telles quelles (à ne pas répartir à nouveau : une note seule de la basse, ténor en
+    silence, serait prise pour un unisson et chantée aussi par le ténor).
+    """
     drop_x, drop_y = [], []
     lx, ly = lines(x, voices, length, drop_x), lines(y, voices, length, drop_y)
 
@@ -143,24 +147,28 @@ def composite(x, y, voices, length, medians):
         pen_x[nearest(e)] += 1
     for e in drop_y:
         pen_y[nearest(e)] += 1
-    out, seen = [], set()
+    out, seen, chosen = [], set(), []
     for v in range(voices):
         fx = line_faults(lx[v], length, medians[v]) + pen_x[v]
         fy = line_faults(ly[v], length, medians[v]) + pen_y[v]
-        for e in (ly[v] if fy < fx else lx[v]):
+        chosen.append(ly[v] if fy < fx else lx[v])
+        for e in chosen[-1]:
             k = (e[0], e[1], e[2])
             if k not in seen:
                 seen.add(k)
                 out.append(e)
-    return sorted(out, key=lambda e: (e[0], -e[1]))
+    return sorted(out, key=lambda e: (e[0], -e[1])), chosen
 
 
 def _q(x):
     return opFrac(Fraction(x).limit_denominator(48))
 
 
-def rebuild(m, ev, voices, length):
-    """Remplace le contenu de la mesure m (lecture Audiveris) par les notes ev (lecture homr), voix par voix."""
+def rebuild(m, ev, voices, length, split=None):
+    """
+    Remplace le contenu de la mesure m (lecture Audiveris) par les notes ev (lecture homr), voix par voix ; split :
+    voix déjà réparties (composite). Une durée qui déborde sur la note suivante de la même voix est raccourcie.
+    """
     lyrics = {}
     for n in m.recurse().notes:  # paroles d'Audiveris gardées, accrochées à la note qui commence au même endroit
         if n.lyrics:
@@ -176,11 +184,16 @@ def rebuild(m, ev, voices, length):
         parts = [[(off, g[0][2], [e[3] for e in g]) for off, g in sorted(groups.items())]]
         target = [m]
     else:
-        parts = [[(off, dur, [p]) for off, _ps, dur, p in line] for line in lines(ev, voices, length)]
+        parts = [[(off, dur, [p]) for off, _ps, dur, p in line] for line in (split or lines(ev, voices, length))]
         target = [stream.Voice(id=str(i + 1)) for i in range(voices)]
     for i, (line, dst) in enumerate(zip(parts, target)):
-        at = 0.0
+        at, prev = 0.0, None
         for off, dur, pitches in line:
+            if off < at - 1e-6:
+                if prev is None or off <= prev.offset + 1e-6:
+                    continue
+                prev.quarterLength = _q(off - float(prev.offset))
+                at = off
             if off > at + 1e-6:
                 dst.insert(_q(at), note.Rest(quarterLength=_q(off - at)))
             n = (chord.Chord([copy.deepcopy(p) for p in pitches], quarterLength=_q(dur)) if len(pitches) > 1
@@ -189,7 +202,7 @@ def rebuild(m, ev, voices, length):
                 for l in lyrics.pop(off):
                     n.lyrics.append(l)
             dst.insert(_q(off), n)
-            at = max(at, off + dur)
+            prev, at = n, off + dur
         if at < length - 1e-6:
             dst.insert(_q(at), note.Rest(quarterLength=_q(length - at)))
     if voices > 1:
@@ -280,7 +293,9 @@ def pair_measures(sa, sh):
     """
     Mesures correspondantes des deux lectures [(i, j)] : alignement des suites de mesures d'après leurs notes, même à
     nombre égal (une barre vue par un seul lecteur au milieu, une mesure oubliée plus loin : le reste serait décalé).
-    Les mesures sans correspondante sûre gardent la lecture d'Audiveris.
+    Les mesures sans correspondante sûre gardent la lecture d'Audiveris ; une ou deux mesures non appariées de chaque
+    côté, entre deux mesures appariées (ou au bout), se correspondent : les barres s'accordent, seul le contenu diffère
+    (accord final lu comme un silence par l'un des lecteurs).
     """
     n, m = len(sa[0]), len(sh[0])
     ea = [[events(st[i]) for st in sa] for i in range(n)]
@@ -300,7 +315,15 @@ def pair_measures(sa, sh):
             i -= 1
         else:
             j -= 1
-    return pairs[::-1]
+    pairs.reverse()
+    filled = []
+    for (i0, j0), (i1, j1) in zip([(-1, -1)] + pairs, pairs + [(n, m)]):
+        gap = i1 - i0 - 1
+        if gap == j1 - j0 - 1 and 0 < gap <= 2:
+            filled.extend((i0 + t, j0 + t) for t in range(1, gap + 1))
+        if i1 < n:
+            filled.append((i1, j1))
+    return filled
 
 
 def arbitrate(a_path, h_path, out, layout):
@@ -361,9 +384,9 @@ def arbitrate(a_path, h_path, out, layout):
             # à égalité, Audiveris : meilleur lecteur des pages nettes (bécarres, rythmes cohérents mais différents)
             take_h = fh < fa
             if voices > 1 and min(fa, fh) > 0:
-                comp = composite(x, y, voices, length, medians[s])
+                comp, split = composite(x, y, voices, length, medians[s])
                 if signature(comp) not in (signature(x), signature(y)) and faults(comp, [], length, voices) < min(fa, fh):
-                    rebuild(m, comp, voices, length)
+                    rebuild(m, comp, voices, length, split)
                     changed += 1
                     mixed += 1
                     unsure = True
