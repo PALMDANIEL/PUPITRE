@@ -14,7 +14,8 @@ export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'r
 
 export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string]; lyrics?: string; sung?: number }
 /** Fiabilité de la lecture : vote entre plusieurs passes ; a_verifier = numéros de mesure → part des passes d'accord */
-export interface Fiabilite { passes: number; moyenne: number; mesures: number; a_verifier: Record<string, number> }
+/** lecteurs : double lecture (Audiveris et homr) arbitrée mesure par mesure ; arbitrees : portées-mesures reprises de homr */
+export interface Fiabilite { passes: number; moyenne: number; mesures: number; a_verifier: Record<string, number>; lecteurs?: string[]; arbitrees?: number }
 
 export interface Manifest {
   fiabilite?: Fiabilite;

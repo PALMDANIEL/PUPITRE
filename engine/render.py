@@ -524,11 +524,13 @@ def content_length(m):
 def align_measures(voices):
     """Même durée pour chaque mesure dans toutes les voix, sinon les pistes se décalent à l'écoute.
     Mesure trop courte (silence oublié) : complétée par un silence ; trop longue (point ou crochet mal lu) :
-    ramenée à la bonne durée en resserrant proportionnellement ses notes."""
+    ramenée à la bonne durée en resserrant proportionnellement ses notes. Deux mesures voisines incomplètes dont les
+    durées s'additionnent en une mesure entière (mesure coupée par une double barre, au début du refrain) restent telles
+    quelles ; dans une levée, le silence manquant se place avant les notes."""
     measures = [list(v.getElementsByClass(stream.Measure)) for v in voices]
     count = max((len(ms) for ms in measures), default=0)
+    bars, commons = [], []
     bar = 4.0
-    rebuilt = [stream.Part() for _ in voices]
     for k in range(count):
         row = [ms[k] if k < len(ms) else None for ms in measures]
         for m in row:
@@ -537,16 +539,33 @@ def align_measures(voices):
                 bar = ts.barDuration.quarterLength
         # seules les voix qui chantent comptent : une voix qui se tait pendant le couplet d'un soliste n'a que des silences
         lengths = [round(content_length(m), 3) for m in row if m is not None and m.notes]
+        common = statistics.mode(lengths) if lengths and lengths.count(statistics.mode(lengths)) * 2 > len(lengths) else None
+        bars.append(bar)
+        commons.append((common, lengths))
+
+    def split_bar(k):
+        c = commons[k][0]
+        if c is None or c >= bars[k] - 1e-6:
+            return False
+        return any(0 <= j < count and commons[j][0] is not None and abs(c + commons[j][0] - bars[k]) < 1e-6
+                   for j in (k - 1, k + 1))
+
+    rebuilt = [stream.Part() for _ in voices]
+    for k in range(count):
+        row = [ms[k] if k < len(ms) else None for ms in measures]
+        bar = bars[k]
+        common, lengths = commons[k]
         target = bar
         if lengths:
-            common = statistics.mode(lengths)
             edge = k == 0 or k == count - 1
-            if lengths.count(common) * 2 > len(lengths):
+            if common is not None:
                 # la majorité a raison quand la mesure est plus longue (récitatif libre) ou incomplète en levée / en fin ;
                 # ailleurs, une mesure trop courte dans toutes les voix est un silence oublié par la lecture : on complète
-                target = common if common > bar or edge else bar
+                target = common if common > bar or edge or split_bar(k) else bar
             elif len(set(lengths)) == len(lengths):
                 target = max(lengths)    # aucune majorité (un seul chanteur, ou tous différents) : on ne coupe rien
+            elif k == 0:
+                target = min(bar, max(lengths))   # levée : la plus longue lecture dit sa durée
         for i, m in enumerate(row):
             if m is None:
                 m = stream.Measure(number=k + 1)
@@ -567,7 +586,14 @@ def align_measures(voices):
                     last.quarterLength = opFrac(max(last.quarterLength - over, Fraction(1, 48)))
             length = content_length(m)
             if length < target - 1e-6:
-                m.insert(opFrac(length), note.Rest(quarterLength=opFrac(target - length)))
+                gap = opFrac(target - length)
+                if k == 0 and m.notes:  # levée : les notes mènent au premier temps, le silence est devant
+                    for off, el in sorted(((e.offset, e) for e in m.notesAndRests), key=lambda x: -x[0]):
+                        m.remove(el)
+                        m.insert(opFrac(off + gap), el)
+                    m.insert(0, note.Rest(quarterLength=gap))
+                else:
+                    m.insert(opFrac(length), note.Rest(quarterLength=gap))
             rebuilt[i].append(m)
     for v, r in zip(voices, rebuilt):
         r.partName = v.partName

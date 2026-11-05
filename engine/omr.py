@@ -254,7 +254,8 @@ def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
     return voix, (0 if key is None else key), (time_sig or "4/4")
 
 
-def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str, min_exact: float = 0.0):
+def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str, min_exact: float = 0.0,
+                passes: int | None = None):
     """
     Étape 2 : toutes les lignes, chacune avec une tête nette (clé, armure, mesure) à la place de la sienne, lues une
     à une par homr, puis voix réunies. Rend le chemin de la partition, ou None.
@@ -265,9 +266,9 @@ def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, t
     try:
         if layout == "satb" and pupitres.header_pages(voix, layout, key, time_sig, pdf=False):
             print(f"Têtes de ligne redessinées : armure {key:+d}, mesure {time_sig}", file=sys.stderr)
-            pupitres.staff_spec(voix, layout, "lignes-nettes", passes=PASSES)
+            pupitres.staff_spec(voix, layout, "lignes-nettes", passes=passes or PASSES)
         else:
-            pupitres.staff_spec(voix, layout, "lignes", passes=PASSES)
+            pupitres.staff_spec(voix, layout, "lignes", passes=passes or PASSES)
         ok = homr_staves(voix)
         chrono("toutes les portées lues par homr")
         notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
@@ -317,6 +318,71 @@ def read_voices_audiveris(work: pathlib.Path, voix: pathlib.Path, layout: str):
     return target
 
 
+DOUBLE = os.environ.get("PUPITRE_DOUBLE", "1") != "0"
+
+
+def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path, layout: str) -> pathlib.Path:
+    """
+    Page nette lue par Audiveris : homr relit chaque portée, puis arbitrage mesure par mesure (arbitre.py). Les deux
+    lecteurs se trompent rarement au même endroit (Audiveris : accords serrés, unissons, croches à crochet ; homr : tête
+    oubliée dans un accord). Écrit fiabilite.json (mesures où ils divergent). Rend la partition arbitrée, sinon target.
+    """
+    sub = work / "double"
+    shutil.rmtree(sub, ignore_errors=True)
+    sub.mkdir(parents=True)
+    try:
+        print("Double lecture : homr relit chaque portée", file=sys.stderr)
+        prepared = prepare_voices(pages_dir, sub, layout)
+        if prepared is None or prepared[1] is None:
+            return target
+        voix, key, time_sig = prepared
+        other = read_voices(sub, voix, layout, key, time_sig, passes=1)
+        if other is None:
+            return target
+        return arbitrate(work, target, other, layout)
+    except Exception as e:  # noqa: BLE001 : la lecture d'Audiveris reste valable
+        print(f"Double lecture impossible : {e}", file=sys.stderr)
+        return target
+    finally:
+        if not os.environ.get("PUPITRE_GARDER"):
+            shutil.rmtree(sub, ignore_errors=True)
+
+
+def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str) -> pathlib.Path:
+    """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target."""
+    out = work / "partition-arbitree.musicxml"
+    r = subprocess.run(step("arbitre", target, other, out, layout), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", **QUIET)
+    sys.stderr.write(r.stderr[-2000:])
+    chrono("lectures comparées")
+    if r.returncode or not out.exists():
+        (work / "fiabilite.json").unlink(missing_ok=True)
+        return target
+    final = work / "partition.musicxml"
+    if target != final:
+        target.unlink(missing_ok=True)
+    out.replace(final)
+    return final
+
+
+def double_state(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path, layout: str):
+    """
+    Hébergement limité à 5 minutes par requête : la lecture d'Audiveris est faite ; on prépare les portées pour homr et
+    on rend l'état (etat.zip, avec la lecture d'Audiveris) : la requête suivante lit les portées et arbitre. None : pas possible.
+    """
+    try:
+        prepared = prepare_voices(pages_dir, work / "double", layout)
+        if prepared is None or prepared[1] is None:
+            return None
+        voix, key, time_sig = prepared
+        return save_state(work, voix, key, time_sig, extra=target)
+    except Exception as e:  # noqa: BLE001 : la lecture d'Audiveris reste valable
+        print(f"Double lecture impossible : {e}", file=sys.stderr)
+        return None
+    finally:
+        shutil.rmtree(work / "double", ignore_errors=True)
+
+
 def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str, stage1_only: bool = False, min_exact: float = 0.0):
     """
     Disposition reconnue ou déclarée : chaque voix lue à part, puis voix réunies (pupitres.py). Chemin principal :
@@ -341,12 +407,19 @@ def read_by_voice(pages_dir: pathlib.Path, work: pathlib.Path, layout: str, stag
     return target
 
 
-def save_state(work: pathlib.Path, voix: pathlib.Path, key: int, time_sig: str, min_exact: float = 0.0) -> pathlib.Path:
-    """État de l'étape 1 (lignes découpées, disposition, armure, mesure) : de quoi reprendre dans une autre requête."""
+def save_state(work: pathlib.Path, voix: pathlib.Path, key: int, time_sig: str, min_exact: float = 0.0,
+               extra: pathlib.Path | None = None) -> pathlib.Path:
+    """
+    État de l'étape 1 (lignes découpées, disposition, armure, mesure) : de quoi reprendre dans une autre requête.
+    extra : lecture d'Audiveris déjà faite (double lecture), arbitrée avec celle de homr à la reprise.
+    """
     import json, zipfile
     out = work / "etat.zip"
+    double = f"audiveris{extra.suffix}" if extra else None
     with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:  # les PNG sont déjà compressés
-        z.writestr("etat.json", json.dumps({"armure": key, "mesure": time_sig, "exact": min_exact}))
+        z.writestr("etat.json", json.dumps({"armure": key, "mesure": time_sig, "exact": min_exact, "double": double}))
+        if extra:
+            z.write(extra, double)
         z.write(voix / "disposition.json", "disposition.json")
         for f in sorted((voix / "lignes").glob("*.png")):
             z.write(f, f"lignes/{f.name}")
@@ -367,6 +440,16 @@ def resume_by_voice(state: pathlib.Path, work: pathlib.Path, layout: str | None 
         z.extractall(voix)
     info = json.loads((voix / "etat.json").read_text(encoding="utf-8"))
     layout = layout or json.loads((voix / "disposition.json").read_text(encoding="utf-8"))["layout"]
+    if info.get("double"):  # double lecture : homr relit les portées, puis arbitrage avec la lecture d'Audiveris
+        first = work / f"lecture-audiveris{pathlib.Path(info['double']).suffix}"
+        shutil.copy(voix / info["double"], first)
+        other = read_voices(voix, voix, layout, int(info["armure"]), str(info["mesure"]), passes=1)
+        target = arbitrate(work, first, other, layout) if other else first
+        if target == first:  # homr n'a rien donné : la lecture d'Audiveris seule
+            target = work / f"partition{first.suffix}"
+            first.replace(target)
+        shutil.rmtree(voix, ignore_errors=True)
+        return target
     target = read_voices(work, voix, layout, int(info["armure"]), str(info["mesure"]), float(info.get("exact", 0)))
     if target is not None:
         shutil.rmtree(voix, ignore_errors=True)
@@ -396,7 +479,7 @@ def main(src, work, layout=None, stage1=False):
     print(f"pages:{len(pages)}", flush=True)
     chrono("pages nettoyées")
 
-    for old in ("partition.mxl", "partition.musicxml"):
+    for old in ("partition.mxl", "partition.musicxml", "fiabilite.json"):
         (work / old).unlink(missing_ok=True)
     guess = None
     min_exact = 0.0
@@ -477,6 +560,16 @@ def main(src, work, layout=None, stage1=False):
             shutil.copy(found[0], target)
     else:
         subprocess.run(step("merge", target, *found), check=True, **QUIET)
+    if guess and DOUBLE and homr_base() is not None:
+        if stage1 and BUDGET and time.monotonic() - _T0 < 0.75 * BUDGET:
+            # hébergement limité à 5 minutes : homr et l'arbitrage dans la requête suivante (comme une copie usée)
+            state = double_state(pages_dir, work, target, guess)
+            if state is not None:
+                shutil.rmtree(pre, ignore_errors=True)
+                print(f"etat:{state.name}", flush=True)
+                return
+        elif BUDGET is None or time.monotonic() - _T0 + 150 < BUDGET:
+            target = double_read(pages_dir, work, target, guess)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
 
@@ -493,12 +586,16 @@ def _fail(e: BaseException) -> None:
 def resume(state, work, layout=None):
     """Seconde requête de la lecture voix par voix : reprend l'état de l'étape 1 (etat.zip)."""
     work = pathlib.Path(work)
-    for old in ("partition.mxl", "partition.musicxml"):
+    for old in ("partition.mxl", "partition.musicxml", "fiabilite.json"):
         (work / old).unlink(missing_ok=True)
+    import zipfile
+    with zipfile.ZipFile(state) as z:
+        double = any(n.startswith("audiveris.") for n in z.namelist())
     target = resume_by_voice(pathlib.Path(state), work, layout)
     if target is None:
         sys.exit("PUPITRE-ERREUR: La lecture des voix n'a pas abouti. Reprenez la photo : page bien à plat, en pleine lumière.")
-    print(f"disposition:{layout or 'voix'}", flush=True)
+    if not double:
+        print(f"disposition:{layout or 'voix'}", flush=True)
     print(f"partition:{target.name}", flush=True)
 
 

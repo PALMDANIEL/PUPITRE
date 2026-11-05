@@ -36,7 +36,15 @@ interface Step { key: ScoreStatus; label: string }
       @if (s.manifest?.fiabilite; as f) {
         <section class="reliability glass" [class.good]="doubtful(f).length === 0" aria-label="Fiabilité de la lecture">
           <p class="score"><b>{{ percent(f.moyenne) }} %</b> <span>de fiabilité</span></p>
-          @if (doubtful(f).length) {
+          @if (f.lecteurs) {
+            <p>La partition a été lue par deux lecteurs indépendants et comparée mesure par mesure ;
+              @if (f.arbitrees) { {{ f.arbitrees }} {{ f.arbitrees === 1 ? 'passage où ils divergeaient a été tranché' : 'passages où ils divergeaient ont été tranchés' }} d’après la cohérence du rythme. }
+              @if (doubtful(f).length) {
+                Restent incertaines : {{ doubtful(f).length === 1 ? 'la mesure' : 'les mesures' }} <b>{{ doubtful(f).join(', ') }}</b>
+                (notes en orange dans la partition) : comparez-les au scan d’origine et corrigez si besoin.
+              } @else { Toutes les mesures sont cohérentes. }
+            </p>
+          } @else if (doubtful(f).length) {
             <p>La lecture a été faite {{ f.passes }} fois et comparée mesure par mesure. Les passes divergent aux
               {{ doubtful(f).length === 1 ? 'mesure' : 'mesures' }} <b>{{ doubtful(f).join(', ') }}</b> (notes en orange dans la
               partition) : comparez-les au scan d’origine et corrigez si besoin.</p>
