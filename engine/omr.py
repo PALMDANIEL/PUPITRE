@@ -13,8 +13,9 @@ import os, pathlib, re, shutil, subprocess, sys, threading, time
 
 HERE = pathlib.Path(__file__).resolve().parent
 # Copie tachée (photocopie, vieux scan) à partir de ce nombre de petites taches par mégapixel : lue portée par portée par
-# le réseau de neurones. Mesures : pages nettes 0 à 2 ; photos de test 0 à 40 ; « Dieu nous te louons » 99, « Fa damba » 683.
-SALETE = int(os.environ.get("PUPITRE_SALETE", 60))
+# le réseau de neurones. Mesures (preprocess.speck_density) : pages nettes 0 à 8 ; photos propres, même sombres, floues,
+# de travers ou WhatsApp, 80 au plus ; « Dieu nous te louons » 203, « Fa damba » 437.
+SALETE = int(os.environ.get("PUPITRE_SALETE", 120))
 # Passes de lecture de chaque portée par homr (1 à 3) : avec plusieurs, les lectures votent mesure par mesure (précision
 # et indice de confiance). Trois sur ordinateur ; un seul sur l'hébergement limité à 5 minutes par requête (Vercel).
 PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES", 3))))
@@ -126,6 +127,16 @@ def read_book(pdf: pathlib.Path, alt_pdf: pathlib.Path, out: pathlib.Path, pages
     return movements(out)
 
 
+# Dernière ligne courte (une ou deux mesures, fin de chant très fréquente) : Audiveris écarte une portée bien plus courte
+# que les autres (« spurious cluster »), puis une portée qui s'arrête loin de la marge de droite. La fin du chant
+# disparaissait, même sur un PDF net (banc : bwv153.1, 11 mesures lues sur 12). Ces trois réglages la gardent.
+STAFF_OPTIONS = [
+    "-option", "org.audiveris.omr.sheet.grid.ClustersRetriever.minClusterLengthRatio=0.15",
+    "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.maxRightIndentation=200",
+    "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.minStaffLength=10",
+]
+
+
 def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int, sheets: list[int] | None = None):
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -134,7 +145,7 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int, sheets: list[int
     tail = []  # dernières lignes d'Audiveris, affichées s'il ne produit rien (diagnostic sur un serveur)
     proc = None
     try:
-        proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), *select, *ocr_options(),
+        proc = subprocess.Popen([AUDIVERIS, "-batch", "-export", "-output", str(out), *select, *ocr_options(), *STAFF_OPTIONS,
                                  "-option", f"org.audiveris.omr.Main.sheetStepTimeOut={STEP_TIMEOUT}", "--", str(pdf)],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
                                 env=ocr_env(), **QUIET)

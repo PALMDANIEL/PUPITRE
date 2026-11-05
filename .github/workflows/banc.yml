@@ -1,0 +1,110 @@
+# Banc d'essai de lecture sur les serveurs de GitHub (dépôt public : gratuit) : fabrique les copies d'essai dont on
+# connaît les notes (PDF net, photo, photocopie, copie usée, photo WhatsApp, sombre, de travers, floue, petites portées),
+# les fait lire par le moteur de la branche ET par celui de la dernière version publiée, et compare.
+# Lancement : Actions › Banc d'essai › Run workflow (ou envoi sur une branche banc/…). Rien n'est publié.
+name: Banc d'essai
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference:
+        description: Version de comparaison (étiquette ou branche)
+        default: v1.5.7
+  push:
+    branches: ['banc/**']
+
+permissions:
+  contents: read
+
+env:
+  REFERENCE: ${{ github.event.inputs.reference || 'v1.5.7' }}
+  SHARDS: 6
+
+jobs:
+  copies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Copies d'essai (notes connues)
+        run: |
+          sudo apt-get install -y --no-install-recommends libcairo2 > /dev/null
+          pip install --quiet verovio==6.3.0 CairoSVG==2.9.1 music21==10.5.0 numpy==2.5.3 opencv-python-headless==4.14.0.94 pillow==12.3.0
+          cd engine/bench
+          python make_corpus.py "$RUNNER_TEMP/copies/base" 6
+          python make_usees.py "$RUNNER_TEMP/copies/usees" 6
+          python make_reels.py "$RUNNER_TEMP/copies/reels" 6
+          find "$RUNNER_TEMP/copies" -name _gravure -prune -exec rm -rf {} +
+          ls "$RUNNER_TEMP/copies"/* | head -200
+      - uses: actions/upload-artifact@v4
+        with:
+          name: copies
+          path: ${{ runner.temp }}/copies
+
+  lecture:
+    needs: copies
+    strategy:
+      fail-fast: false
+      matrix:
+        moteur: [reference, branche]
+        part: [0, 1, 2, 3, 4, 5]
+    runs-on: ubuntu-latest
+    name: ${{ matrix.moteur }} ${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.moteur == 'reference' && env.REFERENCE || github.sha }}
+      - name: Outils du banc de la branche (le même pour les deux moteurs)
+        uses: actions/checkout@v4
+        with:
+          path: banc-outils
+          sparse-checkout: engine/bench
+      - uses: actions/download-artifact@v4
+        with:
+          name: copies
+          path: ${{ runner.temp }}/copies
+      - name: Image du moteur
+        run: docker build -t pupitre-moteur .
+      - name: Lecture d'une part des copies
+        shell: bash
+        run: |
+          rm -rf engine/bench && cp -r banc-outils/engine/bench engine/bench
+          mkdir -p "$RUNNER_TEMP/part"
+          i=0
+          for d in "$RUNNER_TEMP"/copies/*/*/; do
+            if [ $((i % SHARDS)) -eq ${{ matrix.part }} ]; then
+              c=$(basename "$(dirname "$d")")-$(basename "$d")
+              cp -r "$d" "$RUNNER_TEMP/part/$c"
+            fi
+            i=$((i + 1))
+          done
+          ls "$RUNNER_TEMP/part"
+          # lectures faites dans l'image (Audiveris, homr) ; les fichiers lourds sont retirés dans l'image (écrits par root)
+          docker run --rm -v "$RUNNER_TEMP/part:/part" -v "$PWD/engine:/app/engine" -w /app/engine/bench pupitre-moteur \
+            sh -c 'mkdir -p /tmp/home && /opt/venv/bin/python3 run_bench.py /part -j 2; find /part \( -name omr -o -name omr-alt -o -name pages -o -name pre -o -name double -o -name "source.*" \) -prune -exec rm -rf {} +; chmod -R a+rwX /part' \
+            | tee "$RUNNER_TEMP/sortie.txt"
+          cp "$RUNNER_TEMP/sortie.txt" "$RUNNER_TEMP/part/_sortie.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lecture-${{ matrix.moteur }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/part
+
+  rapport:
+    needs: lecture
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lecture-*
+          path: lectures
+      - name: Comparaison
+        run: |
+          python3 .github/scripts/rapport_banc.py lectures > rapport.md
+          cat rapport.md >> "$GITHUB_STEP_SUMMARY"
+          cat rapport.md
+          # aussi en annotation : lisible sans compte GitHub (API des vérifications)
+          echo "::notice title=Banc d'essai::$(sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\n/%0A/g' rapport.md)"

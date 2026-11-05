@@ -100,7 +100,7 @@ def _pitches(staff):
     return [p.ps for m in staff for n in m.recurse().notes for p in n.pitches]
 
 
-def _shift(m, steps):
+def shift_measure(m, steps):
     """Mesure relue dans une autre clé : notes décalées de `steps` degrés, altérations recalculées pour leur nom."""
     ks = m.getContextByClass(key.KeySignature)
     altered = {}  # (nom, octave) → altération écrite plus tôt dans la mesure
@@ -143,14 +143,14 @@ def fix_clefs(raw, sources):
             above, here = statistics.median(heard[i - 1]), statistics.median(heard[i])
             trial = copy.deepcopy(staves[i])
             for m in trial:
-                _shift(m, -12)
+                shift_measure(m, -12)
             if here > above + 4 and statistics.median(_pitches(trial)) <= above:
                 after = raw[j + 1][1][i] if j + 1 < len(raw) and i < len(raw[j + 1][1]) else None
                 if after and not after[0].getElementsByClass(clef.Clef):
                     was = staves[i][-1].getContextByClass(clef.Clef)  # clé d'origine rendue au système suivant
                     after[0].insert(0, copy.deepcopy(was) if was is not None else clef.TrebleClef())
                 for m in staves[i]:
-                    _shift(m, -12)
+                    shift_measure(m, -12)
                 for c in list(staves[i][0].getElementsByClass(clef.Clef)):
                     staves[i][0].remove(c)
                 staves[i][0].insert(0, clef.BassClef())

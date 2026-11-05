@@ -38,52 +38,63 @@ def best_angle(bw, span=3.0):
 
 def deskew(bw):
     """
-    Redresse la page (jusqu'à 5°) d'après ses longues lignes de portée (Hough probabiliste, éprouvé sur le banc d'essai).
-    Sur une page très chargée d'encre (photocopie noircie, fond sale), la transformée de Hough devient très lente
-    (des minutes) : on cherche alors l'angle par le profil des rangées, de durée constante.
+    Redresse la page (jusqu'à 5°) d'après ses lignes de portée : angle cherché par le profil des rangées, de durée
+    constante. La transformée de Hough, utilisée avant sur les pages peu chargées, prenait 33 à 103 s par page sur une
+    photo (grain, ombre) quand l'ordinateur était occupé, pour le même angle à 0,3° près (profil : 1 à 3 s) ; la
+    surveillance « aucun signe de vie pendant 5 minutes » pouvait alors arrêter la lecture.
     """
-    inv = 255 - bw
     h, w = bw.shape
-    if np.count_nonzero(inv) > 0.08 * inv.size:
-        angle = best_angle(bw, 5.0)
-    else:
-        lines = cv2.HoughLinesP(inv, 1, np.pi / 1800, 200, minLineLength=w // 3, maxLineGap=20)
-        if lines is None:
-            return bw
-        angles = [np.degrees(np.arctan2(y2 - y1, x2 - x1)) for x1, y1, x2, y2 in lines[:, 0]]
-        angles = [a for a in angles if abs(a) < 5]
-        if not angles:
-            return bw
-        angle = float(np.median(angles))
+    angle = best_angle(bw, 5.0)
     if abs(angle) < 0.05:
         return bw
     M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
     return cv2.warpAffine(bw, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=255)
 
 
+def _ink_map(gray):
+    """
+    Encre de la page réduite à 1000 px, en contraste relatif au papier (0 à 1), sans seuillage : une photo floue,
+    sombre ou très compressée garde ainsi ses lignes de portée. Le fond hors de la feuille (table) est mis à zéro.
+    """
+    k = 1000 / max(gray.shape)
+    g = cv2.resize(gray, None, fx=k, fy=k, interpolation=cv2.INTER_AREA).astype(np.float32)
+    bg = cv2.GaussianBlur(cv2.dilate(g, np.ones((15, 15), np.uint8)), (0, 0), 8)
+    paper = cv2.erode((bg > 0.55 * np.percentile(bg, 95)).astype(np.uint8), np.ones((25, 25), np.uint8))
+    return np.clip((bg - g) / np.maximum(bg, 1), 0, 1) * paper
+
+
+def _line_edges(ink):
+    """Bords des longs traits horizontaux et des longs traits verticaux (moyenne sur 41 px le long du trait)."""
+    horiz = np.abs(cv2.Sobel(cv2.blur(ink, (41, 1)), cv2.CV_32F, 0, 1, ksize=3))
+    vert = np.abs(cv2.Sobel(cv2.blur(ink, (1, 41)), cv2.CV_32F, 1, 0, ksize=3))
+    return horiz, vert
+
+
 def upright(gray):
-    """Photo prise de côté (sans indication d'orientation) : les lignes de portée doivent être horizontales."""
-    small = cv2.resize(gray, None, fx=800 / max(gray.shape), fy=800 / max(gray.shape))
-    ink = cv2.adaptiveThreshold(small, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 10)
-    horiz = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (60, 1))).sum()
-    vert = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 60))).sum()
-    if vert <= 1.25 * horiz:
+    """
+    Photo prise de côté (sans indication d'orientation) : les lignes de portée doivent être horizontales.
+    On ne tourne que si les longs traits verticaux l'emportent nettement (rapport < 0,8) : page droite, le rapport
+    horizontal / vertical vaut 1,2 à 2,8 sur les photos du banc (floues, sombres, WhatsApp, petites portées) et 0,85
+    au moins sur une photocopie usée. L'ancien test (seuillage puis ouverture) tournait à tort une photo sur quatre.
+    """
+    horiz, vert = _line_edges(_ink_map(gray))
+    if horiz.sum() >= 0.8 * vert.sum():
         return gray
+
     # Dans quel sens tourner ? Clé, armure et chiffrage sont au début de chaque portée : le côté gauche est le plus chargé.
     def left_heavy(img):
-        ink = cv2.adaptiveThreshold(cv2.resize(img, None, fx=800 / max(img.shape), fy=800 / max(img.shape)),
-                                    255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 10)
-        lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (60, 1)))
-        rows = np.where(lines.sum(1) > 0)[0]
-        if len(rows) < 10:
-            return 0
-        # étendue des portées : colonnes où les lignes sont nombreuses (les bords de la photo pèsent peu)
-        cols = lines.sum(0)
+        ink = _ink_map(img)
+        lines, _ = _line_edges(ink)
+        rows = lines.sum(1)
+        staff = cv2.dilate((rows > 0.3 * rows.max()).astype(np.uint8)[:, None], np.ones((7, 1), np.uint8))[:, 0] > 0
+        cols = lines[staff].sum(0)  # étendue des portées, mesurée sur leurs seules rangées
         span = np.where(cols > 0.25 * cols.max())[0]
+        if not len(span):
+            return 0
         x0, x1 = int(span.min()), int(span.max())
         band = max(1, (x1 - x0) // 10)
-        inside = cv2.dilate((lines.sum(1) > 0).astype(np.uint8)[:, None], np.ones((5, 1), np.uint8))[:, 0] > 0
-        return int(ink[inside, x0:x0 + band].sum()) - int(ink[inside, x1 - band:x1].sum())
+        dark = ink[staff] > 0.3
+        return int(dark[:, x0:x0 + band].sum()) - int(dark[:, x1 - band:x1].sum())
     cw, ccw = cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE), cv2.rotate(gray, cv2.ROTATE_90_COUNTERCLOCKWISE)
     return cw if left_heavy(cw) >= left_heavy(ccw) else ccw
 
@@ -121,14 +132,69 @@ def to_gray(gray):
     return gray
 
 
+def edge_width(gray):
+    """Largeur des bords de l'encre en pixels (page à 2480 px) : 2 sur un PDF net, 4 à 5 sur une photo, 7 à 8 si floue."""
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31).astype(np.float32)
+    ink = np.clip(bg - gray.astype(np.float32), 0, None)
+    slope = np.hypot(cv2.Sobel(ink, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(ink, cv2.CV_32F, 0, 1, ksize=3)) / 8
+    return float(np.percentile(ink, 99.5) / max(np.percentile(slope, 99.5), 1e-6))
+
+
+BLUR = 5.5  # largeur de bord au-delà de laquelle la photo est renforcée (banc : photos nettes 5,3 au plus, floues 7 à 8)
+
+
+def unblur(gray):
+    """
+    Photo floue (mise au point manquée, bougé) : le seuillage coupait les lignes de portée en pointillés et faisait des
+    clés une tache. Un renforcement des contours, dosé selon le flou mesuré, les rend avant le nettoyage (banc : une copie
+    floue passe de « aucune portée lue » à 89/67/67/69 %, une autre de 30-42 % à 43-51 %).
+    """
+    w = edge_width(gray)
+    if w <= BLUR:
+        return gray
+    amount = min(1.5, (w - BLUR) * 0.75)
+    soft = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), w / 2.5)
+    return np.clip(gray + amount * (gray.astype(np.float32) - soft), 0, 255).astype(np.uint8)
+
+
+def grain(gray):
+    """Bruit du capteur sur le papier (écart-type robuste, une fois l'éclairage aplati) : 0 à 1,5 sur une photo bien
+    éclairée, 3 à 4,5 sur une photo prise dans l'ombre."""
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
+    flat = cv2.divide(gray, bg, scale=255)
+    paper = flat > 200
+    if not paper.any():
+        return 0.0
+    resid = np.abs(flat.astype(np.float32) - cv2.medianBlur(flat, 5).astype(np.float32))
+    return float(np.median(resid[paper])) * 1.4826
+
+
+GRAIN = 2.5
+
+
+def denoise(gray):
+    """
+    Photo prise dans l'ombre : le grain du capteur, amplifié par l'aplatissement de l'éclairage, criblait la zone sombre
+    de milliers de points (lus comme points de durée ou staccatos, et Audiveris ralenti à plusieurs minutes par page).
+    Un filtre bilatéral l'efface sans émousser les traits (banc : 14 298 → 459 points, photos bien éclairées inchangées).
+    """
+    return cv2.bilateralFilter(gray, 7, 30, 5) if grain(gray) >= GRAIN else gray
+
+
 def is_digital(gray):
     """Page issue d'un logiciel de gravure (fond blanc pur, presque pas de gris) et non d'un scan ou d'une photo."""
     return np.mean(gray > 245) > 0.8 and np.mean((gray > 60) & (gray < 200)) < 0.08
 
 
-def speck_density(bw):
-    """Petites taches d'encre (moins de 12 points) par mégapixel : mesure de saleté de la copie."""
-    ink = (bw < 128).astype(np.uint8)
+def speck_density(gray):
+    """
+    Petites taches d'encre (moins de 12 points) par mégapixel : mesure de saleté de la copie.
+    Une tache compte si elle est au moins deux fois plus sombre que le papier autour, après un léger débruitage : le
+    grain d'une photo sombre ou la compression d'une photo WhatsApp ne comptent plus (un simple seuillage leur donnait
+    170 à 470, plus qu'une vraie copie tachée). Banc : photos propres 0 à 80 ; « Dieu nous te louons » 203, « Fa damba » 437.
+    """
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31).astype(np.float32)
+    ink = (cv2.medianBlur(gray, 3).astype(np.float32) < 0.5 * np.maximum(bg, 1)).astype(np.uint8)
     n, _lab, st, _ = cv2.connectedComponentsWithStats(ink, 8)
     return float(np.count_nonzero(st[1:, cv2.CC_STAT_AREA] < 12)) / (ink.size / 1e6)
 
@@ -422,9 +488,11 @@ def main(src, out_dir):
             if photo:
                 raw = upright(crop_page(raw))
             gray = to_gray(raw)
+            specks.append(speck_density(gray))  # avant le renforcement, qui ferait ressortir le grain de la photo
+            if photo:
+                gray = unblur(denoise(gray))
             plain = plain_page(gray)
             worn += dashed_lines(plain)
-            specks.append(speck_density(plain))
             plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray))
             if is_digital(gray):
                 digital += 1

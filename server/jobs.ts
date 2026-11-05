@@ -121,6 +121,10 @@ async function renderScore(id: string) {
   const base = meta.status === 'queued' ? 10 : Math.max(meta.progress, 62);
   await patchMeta(id, { status: 'rendering', progress: base });
 
+  // Réglages d'une voix (nom choisi, paroles saisies) rangés sous son identifiant, tiré de son nom : si une nouvelle
+  // version du moteur nomme autrement les voix (« Ténor » au lieu de « Chœur (bas) »), chacune retrouve ceux de la voix
+  // de même place, pourvu que le nombre de voix n'ait pas changé.
+  const before = (meta.manifest?.voices ?? []).map((v) => v.id);
   const args = [path.join(dir, meta.partitionFile), next, '--timbre', meta.timbre];
   if (meta.tempo) args.push('--tempo', String(meta.tempo));
   if (meta.timbre === 'reel') args.push('--voyelle', meta.voyelle ?? 'ah');
@@ -130,7 +134,8 @@ async function renderScore(id: string) {
     args.push('--langue', meta.langue ?? 'fr');
     if (meta.paroles && Object.values(meta.paroles).some((t) => t.trim())) {
       const file = path.join(dir, 'paroles.json');
-      await fs.writeFile(file, JSON.stringify(meta.paroles));
+      const byPlace = Object.fromEntries(before.flatMap((vid, i) => meta.paroles?.[vid] ? [[`#${i}/${before.length}`, meta.paroles[vid]]] : []));
+      await fs.writeFile(file, JSON.stringify({ ...meta.paroles, ...byPlace }));
       args.push('--paroles', file);
     }
   }
@@ -151,14 +156,27 @@ async function renderScore(id: string) {
 
   const manifest = JSON.parse(await fs.readFile(path.join(next, 'manifest.json'), 'utf8')) as Manifest;
   // noms de voix choisis par l'utilisateur : gardés quand l'audio est recréé
-  const names = (await readMeta(id))?.voiceNames ?? {};
-  for (const v of manifest.voices) if (names[v.id]) v.name = names[v.id];
+  const current = await readMeta(id);
+  const names = { ...(current?.voiceNames ?? {}) };
+  const paroles = current?.paroles ? { ...current.paroles } : null;
+  const same = before.length === manifest.voices.length;
+  manifest.voices.forEach((v, i) => {
+    const old = same ? before[i] : undefined;
+    if (old && old !== v.id) {
+      if (names[old] && !names[v.id]) names[v.id] = names[old];
+      if (paroles?.[old] && !paroles[v.id]) paroles[v.id] = paroles[old];
+    }
+    if (names[v.id]) v.name = names[v.id];
+  });
   if (Object.keys(names).length) await fs.writeFile(path.join(next, 'manifest.json'), JSON.stringify(manifest, null, 2));
   const audio = path.join(dir, 'audio');
   await fs.rm(audio, { recursive: true, force: true });
   await fs.rename(next, audio);
   const fresh = await readMeta(id);
-  await patchMeta(id, { status: 'ready', progress: 100, error: null, manifest, revision: (fresh?.revision ?? 0) + 1 });
+  await patchMeta(id, {
+    status: 'ready', progress: 100, error: null, manifest, revision: (fresh?.revision ?? 0) + 1,
+    ...(Object.keys(names).length ? { voiceNames: names } : {}), ...(paroles ? { paroles } : {}),
+  });
 }
 
 const queue: Job[] = [];

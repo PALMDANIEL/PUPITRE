@@ -7,6 +7,7 @@ import argparse, copy, json, os, pathlib, re, shutil, statistics, subprocess, sy
 from fractions import Fraction
 from music21 import converter, chord, clef, harmony, instrument, key, meter, note, stream, tempo as m21tempo
 from music21.common.numberTools import opFrac
+import coherence
 
 SF2 = os.environ.get("SOUNDFONT", "/usr/share/sounds/sf2/FluidR3_GM.sf2")
 LABELS = {
@@ -52,6 +53,66 @@ def keep_highest_or_lowest(line, pick):
         c.activeSite.replace(c, n)
 
 
+GAPS = os.environ.get("PUPITRE_TROUS", "1") != "0"  # banc d'essai : 0 pour comparer sans fill_gaps
+
+
+def _sounding(dst):
+    """Intervalles (début, fin) où la ligne chante déjà une note."""
+    return [(float(n.offset), float(n.offset + n.quarterLength)) for n in dst.notes]
+
+
+def _place(dst, n):
+    """Note posée dans un silence de la ligne : les silences qu'elle recouvre sont raccourcis autour d'elle."""
+    a, b = float(n.offset), float(n.offset + n.quarterLength)
+    for r in list(dst.getElementsByClass(note.Rest)):
+        ra, rb = float(r.offset), float(r.offset + r.quarterLength)
+        if rb <= a + 1e-6 or ra >= b - 1e-6:
+            continue
+        dst.remove(r)
+        for x, y in ((ra, a), (b, rb)):
+            if y - x > 1e-6:
+                dst.insert(opFrac(x), note.Rest(quarterLength=opFrac(y - x)))
+    dst.insert(n.offset, n)
+
+
+def _free(dst, a, b):
+    return all(y <= a + 1e-6 or x >= b - 1e-6 for x, y in _sounding(dst))
+
+
+def fill_gaps(mt, mb, others):
+    """
+    Notes qu'une lecture serrée perd en séparant deux voix d'une portée : (1) accord de la voix du haut là où celle du
+    bas se tait (la lecture a rattaché les deux têtes à la même hampe) : sa note basse va à la voix du bas, et
+    inversement ; (2) troisième « voix » créée par la lecture (tête isolée) : ses notes vont dans le silence de la
+    voix la plus proche en hauteur. Rend le nombre de notes rendues.
+    """
+    added = 0
+    for src, dst, pick in ((mt, mb, min), (mb, mt, max)):
+        for c in [c for c in src.getElementsByClass(chord.Chord) if len(c.pitches) >= 2]:
+            a, b = float(c.offset), float(c.offset + c.quarterLength)
+            if _free(dst, a, b):
+                n = note.Note(pick(c.pitches, key=lambda p: p.ps))
+                n.duration = copy.deepcopy(c.duration)
+                if c.tie is not None:  # note liée par-dessus la barre : une seule attaque, comme dans l'autre voix
+                    n.tie = copy.deepcopy(c.tie)
+                n.offset = c.offset
+                _place(dst, n)
+                added += 1
+    for v in others:
+        for n in v.notes:
+            a, b = float(n.offset), float(n.offset + n.quarterLength)
+            ps = statistics.mean(p.ps for p in n.pitches)
+            near = sorted((mt, mb), key=lambda line: abs((mean_pitch(line) or ps) - ps))
+            for line in near:
+                if _free(line, a, b):
+                    m = copy.deepcopy(n)
+                    m.offset = n.offset
+                    _place(line, m)
+                    added += 1
+                    break
+    return added
+
+
 def split_staff(part):
     """Portée à deux voix (ex. S et A) -> deux parties, mesure par mesure."""
     top, bottom = stream.Part(), stream.Part()
@@ -69,6 +130,8 @@ def split_staff(part):
         for src, dst in ((src_t, mt), (src_b, mb)):
             for el in src.notesAndRests:
                 dst.insert(el.offset, copy.deepcopy(el))
+        if len(sung) >= 2 and GAPS:
+            fill_gaps(mt, mb, sung[1:-1])
         top.append(mt); bottom.append(mb)
     keep_highest_or_lowest(top, max)
     keep_highest_or_lowest(bottom, min)
@@ -153,8 +216,14 @@ def staff_names(raw, n):
         return ["Soprano", "Alto"] if n == 2 else [f"Soprano {i + 1}" for i in range(n)]
     if any(mapped) and all(m is None or m in MALE for m in mapped):
         return ["Ténor", "Basse"] if n == 2 else [f"Basse {i + 1}" for i in range(n)]
-    base = pretty_name(name)
-    return [f"{base} (haut)", f"{base} (bas)"] if n == 2 else [f"{base} {i + 1}" for i in range(n)]
+    words = {t.lower() for t in tokens}
+    if words & {"femmes", "dames", "women", "ladies"}:
+        return ["Soprano", "Alto"] if n == 2 else [f"Soprano {i + 1}" for i in range(n)]
+    if words & {"hommes", "men"}:
+        return ["Ténor", "Basse"] if n == 2 else [f"Basse {i + 1}" for i in range(n)]
+    # « Chœur » devant une portée à deux voix (ou ce nom mal lu : « Chciuur ») : un chef de chœur nomme ces voix
+    # d'après leur tessiture et leur place (Soprano, Alto, Ténor, Basse), pas « Chœur (haut) » et « Chœur (bas) »
+    return [None] * n
 
 
 def share_lyrics(lines):
@@ -331,10 +400,10 @@ def merge_named_parts(parts):
 
 
 def name_by_range(voices):
-    """Voix sans nom : nommées d'après leur tessiture (Soprano, Alto, Ténor, Basse), numérotées si besoin."""
-    taken = [v.partName for v in voices if v.partName]
+    """Voix sans nom : nommées d'après leur tessiture (Soprano, Alto, Ténor, Basse), numérotées si besoin.
+    Un nom générique (« Voice », nom d'instrument qu'Audiveris donne à toute portée) ne compte pas pour un nom."""
     for v in voices:
-        if v.partName:
+        if clean_name(v.partName):
             continue
         m = mean_pitch(v) or 60
         v.partName = "Soprano" if m >= 67 else "Alto" if m >= 60 else "Ténor" if m >= 53 else "Basse"
@@ -610,6 +679,10 @@ def extract_voices(score, trust_names=True):
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
     sung = merge_named_parts(sung)
+    if not trust_names:
+        for i, a, b, s in coherence.fix_staff_shifts(sung):
+            print(f"Portée {i + 1}, mesures {a + 1} à {b + 1} : recalée d'un degré vers le {'bas' if s < 0 else 'haut'} "
+                  "(harmonie et altérations)", file=sys.stderr)
     voices = []
     for part in sung:
         lines = split_staff(part) if needs_split(part) else [flatten_voices(part)]
@@ -627,8 +700,9 @@ def extract_voices(score, trust_names=True):
         named = {"Soprano": 69, "Alto": 64, "Ténor": 57, "Basse": 50, "Mezzo": 66, "Baryton": 53}
         for i, v in enumerate(voices):
             fix_octaves(v, named.get((v.partName or "").split(" ")[0]) or (centers[i] if centers else None))
-    if not any(v.partName for v in voices) and len(voices) == 4:
-        for v, n in zip(voices, ("Soprano", "Alto", "Ténor", "Basse")):
+    satb = ("Soprano", "Alto", "Ténor", "Basse")
+    if len(voices) == 4 and all(not clean_name(v.partName) or v.partName == n for v, n in zip(voices, satb)):
+        for v, n in zip(voices, satb):  # quatre voix dans l'ordre de la page : celles sans nom le prennent de leur place
             v.partName = n
     return name_by_range(align_measures(voices))
 
@@ -820,6 +894,12 @@ def real_choir(voices, labels, tempo_qpm, a):
     return out
 
 
+def typed_for(typed, vid, i, count):
+    """Paroles saisies pour une voix : sous son identifiant, sinon sous sa place (« #2/4 » : 3e voix sur 4), que le serveur
+    ajoute quand une version précédente du moteur nommait autrement les voix."""
+    return typed.get(vid) or typed.get(f"#{i}/{count}")
+
+
 def sing_voices(voices, labels, tempo_qpm, a):
     """Voix chantées : voix de femme pour les voix hautes, d'homme pour les voix basses ; paroles saisies ou de la partition."""
     import chant, mixage
@@ -833,7 +913,7 @@ def sing_voices(voices, labels, tempo_qpm, a):
         midis = [p.midi for n in v.recurse().notes for p in n.pitches]
         kind = "femme" if statistics.mean(midis) >= 60 else "homme"
         print(f"Chant {i+1}/{len(voices)} : {vname} ({chant.ensemble_size()} voix {'de femme' if kind == 'femme' else 'd’homme'})", flush=True)
-        x = mixage.polish_voice(chant.sing_part(v, tempo_qpm, kind, a.langue, typed.get(vid)), kind)
+        x = mixage.polish_voice(chant.sing_part(v, tempo_qpm, kind, a.langue, typed_for(typed, vid, i, len(voices))), kind)
         sung.append(mixage.level_to(mixage.phone_bass(x, mixage.bass_amount(midis)), mixage.TARGET_VOICE))
     return sung
 
@@ -889,7 +969,7 @@ def main():
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
         entries.append({"id": vid, "name": vname, "stem": stem, "practice": work,
                         "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)],
-                        "lyrics": typed_lyrics.get(vid) or lyrics_text(v), "sung": len(v.stripTies().flatten().notes)})
+                        "lyrics": typed_for(typed_lyrics, vid, i, len(voices)) or lyrics_text(v), "sung": len(v.stripTies().flatten().notes)})
         print(f"Voix {i+1}/{len(voices)} : {vname} ({fr_name(lo)} à {fr_name(hi)})", flush=True)
 
     if sung:

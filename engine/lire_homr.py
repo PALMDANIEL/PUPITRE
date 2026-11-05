@@ -88,7 +88,30 @@ def read_staves(folder: pathlib.Path) -> None:
             (outs[p] / f"v{v}.lignes.json").write_text(json.dumps(kept[p]), encoding="utf-8")
 
 
+def limit_threads() -> None:
+    """
+    PUPITRE_FILS=n : le réseau de neurones calcule sur n fils au lieu de tous les cœurs. Un ordinateur portable branché
+    sur un chargeur trop faible (65 W pour un 15 pouces) bride son processeur à 20 % dès que tous les cœurs travaillent ;
+    moins de fils, c'est moins de puissance demandée et une lecture plus rapide au total.
+    """
+    n = int(os.environ.get("PUPITRE_FILS", "0") or 0)
+    if n <= 0:
+        return
+    import onnxruntime as ort
+    base = ort.InferenceSession
+
+    def session(*args, **kwargs):
+        opts = kwargs.get("sess_options") or ort.SessionOptions()
+        opts.intra_op_num_threads, opts.inter_op_num_threads = n, 1
+        kwargs["sess_options"] = opts
+        return base(*args, **kwargs)
+    ort.InferenceSession = session
+    import cv2
+    cv2.setNumThreads(n)
+
+
 if __name__ == "__main__":
+    limit_threads()
     if len(sys.argv) == 3 and sys.argv[1] == "--portees":
         read_staves(pathlib.Path(sys.argv[2]))
     elif len(sys.argv) == 2 and not sys.argv[1].startswith("--"):
