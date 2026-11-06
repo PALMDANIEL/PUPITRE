@@ -327,7 +327,14 @@ def pair_measures(sa, sh):
 
 
 def _keys(score):
-    return [k.sharps for p in score.parts for k in p.recurse().getElementsByClass(key.KeySignature)]
+    """Armures imprimées ; une portée qui n'en porte aucune en tête compte pour zéro."""
+    out = []
+    for p in score.parts:
+        measures = list(p.getElementsByClass(stream.Measure))
+        if measures and measures[0].keySignature is None:
+            out.append(0)
+        out += [k.sharps for k in p.recurse().getElementsByClass(key.KeySignature)]
+    return out
 
 
 def adopt_key(a, h):
@@ -335,8 +342,9 @@ def adopt_key(a, h):
     Armure perdue par Audiveris, lue en entier par homr : petites portées (dièses réduits à des points au seuillage :
     1 dièse lu au lieu de 3), photo bougée (chaque dièse n'est plus que deux taches : aucune armure lue). homr, entraîné
     sur des photos, lit alors la bonne (banc : 3 et 4 dièses sur les six copies examinées), et sur les pages nettes les
-    deux lecteurs s'accordent. On ne prend celle de homr que si elle est la même sur toutes ses portées et qu'Audiveris
-    n'a lu, partout, que moins d'altérations du même genre (la lecture en perd bien plus souvent qu'elle n'en invente).
+    deux lecteurs s'accordent. On ne prend celle de homr que si elle est la même sur toutes ses portées, qu'Audiveris n'a
+    lu nulle part plus d'altérations qu'elle ni d'un autre genre, et qu'il en a lu moins au moins une fois (la lecture en
+    perd bien plus souvent qu'elle n'en invente ; photo : 4 dièses lus sur une portée, 3 ou aucun sur les autres).
     Les notes sans altération écrite prennent celle de la nouvelle armure. Rend l'armure adoptée, ou None.
     """
     if os.environ.get("PUPITRE_ARMURE") == "audiveris":
@@ -344,7 +352,8 @@ def adopt_key(a, h):
     found = set(_keys(h))
     if len(found) != 1 or not (target := found.pop()):
         return None
-    if any(k * target < 0 or abs(k) >= abs(target) for k in _keys(a)):
+    read = _keys(a)
+    if any(k * target < 0 or abs(k) > abs(target) for k in read) or all(k == target for k in read):
         return None
     wanted = key.KeySignature(target)
     for part in a.parts:

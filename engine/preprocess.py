@@ -300,6 +300,21 @@ def blur_threshold(gray, plain, hi=0.45, lo=0.12, mid=0.30):
     return np.where(music, np.where(ink, 0, 255), plain).astype(np.uint8)
 
 
+def strip_system_lines(bw, sp):
+    """
+    Pour Audiveris seulement : ligne verticale qui relie les portées d'un système, quand elle tombe dans la bande du bord
+    gauche (3 %). L'ancien effacement de la bande l'ôtait, et Audiveris lit mieux ces systèmes sans elle (banc, photos
+    sur deux portées : 98 % sans, 86 à 92 % avec, armure perdue sur une portée sur deux). Les pages gardent la ligne :
+    c'est elle qui montre quelles portées vont ensemble (pupitres.detect, double lecture).
+    """
+    m = int(min(bw.shape) * 0.03)
+    ink = (bw[:, :m] < 128).astype(np.uint8)
+    tall = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(20, int(9 * sp)))))
+    out = bw.copy()
+    out[:, :m][cv2.dilate(tall, np.ones((1, 3), np.uint8)) > 0] = 255
+    return out
+
+
 def clean_page(gray, blurred=False):
     bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
     flat = cv2.divide(gray, bg, scale=255)
@@ -601,7 +616,7 @@ def main(src, out_dir):
         pages = load_pages(src, t)
         if not pages:
             sys.exit("Le fichier ne contient aucune page lisible.")
-        best, other, digital, worn, specks = [], [], 0, 0, []
+        best, other, pages_out, digital, worn, specks = [], [], [], 0, 0, []
         for i, (raw, photo) in enumerate(pages, 1):
             if photo:
                 raw = upright(crop_page(raw))
@@ -614,12 +629,13 @@ def main(src, out_dir):
             plain = plain_page(gray)
             worn += dashed_lines(plain)
             plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray, blurred))
+            for_audiveris = strip_system_lines(cleaned, interline(gray) or 21)
             if is_digital(gray):
                 digital += 1
-                best.append(plain); other.append(cleaned)
+                pages_out.append(plain); best.append(plain); other.append(for_audiveris)
             else:
-                best.append(cleaned); other.append(plain)
-            imgio.imwrite(str(out / f"page-{i:02d}.png"), best[-1])
+                pages_out.append(cleaned); best.append(for_audiveris); other.append(plain)
+            imgio.imwrite(str(out / f"page-{i:02d}.png"), pages_out[-1])
             print(f"actif:page {i}/{len(pages)}", flush=True)  # signe de vie : omr.py le relaie à la surveillance
     # clean.pdf : la meilleure version pour Audiveris ; alt.pdf : l'autre, essayée si la première échoue.
     for name, imgs in (("clean.pdf", best), ("alt.pdf", other)):

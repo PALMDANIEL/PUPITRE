@@ -135,9 +135,10 @@ def read_book(pdf: pathlib.Path, alt_pdf: pathlib.Path, out: pathlib.Path, pages
 # Dernière ligne courte (une ou deux mesures, fin de chant très fréquente) : Audiveris écarte une portée bien plus courte
 # que les autres (« spurious cluster »), puis une portée qui s'arrête loin de la marge de droite. La fin du chant
 # disparaissait, même sur un PDF net (banc : bwv153.1, 11 mesures lues sur 12). Ces trois réglages la gardent.
-# Recueil à petites portées : la dernière ligne de deux mesures ne fait que 13 % de la largeur (0,15 l'écartait encore).
+# (Essayé et écarté : 0,08, pour une dernière ligne de deux mesures sur petites portées, 13 % de la largeur : un amas
+# court parasite faisait alors perdre deux portées d'un système entier ailleurs.)
 STAFF_OPTIONS = [
-    "-option", f"org.audiveris.omr.sheet.grid.ClustersRetriever.minClusterLengthRatio={os.environ.get('PUPITRE_LIGNE_COURTE', '0.08')}",
+    "-option", "org.audiveris.omr.sheet.grid.ClustersRetriever.minClusterLengthRatio=0.15",
     "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.maxRightIndentation=200",
     "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.minStaffLength=10",
 ]
