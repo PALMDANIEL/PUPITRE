@@ -150,6 +150,53 @@ def edge_width(gray):
 BLUR = 5.5  # largeur de bord au-delà de laquelle la photo est renforcée (banc : photos nettes 5,3 au plus, floues 7 à 8)
 
 
+def blur_shape(gray):
+    """
+    Forme du flou (covariance en pixels²) : largeur des bords mesurée dans quatre directions. Un bougé étale le flou dans
+    un sens : photo bougée de côté, les traits verticaux (queues, barres de mesure, dièses) sont deux fois plus étalés que
+    les lignes de portée (largeur 11 à 12 contre 8,5), et ce sont eux qui disparaissaient au seuillage.
+    """
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31).astype(np.float32)
+    ink = np.clip(bg - gray.astype(np.float32), 0, None)
+    a = np.percentile(ink, 99.5)
+    ix = cv2.Sobel(ink, cv2.CV_32F, 1, 0, ksize=3) / 8
+    iy = cv2.Sobel(ink, cv2.CV_32F, 0, 1, ksize=3) / 8
+    var = {}
+    for deg in (0, 45, 90, 135):  # bord de pente maximale = flou gaussien d'écart-type largeur / 2,5
+        t = np.radians(deg)
+        var[deg] = (a / max(float(np.percentile(np.abs(np.cos(t) * ix + np.sin(t) * iy), 99.5)), 1e-6) / 2.5) ** 2
+    sxy = (var[45] - var[135]) / 2
+    return np.array([[var[0], sxy], [sxy, var[90]]])
+
+
+def _psf(cov, base=1.2):
+    """Tache de flou gaussienne de cette covariance, moins le flou d'une photo nette (base), qu'on ne cherche pas à défaire."""
+    w, v = np.linalg.eigh(cov - base ** 2 * np.eye(2))
+    w = np.maximum(w, 0.3)
+    inv = np.linalg.inv(v @ np.diag(w) @ v.T)
+    r = int(np.ceil(3 * np.sqrt(w.max())))
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32)
+    k = np.exp(-0.5 * (inv[0, 0] * xx * xx + 2 * inv[0, 1] * xx * yy + inv[1, 1] * yy * yy))
+    return (k / k.sum()).astype(np.float32)
+
+
+def deconvolve(gray, iters=None):
+    """
+    Déconvolution de Richardson-Lucy de l'encre (papier 0, noir 1) par la tache de flou mesurée (blur_shape) : rend les
+    traits fins que le flou avait étalés, dans le sens où il les avait étalés.
+    """
+    iters = iters or int(os.environ.get("PUPITRE_RL_ITER", 15))
+    k = _psf(blur_shape(gray))
+    flipped = cv2.flip(k, -1)
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31).astype(np.float32)
+    ink = np.clip(1 - gray.astype(np.float32) / np.maximum(bg, 1), 0, 1) + 1e-3
+    est = ink.copy()
+    for _ in range(iters):
+        conv = cv2.filter2D(est, -1, k, borderType=cv2.BORDER_REFLECT)
+        est *= cv2.filter2D(ink / np.maximum(conv, 1e-6), -1, flipped, borderType=cv2.BORDER_REFLECT)
+    return np.clip(255 * (1 - np.clip(est - 1e-3, 0, 1)), 0, 255).astype(np.uint8)
+
+
 def unblur(gray):
     """
     Photo floue (mise au point manquée, bougé) : le seuillage coupait les lignes de portée en pointillés et faisait des
@@ -159,9 +206,44 @@ def unblur(gray):
     w = edge_width(gray)
     if w <= BLUR:
         return gray
+    if os.environ.get("PUPITRE_FLOU") == "rl":
+        return deconvolve(gray)
     amount = min(1.5, (w - BLUR) * 0.75)
     soft = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), w / 2.5)
     return np.clip(gray + amount * (gray.astype(np.float32) - soft), 0, 255).astype(np.uint8)
+
+
+def interline(gray):
+    """
+    Écart entre deux lignes de portée (pixels), comme le mesure Audiveris : dans chaque colonne, distance la plus
+    fréquente entre deux traits d'encre successifs. Page à 2480 px : 21-22 sur les gravures courantes, 14 sur un recueil
+    à petites portées ; 0 si la page n'a pas de portées.
+    """
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
+    ink = (cv2.divide(gray, bg, scale=255)[:, ::3] < 180).astype(np.int8)
+    cols, rows = np.nonzero(np.diff(ink, axis=0).T == 1)
+    gaps = np.diff(rows)[np.diff(cols) == 0]
+    hist = np.convolve(np.bincount(gaps[(gaps >= 6) & (gaps <= 80)], minlength=81), [1, 2, 1], "same")
+    return int(np.argmax(hist)) if hist.max() > 0 else 0
+
+
+SMALL = 17  # interligne en dessous duquel la page est agrandie (banc : petites portées 14, gravures et vraies copies 18 à 22)
+
+
+def enlarge(gray):
+    """
+    Petites portées (recueil serré, page photographiée de loin) : Audiveris prenait la clé de sol pour une clé de fa,
+    perdait l'armure et le chiffrage (interligne de 14 px), et le seuillage réduisait les dièses à des points. La page
+    est agrandie avant le seuillage, pour un interligne de 22 px, sans dépasser 19 millions de points (Audiveris
+    refuse une page de plus de 20 millions de points et n'exporte alors rien).
+    """
+    sp = interline(gray)
+    if not sp or sp >= SMALL or os.environ.get("PUPITRE_AGRANDIR") == "0":
+        return gray
+    k = min(2.0, 22 / sp, (19e6 / gray.size) ** 0.5)
+    if k < 1.1:
+        return gray
+    return cv2.resize(gray, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
 
 
 def is_digital(gray):
@@ -203,7 +285,22 @@ def clean_page(gray):
     erase[0] = False  # fond
     bw[erase[lab]] = 255
     m = int(min(h, w) * 0.03)
-    bw[:, :m] = 255; bw[:, -m:] = 255; bw[:m, :] = 255; bw[-m:, :] = 255
+    if os.environ.get("PUPITRE_MARGE") == "ancienne":
+        bw[:, :m] = 255; bw[:, -m:] = 255; bw[:m, :] = 255; bw[-m:, :] = 255
+    else:
+        # Bandes du bord : on n'efface que ce qui touche le bord de l'image (ombre, table) ou tient dans son premier
+        # centième. Photo cadrée serré : la clé d'un système qui commence tout près du bord était effacée (petites
+        # portées : clé de sol lue ensuite comme une clé de fa, armure perdue).
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
+        x, y, cw, ch = stats[:, 0], stats[:, 1], stats[:, 2], stats[:, 3]
+        e = m // 3
+        outside = (x + cw <= e) | (x >= w - e) | (y + ch <= e) | (y >= h - e)
+        touching = (x == 0) | (y == 0) | (x + cw == w) | (y + ch == h)
+        wipe = outside | touching
+        wipe[0] = False
+        band = np.zeros((h, w), bool)
+        band[:, :m] = band[:, -m:] = band[:m, :] = band[-m:, :] = True
+        bw[band & wipe[lab]] = 255
 
     n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
     specks = stats[:, cv2.CC_STAT_AREA] < 6
@@ -474,6 +571,7 @@ def main(src, out_dir):
             specks.append(speck_density(gray))  # avant le renforcement, qui ferait ressortir le grain de la photo
             if photo:
                 gray = unblur(gray)
+            gray = enlarge(gray)
             plain = plain_page(gray)
             worn += dashed_lines(plain)
             plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray))

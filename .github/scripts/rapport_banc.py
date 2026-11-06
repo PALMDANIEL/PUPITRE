@@ -3,7 +3,7 @@ Rapport du banc d'essai (workflow banc.yml) : compare, copie par copie, le moteu
 de référence. Usage : python3 rapport_banc.py <dossier des lectures>   (lecture-<moteur>-<part>/_resultats.json)
 Écrit un résumé Markdown (en français) sur la sortie standard.
 """
-import collections, json, pathlib, sys
+import collections, json, os, pathlib, sys
 
 NAMES = ["Soprano", "Alto", "Ténor", "Basse"]
 
@@ -41,7 +41,8 @@ def main(root):
     ref, new = data.get("reference", {}), data.get("branche", {})
     cases = sorted(set(ref) & set(new))
     print("## Banc d'essai de lecture\n")
-    print(f"{len(cases)} copies lues par les deux moteurs (référence : {len(ref)}, branche : {len(new)}).\n")
+    print(f"{len(cases)} copies lues par les deux moteurs (référence {os.environ.get('REFERENCE') or '?'} : {len(ref)}, "
+          f"branche : {len(new)}).\n")
     print("| Corpus | Condition | Copies | Notes justes (référence) | Notes justes (branche) | Échecs réf. → branche |")
     print("|---|---|---|---|---|---|")
     groups = collections.defaultdict(list)
@@ -63,6 +64,11 @@ def main(root):
         print("Reculs :\n")
         for c, x, y in sorted(worse, key=lambda t: t[2] - t[1]):
             print(f"- {c} : {x:.0%} → {y:.0%}" + (f" (échec : {new[c][3]})" if new[c][3] else ""))
+    if len(cases) <= 40:  # banc partiel : chaque copie, pour mesurer une correction avant/après
+        print("\nCopie par copie (référence → branche) :\n")
+        for c in cases:
+            x, y = ref[c][0] / ref[c][1], new[c][0] / new[c][1]
+            print(f"- {c} : {x:.1%} → {y:.1%} ({100 * (y - x):+.1f})" + (" ÉCHEC" if new[c][3] else ""))
     for label, side in (("de la branche", new), ("de la référence", ref)):
         failed = [c for c in cases if side[c][3]]
         if failed:
