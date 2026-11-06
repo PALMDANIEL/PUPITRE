@@ -67,6 +67,11 @@ def broken(sheets):
     return sum(1 for sheet in sheets for n in sheet if n < max(sheet))
 
 
+def staves(sheets):
+    """Nombre de portées vues en tout."""
+    return sum(sum(sheet) for sheet in sheets)
+
+
 def tessdata() -> pathlib.Path | None:
     """Langues de lecture du texte (Tesseract) : sans elles, Audiveris ne lit ni les paroles ni les noms des voix."""
     base = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).parent))
@@ -545,7 +550,10 @@ def main(src, work, layout=None, stage1=False):
         # (un vrai couplet en solo donne le même découpage dans les deux cas : on garde alors la première).
         print("Seconde lecture avec l’autre version de l’image", file=sys.stderr)
         other = read_book(pre / "alt.pdf", pre / "clean.pdf", alt, len(pages))
-        if other and (not found or broken(systems(alt)) < broken(first)):
+        # moins de systèmes coupés, mais jamais au prix de portées perdues : une portée seule dans son système se
+        # remet en place à l'assemblage (merge.stack), une portée non vue est perdue (photo sombre : 6 portées
+        # dont 2 isolées contre 3 portées seulement, et c'est la seconde qui était gardée)
+        if other and (not found or (broken(systems(alt)) < broken(first) and staves(systems(alt)) >= staves(first))):
             shutil.rmtree(omr, ignore_errors=True)
             alt.rename(omr)
             found = movements(omr)
