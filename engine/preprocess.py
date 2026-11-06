@@ -300,22 +300,17 @@ def blur_threshold(gray, plain, hi=0.45, lo=0.12, mid=0.30):
     return np.where(music, np.where(ink, 0, 255), plain).astype(np.uint8)
 
 
-def strip_system_lines(bw, sp):
-    """
-    Pour Audiveris seulement : ligne verticale qui relie les portées d'un système, quand elle tombe dans la bande du bord
-    gauche (3 %). L'ancien effacement de la bande l'ôtait, et Audiveris lit mieux ces systèmes sans elle (banc, photos
-    sur deux portées : 98 % sans, 86 à 92 % avec, armure perdue sur une portée sur deux). Les pages gardent la ligne :
-    c'est elle qui montre quelles portées vont ensemble (pupitres.detect, double lecture).
-    """
-    m = int(min(bw.shape) * 0.03)
-    ink = (bw[:, :m] < 128).astype(np.uint8)
-    tall = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(20, int(9 * sp)))))
-    out = bw.copy()
-    out[:, :m][cv2.dilate(tall, np.ones((1, 3), np.uint8)) > 0] = 255
-    return out
-
-
 def clean_page(gray, blurred=False):
+    """
+    Page nettoyée, en deux versions qui ne diffèrent que dans la bande de 3 % du bord : (page, pour Audiveris).
+    Pour Audiveris, toute la bande est effacée, comme avant (ombres, table, bord du livret). Pour la page (disposition,
+    lecture par homr, affichage), on n'efface que ce qui touche le bord de l'image ou tient dans son premier centième :
+    photo cadrée serré, la clé et la ligne qui relie les portées d'un système tombent dans la bande (petites portées :
+    disposition non reconnue, donc ni double lecture ni armure reprise de homr). Audiveris, lui, lisait plus mal avec ces
+    signes de bord (banc : photos sur deux portées 96,9 → 94,3 %, photo sombre 87 → 56 %, la ligne du système gardée
+    lui faisant perdre l'armure d'une portée sur deux) ; l'ôter pour lui seul cassait d'autres lectures (penchées, floues
+    à quatre portées) : il reçoit donc exactement l'image d'avant.
+    """
     bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
     flat = cv2.divide(gray, bg, scale=255)
     bw = cv2.adaptiveThreshold(flat, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, 15)
@@ -332,34 +327,37 @@ def clean_page(gray, blurred=False):
     erase[0] = False  # fond
     bw[erase[lab]] = 255
     m = int(min(h, w) * 0.03)
+    band = np.zeros((h, w), bool)
+    band[:, :m] = band[:, -m:] = band[:m, :] = band[-m:, :] = True
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
+    x, y, cw, ch = stats[:, 0], stats[:, 1], stats[:, 2], stats[:, 3]
+    e = m // 3
+    outside = (x + cw <= e) | (x >= w - e) | (y + ch <= e) | (y >= h - e)
+    touching = (x == 0) | (y == 0) | (x + cw == w) | (y + ch == h)
+    wipe = outside | touching
+    wipe[0] = False
+    page, old = bw.copy(), bw.copy()
+    page[band & wipe[lab]] = 255
+    old[band] = 255
     if os.environ.get("PUPITRE_MARGE") == "ancienne":
-        bw[:, :m] = 255; bw[:, -m:] = 255; bw[:m, :] = 255; bw[-m:, :] = 255
-    else:
-        # Bandes du bord : on n'efface que ce qui touche le bord de l'image (ombre, table) ou tient dans son premier
-        # centième. Photo cadrée serré : la clé d'un système qui commence tout près du bord était effacée (petites
-        # portées : clé de sol lue ensuite comme une clé de fa, armure perdue).
-        n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
-        x, y, cw, ch = stats[:, 0], stats[:, 1], stats[:, 2], stats[:, 3]
-        e = m // 3
-        outside = (x + cw <= e) | (x >= w - e) | (y + ch <= e) | (y >= h - e)
-        touching = (x == 0) | (y == 0) | (x + cw == w) | (y + ch == h)
-        wipe = outside | touching
-        wipe[0] = False
-        band = np.zeros((h, w), bool)
-        band[:, :m] = band[:, -m:] = band[:m, :] = band[-m:, :] = True
-        bw[band & wipe[lab]] = 255
+        page = old.copy()
     if blurred:
         # bords de page décidés sur le seuillage ordinaire : avec des traits fins, la ligne qui relie les portées d'un
         # système ne touche plus les lignes de portée, et elle passait pour le bord de la page (effacée)
-        removed = (raw < 128) & (bw >= 128)
-        bw = blur_threshold(gray, bw)
-        bw[removed] = 255
-
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
-    specks = stats[:, cv2.CC_STAT_AREA] < 6
-    specks[0] = False
-    bw[specks[lab]] = 255
-    return deskew(bw)
+        ridge = blur_threshold(gray, bw)
+        page, old = ridge.copy(), np.where(band, 255, ridge).astype(np.uint8)
+        page[(raw < 128) & (np.where(band & wipe[lab], 255, bw) >= 128)] = 255
+        old[(raw < 128) & (bw >= 128)] = 255
+        if os.environ.get("PUPITRE_MARGE") == "ancienne":
+            page = old.copy()
+    out = []
+    for img in (page, old):
+        n, lab_, stats_, _ = cv2.connectedComponentsWithStats(255 - img, 8)
+        specks = stats_[:, cv2.CC_STAT_AREA] < 6
+        specks[0] = False
+        img[specks[lab_]] = 255
+        out.append(deskew(img))
+    return out[0], out[1]
 
 
 DASHED = 0.08  # part des traits horizontaux qui tiennent sur 1/12 de page (pages saines : 18 à 64 %, photocopie usée : 0)
@@ -628,8 +626,8 @@ def main(src, out_dir):
                 gray = unblur(gray)
             plain = plain_page(gray)
             worn += dashed_lines(plain)
-            plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray, blurred))
-            for_audiveris = strip_system_lines(cleaned, interline(gray) or 21)
+            page, for_audiveris = clean_page(gray, blurred)
+            plain, cleaned, for_audiveris = repair_staff_lines(plain), repair_staff_lines(page), repair_staff_lines(for_audiveris)
             if is_digital(gray):
                 digital += 1
                 pages_out.append(plain); best.append(plain); other.append(for_audiveris)
