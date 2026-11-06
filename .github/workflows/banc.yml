@@ -3,7 +3,7 @@
 # les fait lire par le moteur de la branche ET par celui de la dernière version publiée, et compare.
 # Lancement : Actions › Banc d'essai › Run workflow (ou envoi sur une branche banc/…). Rien n'est publié.
 # Une partie seulement des copies : champ « filtre », ou « [banc: sombre,bwv267-ouverte] » dans le message de l'envoi ;
-# réglages d'essai du moteur de la branche : « [env: PUPITRE_DEBRUITAGE=0] ».
+# réglages d'essai du moteur de la branche : « [env: PUPITRE_TROUS=0] ».
 name: Banc d'essai
 
 on:
@@ -98,7 +98,7 @@ jobs:
             i=$((i + 1))
           done
           ls "$RUNNER_TEMP/part"
-          # réglages d'essai du moteur de la branche : « [env: PUPITRE_DEBRUITAGE=0 …] » dans le message de l'envoi
+          # réglages d'essai du moteur de la branche : « [env: PUPITRE_TROUS=0 …] » dans le message de l'envoi
           ENVARGS=""
           if [ "${{ matrix.moteur }}" = branche ]; then
             for kv in $(printf '%s' "$MESSAGE" | sed -n 's/.*\[env: *\([^]]*\)\].*/\1/p' | head -1); do ENVARGS="$ENVARGS -e $kv"; done

@@ -164,32 +164,6 @@ def unblur(gray):
     return np.clip(gray + amount * (gray.astype(np.float32) - soft), 0, 255).astype(np.uint8)
 
 
-def grain(gray):
-    """Bruit du capteur sur le papier (écart-type robuste, une fois l'éclairage aplati) : 0 à 1,5 sur une photo bien
-    éclairée, 3 à 4,5 sur une photo prise dans l'ombre."""
-    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
-    flat = cv2.divide(gray, bg, scale=255)
-    paper = flat > 200
-    if not paper.any():
-        return 0.0
-    resid = np.abs(flat.astype(np.float32) - cv2.medianBlur(flat, 5).astype(np.float32))
-    return float(np.median(resid[paper])) * 1.4826
-
-
-GRAIN = 2.5
-
-
-def denoise(gray):
-    """
-    Photo prise dans l'ombre : le grain du capteur, amplifié par l'aplatissement de l'éclairage, criblait la zone sombre
-    de milliers de points (lus comme points de durée ou staccatos, et Audiveris ralenti à plusieurs minutes par page).
-    Un filtre bilatéral l'efface sans émousser les traits (banc : 14 298 → 459 points, photos bien éclairées inchangées).
-    """
-    if os.environ.get("PUPITRE_DEBRUITAGE") == "0":  # banc d'essai : comparer sans
-        return gray
-    return cv2.bilateralFilter(gray, 7, 30, 5) if grain(gray) >= GRAIN else gray
-
-
 def is_digital(gray):
     """Page issue d'un logiciel de gravure (fond blanc pur, presque pas de gris) et non d'un scan ou d'une photo."""
     return np.mean(gray > 245) > 0.8 and np.mean((gray > 60) & (gray < 200)) < 0.08
@@ -499,7 +473,7 @@ def main(src, out_dir):
             gray = to_gray(raw)
             specks.append(speck_density(gray))  # avant le renforcement, qui ferait ressortir le grain de la photo
             if photo:
-                gray = unblur(denoise(gray))
+                gray = unblur(gray)
             plain = plain_page(gray)
             worn += dashed_lines(plain)
             plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray))
