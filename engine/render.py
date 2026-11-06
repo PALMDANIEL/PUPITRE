@@ -399,6 +399,64 @@ def merge_named_parts(parts):
     return merged
 
 
+def regroup_by_place(parts):
+    """
+    Audiveris crée une partie par nom lu devant les portées : « Soprano » sur la 1re ligne, « S. » ensuite, et des noms
+    mal lus (« Îénor », « ' B. », « Voice ») ; réunies d'après leur nom, il restait 5 ou 6 voix au lieu de 4. Un chœur
+    garde sur chaque ligne le même nombre de portées, dans le même ordre : quand presque toutes les mesures sont
+    chantées par N portées (N < nombre de parties), chaque partie prend la place qu'elle occupe parmi elles (de haut en
+    bas, ordre d'Audiveris), et les parties de même place sont réunies, mesure par mesure. Rend None si ce n'est pas net
+    (dialogue avec soliste, place qui change, deux parties de même place dans une mesure).
+    """
+    rows = [list(p.getElementsByClass(stream.Measure)) for p in parts]
+    if len(parts) < 3 or len({len(r) for r in rows}) != 1:
+        return None
+    count = len(rows[0])
+    sings = lambda m: any(not n.duration.isGrace for n in m.recurse().notes)
+    sung = [[i for i, r in enumerate(rows) if sings(r[k])] for k in range(count)]
+    sizes = [len(s) for s in sung if s]
+    if not sizes:
+        return None
+    n = statistics.mode(sizes)
+    full = [s for s in sung if len(s) == n]
+    if n < 2 or n >= len(parts) or len(full) < 0.6 * len(sizes) or any(x > n for x in sizes):
+        return None
+    votes = [{} for _ in parts]
+    for s in full:
+        for place, i in enumerate(s):
+            votes[i][place] = votes[i].get(place, 0) + 1
+    place_of = {}
+    for i, v in enumerate(votes):
+        if not v:
+            if any(i in s for s in sung):
+                return None  # partie qui ne chante que dans des mesures incomplètes : soliste, on ne devine pas
+            continue
+        place, c = max(v.items(), key=lambda x: x[1])
+        if c < 0.8 * sum(v.values()):
+            return None
+        place_of[i] = place
+    groups = [[i for i in sorted(place_of) if place_of[i] == p] for p in range(n)]
+    if any(not g for g in groups):
+        return None
+    merged = []
+    for g in groups:
+        base = copy.deepcopy(parts[g[0]])
+        own = list(base.getElementsByClass(stream.Measure))
+        for k in range(count):
+            singers = [i for i in g if i in sung[k]]
+            if len(singers) > 1:
+                return None
+            if singers and singers[0] != g[0]:
+                _move(copy.deepcopy(rows[singers[0]][k]), own[k])
+        names = {ABBR.get(t.lower()) for i in g for t in re.findall(r"[^\W\d_]+", clean_name(parts[i].partName) or "")}
+        names.discard(None)
+        # nom canonique commun, sinon aucun (pas None : music21 reprendrait le nom d'instrument, « Balme »)
+        base.partName = names.pop() if len(names) == 1 else ""
+        base.partAbbreviation = ""
+        merged.append(base)
+    return merged
+
+
 def name_by_range(voices):
     """Voix sans nom : nommées d'après leur tessiture (Soprano, Alto, Ténor, Basse), numérotées si besoin.
     Un nom générique (« Voice », nom d'instrument qu'Audiveris donne à toute portée) ne compte pas pour un nom."""
@@ -678,7 +736,9 @@ def extract_voices(score, trust_names=True):
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
-    sung = merge_named_parts(sung)
+    named = merge_named_parts(sung)
+    placed = regroup_by_place(sung) if not trust_names and len(named) > 2 else None
+    sung = placed if placed is not None and len(placed) < len(named) else named
     if not trust_names:
         for i, a, b, s in coherence.fix_staff_shifts(sung):
             print(f"Portée {i + 1}, mesures {a + 1} à {b + 1} : recalée d'un degré vers le {'bas' if s < 0 else 'haut'} "
@@ -687,7 +747,7 @@ def extract_voices(score, trust_names=True):
     for part in sung:
         lines = split_staff(part) if needs_split(part) else [flatten_voices(part)]
         for line, name in zip(lines, staff_names(part.partName or part.partAbbreviation, len(lines))):
-            line.partName = name
+            line.partName = name or ""  # None ferait reparaître le nom d'instrument d'Audiveris (« Voice », « Balme »)
         share_lyrics(lines)
         voices.extend(l for l in lines if l.recurse().notes)
     voices = fold_solos(voices)

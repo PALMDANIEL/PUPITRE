@@ -2,7 +2,8 @@
 # connaît les notes (PDF net, photo, photocopie, copie usée, photo WhatsApp, sombre, de travers, floue, petites portées),
 # les fait lire par le moteur de la branche ET par celui de la dernière version publiée, et compare.
 # Lancement : Actions › Banc d'essai › Run workflow (ou envoi sur une branche banc/…). Rien n'est publié.
-# Une partie seulement des copies : champ « filtre », ou « [banc: sombre,bwv267-ouverte] » dans le message de l'envoi.
+# Une partie seulement des copies : champ « filtre », ou « [banc: sombre,bwv267-ouverte] » dans le message de l'envoi ;
+# réglages d'essai du moteur de la branche : « [env: PUPITRE_DEBRUITAGE=0] ».
 name: Banc d'essai
 
 on:
@@ -97,8 +98,14 @@ jobs:
             i=$((i + 1))
           done
           ls "$RUNNER_TEMP/part"
+          # réglages d'essai du moteur de la branche : « [env: PUPITRE_DEBRUITAGE=0 …] » dans le message de l'envoi
+          ENVARGS=""
+          if [ "${{ matrix.moteur }}" = branche ]; then
+            for kv in $(printf '%s' "$MESSAGE" | sed -n 's/.*\[env: *\([^]]*\)\].*/\1/p' | head -1); do ENVARGS="$ENVARGS -e $kv"; done
+          fi
+          echo "Réglages : ${ENVARGS:-aucun}"
           # lectures faites dans l'image (Audiveris, homr) ; les fichiers lourds sont retirés dans l'image (écrits par root)
-          docker run --rm -v "$RUNNER_TEMP/part:/part" -v "$PWD/engine:/app/engine" -v "$RUNNER_TEMP/scripts:/app/.github/scripts" -w /app/engine/bench pupitre-moteur \
+          docker run --rm $ENVARGS -v "$RUNNER_TEMP/part:/part" -v "$PWD/engine:/app/engine" -v "$RUNNER_TEMP/scripts:/app/.github/scripts" -w /app/engine/bench pupitre-moteur \
             sh -c 'mkdir -p /tmp/home && /opt/venv/bin/python3 run_bench.py /part -j 2 && /opt/venv/bin/python3 /app/.github/scripts/diag_cas.py /part > /part/_diag.txt 2>&1; find /part \( -name omr -o -name omr-alt -o -name pages -o -name pre -o -name double -o -name "source.*" \) -prune -exec rm -rf {} +; chmod -R a+rwX /part' \
             | tee "$RUNNER_TEMP/sortie.txt"
           cp "$RUNNER_TEMP/sortie.txt" "$RUNNER_TEMP/part/_sortie.txt"

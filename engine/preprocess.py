@@ -3,7 +3,7 @@ Pré-traitement : PDF ou photos -> pages nettoyées (cadrage, éclairage, bords,
 Usage : python3 preprocess.py <source.pdf|image|dossier_de_pages> <dossier_sortie>
 Images : JPG, PNG, HEIC/HEIF (iPhone), WEBP, TIFF (plusieurs pages), BMP. Un dossier = ses fichiers dans l'ordre des noms.
 """
-import sys, cv2, numpy as np, pathlib, tempfile
+import os, sys, cv2, numpy as np, pathlib, tempfile
 import imgio
 from PIL import Image, ImageOps
 
@@ -36,6 +36,13 @@ def best_angle(bw, span=3.0):
     return float(best) if sharpness(best) > 1.1 * sharpness(0.0) else 0.0
 
 
+def _hough_angle(bw):
+    """Ancien calcul de l'angle (Hough probabiliste), gardé pour le banc d'essai : PUPITRE_REDRESSEMENT=hough."""
+    lines = cv2.HoughLinesP(255 - bw, 1, np.pi / 1800, 200, minLineLength=bw.shape[1] // 3, maxLineGap=20)
+    angles = [a for a in (np.degrees(np.arctan2(y2 - y1, x2 - x1)) for x1, y1, x2, y2 in (lines[:, 0] if lines is not None else [])) if abs(a) < 5]
+    return float(np.median(angles)) if angles else 0.0
+
+
 def deskew(bw):
     """
     Redresse la page (jusqu'à 5°) d'après ses lignes de portée : angle cherché par le profil des rangées, de durée
@@ -44,7 +51,7 @@ def deskew(bw):
     surveillance « aucun signe de vie pendant 5 minutes » pouvait alors arrêter la lecture.
     """
     h, w = bw.shape
-    angle = best_angle(bw, 5.0)
+    angle = best_angle(bw, 5.0) if os.environ.get("PUPITRE_REDRESSEMENT") != "hough" else _hough_angle(bw)
     if abs(angle) < 0.05:
         return bw
     M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
@@ -178,6 +185,8 @@ def denoise(gray):
     de milliers de points (lus comme points de durée ou staccatos, et Audiveris ralenti à plusieurs minutes par page).
     Un filtre bilatéral l'efface sans émousser les traits (banc : 14 298 → 459 points, photos bien éclairées inchangées).
     """
+    if os.environ.get("PUPITRE_DEBRUITAGE") == "0":  # banc d'essai : comparer sans
+        return gray
     return cv2.bilateralFilter(gray, 7, 30, 5) if grain(gray) >= GRAIN else gray
 
 
