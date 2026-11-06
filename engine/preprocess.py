@@ -307,9 +307,9 @@ def clean_page(gray, blurred=False):
     lecture par homr, affichage), on n'efface que ce qui touche le bord de l'image ou tient dans son premier centième :
     photo cadrée serré, la clé et la ligne qui relie les portées d'un système tombent dans la bande (petites portées :
     disposition non reconnue, donc ni double lecture ni armure reprise de homr). Audiveris, lui, lisait plus mal avec ces
-    signes de bord (banc : photos sur deux portées 96,9 → 94,3 %, photo sombre 87 → 56 %, la ligne du système gardée
-    lui faisant perdre l'armure d'une portée sur deux) ; l'ôter pour lui seul cassait d'autres lectures (penchées, floues
-    à quatre portées) : il reçoit donc exactement l'image d'avant.
+    signes de bord (banc : photos sur deux portées 96,9 → 94,3 %, la ligne du système gardée lui faisant perdre l'armure
+    d'une portée sur deux) ; lui laisser la clé sans la ligne ne faisait pas mieux au total (banc complet 79,6 contre
+    79,8 %) : il reçoit donc exactement l'image d'avant.
     """
     bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
     flat = cv2.divide(gray, bg, scale=255)

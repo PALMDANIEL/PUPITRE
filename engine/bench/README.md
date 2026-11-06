@@ -24,7 +24,10 @@ tessitures sont affichées ; avec un `truth.json` {voix: [hauteurs MIDI]}, elle 
 Un envoi sur une branche `banc/…` fabrique les copies, les fait lire par le moteur de la branche et par une version de
 référence, et compare. Dans le message de l'envoi :
 - `[banc: floue,fermee-dense]` : seulement les copies dont le nom contient l'un de ces morceaux ;
-- `[env: PUPITRE_SEUIL_FLOU=adaptatif]` : réglages passés au moteur de la branche (pas à la référence) ;
+- `[env: PUPITRE_SEUIL_FLOU=adaptatif]` : réglages passés au moteur de la branche (pas à la référence) ; pour mesurer
+  une correction avant/après : `PUPITRE_SEUIL_FLOU=adaptatif` (photos floues sans le seuillage par crêtes),
+  `PUPITRE_ARMURE=audiveris` (pas d'armure reprise de homr), `PUPITRE_MARGE=ancienne` (bande du bord effacée aussi
+  sur les pages), `PUPITRE_TROUS=0`, `PUPITRE_REDRESSEMENT=hough` ;
 - `[ref: banc/conditions-reelles]` : version de comparaison (branche ou étiquette ; sinon la dernière publiée).
 
 Résultats lisibles sans compte : annotations de la page du circuit (« Lecture », « Détail » par part, « Banc d'essai »
