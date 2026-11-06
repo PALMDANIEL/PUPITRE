@@ -20,12 +20,16 @@ les mesures sont appariées d'après leurs notes (une barre vue par un seul lect
 Usage : python3 arbitre.py <partition_audiveris> <partition_homr> <sortie.musicxml> <satb|grand>
 Écrit <sortie> et fiabilite.json à côté.
 """
-import copy, json, pathlib, re, statistics, sys
+import copy, json, os, pathlib, re, statistics, sys
 from fractions import Fraction
 
-from music21 import converter, note, chord, stream
+from music21 import converter, key, note, chord, stream
 from music21.common.numberTools import opFrac
 
+# À égalité de fautes, l'oreille du musicien : la lecture dont les notes sonnent juste avec les autres portées et
+# appartiennent à la tonalité l'emporte, si elle l'emporte nettement (sinon Audiveris, comme avant)
+MUSICAL = os.environ.get("PUPITRE_MUSICAL", "1") != "0"
+MUSIC_MARGIN = 0.15
 GRID = 0.25      # double croche : pas de contrôle de la couverture
 OFF_GRID = 4     # poids d'une durée hors grille, d'une fin de mesure fausse
 END = 4
@@ -44,6 +48,37 @@ def events(m):
                 seen.add(k)
                 out.append((off, p.ps, k[2], p))
     return sorted(out, key=lambda e: (e[0], -e[1]))
+
+
+# consonance de deux sons (demi-tons modulo 12), comme coherence.CONSONANCE : tierces, quinte, sixtes, octave
+_CONSONANCE = {0: 1.0, 3: 1.0, 4: 1.0, 7: 1.0, 8: 1.0, 9: 1.0, 5: 0.5, 6: 0.2, 1: 0.0, 2: 0.0, 10: 0.0, 11: 0.0}
+
+
+def _scale(ks):
+    """Classes de hauteur de la tonalité de l'armure (majeur) et de son relatif mineur, sensible comprise."""
+    sharps = ks.sharps if ks is not None else 0
+    tonic = (7 * sharps) % 12                      # do majeur + 1 dièse = sol majeur…
+    major = {(tonic + i) % 12 for i in (0, 2, 4, 5, 7, 9, 11)}
+    return major | {(tonic + 8) % 12}              # sensible du relatif mineur (sol dièse en la mineur)
+
+
+def musical(ev, others, ks):
+    """
+    Note musicale d'une lecture d'une portée dans sa mesure (0 à 1,5) : consonance de ses notes avec celles des autres
+    portées et entre ses propres voix, pondérée par la durée commune, plus la part de ses notes dans la tonalité.
+    """
+    if not ev:
+        return 0.0
+    good = total = 0.0
+    pairs = [(a, b) for a in ev for b in others] + [(a, b) for i, a in enumerate(ev) for b in ev[i + 1:]]
+    for (oa, pa, da, _x), (ob, pb, db, _y) in pairs:
+        w = min(oa + da, ob + db) - max(oa, ob)
+        if w > 1e-6:
+            good += w * _CONSONANCE[int(round(abs(pa - pb))) % 12]
+            total += w
+    scale = _scale(ks)
+    in_key = sum(1 for _o, ps, _d, _p in ev if int(round(ps)) % 12 in scale) / len(ev)
+    return (good / total if total else 0.5) + 0.5 * in_key
 
 
 def signature(ev):
@@ -358,7 +393,7 @@ def arbitrate(a_path, h_path, out, layout):
     if same < 0.4 * len(pairs) * len(sh):
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
-    doubtful, changed, agreed, mixed = {}, 0, 0, 0
+    doubtful, changed, agreed, mixed, by_ear = {}, 0, 0, 0, 0
     for k in sorted(set(range(count)) - {i for i, _j in pairs}):
         doubtful[str(k + 1)] = 0.5  # une barre vue par un seul lecteur : mesure à vérifier
     for k, j in pairs:
@@ -381,8 +416,15 @@ def arbitrate(a_path, h_path, out, layout):
                 agreed += 1
                 continue
             fa, fh = faults(x, y, length, voices), faults(y, x, length, voices)
-            # à égalité, Audiveris : meilleur lecteur des pages nettes (bécarres, rythmes cohérents mais différents)
+            # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
+            # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
+            if MUSICAL and fa == fh:
+                others = [e for t, ev_ in enumerate(ea) if t != s for e in ev_]
+                ks = m.getContextByClass(key.KeySignature)
+                if musical(y, others, ks) > musical(x, others, ks) + MUSIC_MARGIN:
+                    take_h = True
+                    by_ear += 1
             if voices > 1 and min(fa, fh) > 0:
                 comp, split = composite(x, y, voices, length, medians[s])
                 if signature(comp) not in (signature(x), signature(y)) and faults(comp, [], length, voices) < min(fa, fh):
@@ -403,7 +445,7 @@ def arbitrate(a_path, h_path, out, layout):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
