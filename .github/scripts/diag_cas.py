@@ -8,7 +8,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "engine")) 
 import render  # noqa: E402
 from music21 import converter, stream  # noqa: E402
 
-KEEP = ("Disposition", "disposition:", "Double lecture", "Seconde lecture", "Portées", "Lecture", "lecture", "Mesures",
+KEEP = ("Disposition", "disposition:", "Armure", "Double lecture", "Seconde lecture", "Portées", "Lecture", "lecture", "Mesures",
         "Lectures", "Voix réunies", "exactitude", "Mouvements", "clé", "partition:", "Aucune", "PUPITRE-ERREUR", "Traceback")
 
 for case in sorted(p for p in pathlib.Path(sys.argv[1]).iterdir() if p.is_dir()):

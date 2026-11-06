@@ -20,10 +20,10 @@ les mesures sont appariées d'après leurs notes (une barre vue par un seul lect
 Usage : python3 arbitre.py <partition_audiveris> <partition_homr> <sortie.musicxml> <satb|grand>
 Écrit <sortie> et fiabilite.json à côté.
 """
-import copy, json, pathlib, re, statistics, sys
+import copy, json, os, pathlib, re, statistics, sys
 from fractions import Fraction
 
-from music21 import converter, note, chord, stream
+from music21 import converter, key, note, chord, stream
 from music21.common.numberTools import opFrac
 
 GRID = 0.25      # double croche : pas de contrôle de la couverture
@@ -326,8 +326,63 @@ def pair_measures(sa, sh):
     return filled
 
 
+def _keys(score):
+    return [k.sharps for p in score.parts for k in p.recurse().getElementsByClass(key.KeySignature)]
+
+
+def adopt_key(a, h):
+    """
+    Armure perdue par Audiveris, lue en entier par homr : petites portées (dièses réduits à des points au seuillage :
+    1 dièse lu au lieu de 3), photo bougée (chaque dièse n'est plus que deux taches : aucune armure lue). homr, entraîné
+    sur des photos, lit alors la bonne (banc : 3 et 4 dièses sur les six copies examinées), et sur les pages nettes les
+    deux lecteurs s'accordent. On ne prend celle de homr que si elle est la même sur toutes ses portées et qu'Audiveris
+    n'a lu, partout, que moins d'altérations du même genre (la lecture en perd bien plus souvent qu'elle n'en invente).
+    Les notes sans altération écrite prennent celle de la nouvelle armure. Rend l'armure adoptée, ou None.
+    """
+    if os.environ.get("PUPITRE_ARMURE") == "audiveris":
+        return None
+    found = set(_keys(h))
+    if len(found) != 1 or not (target := found.pop()):
+        return None
+    if any(k * target < 0 or abs(k) >= abs(target) for k in _keys(a)):
+        return None
+    wanted = key.KeySignature(target)
+    for part in a.parts:
+        measures = list(part.getElementsByClass(stream.Measure))
+        if not measures:
+            continue
+        if measures[0].keySignature is None:
+            measures[0].insert(0, key.KeySignature(target))
+        for m in measures:
+            for ks in m.getElementsByClass(key.KeySignature):
+                ks.sharps = target
+            carried = set()  # une altération écrite vaut pour la suite de la mesure
+            for n in m.recurse().notes:
+                for pt in n.pitches:
+                    if pt.accidental is not None and pt.accidental.displayStatus:
+                        carried.add((pt.step, pt.octave))
+                    elif (pt.step, pt.octave) not in carried:
+                        want = wanted.accidentalByStep(pt.step)
+                        pt.accidental = copy.deepcopy(want) if want else None
+    return target
+
+
 def arbitrate(a_path, h_path, out, layout):
     a, h = converter.parse(a_path), converter.parse(h_path)
+    before = sorted(set(_keys(a)))
+    adopted = adopt_key(a, h)
+    if adopted is not None:
+        print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
+    try:
+        _arbitrate(a, h, out, layout)
+    except SystemExit as e:
+        if adopted is None:
+            raise
+        a.write("musicxml", fp=out, makeNotation=False)  # pas d'arbitrage mesure par mesure, mais l'armure est rétablie
+        print(f"{e} ; lecture d'Audiveris gardée, avec l'armure de homr", file=sys.stderr)
+
+
+def _arbitrate(a, h, out, layout):
     sh = staves(h)
     voices = 2 if layout == "grand" else 1
     # mêmes portées des deux côtés ; seule exception : la portée d'instrument au-dessus du chœur (disposition « grand »),
