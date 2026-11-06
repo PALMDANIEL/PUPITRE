@@ -360,19 +360,26 @@ def adopt_key(a, h):
         measures = list(part.getElementsByClass(stream.Measure))
         if not measures:
             continue
-        if measures[0].keySignature is None:
-            measures[0].insert(0, key.KeySignature(target))
+        current = 0  # armure lue par Audiveris en vigueur
         for m in measures:
+            if m.keySignature is not None:
+                current = m.keySignature.sharps
             for ks in m.getElementsByClass(key.KeySignature):
                 ks.sharps = target
+            if current == target:
+                continue  # notes déjà écrites dans la bonne armure
             carried = set()  # une altération écrite vaut pour la suite de la mesure
             for n in m.recurse().notes:
+                if n.tie is not None and n.tie.type in ("stop", "continue"):
+                    continue  # note liée depuis la mesure d'avant : elle garde son altération
                 for pt in n.pitches:
                     if pt.accidental is not None and pt.accidental.displayStatus:
                         carried.add((pt.step, pt.octave))
                     elif (pt.step, pt.octave) not in carried:
                         want = wanted.accidentalByStep(pt.step)
                         pt.accidental = copy.deepcopy(want) if want else None
+        if measures[0].keySignature is None:
+            measures[0].insert(0, key.KeySignature(target))
     return target
 
 
@@ -382,12 +389,13 @@ def arbitrate(a_path, h_path, out, layout):
     adopted = adopt_key(a, h)
     if adopted is not None:
         print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
+    keyed = copy.deepcopy(a) if adopted is not None else None  # _arbitrate réunit des parties avant de renoncer
     try:
         _arbitrate(a, h, out, layout)
     except SystemExit as e:
-        if adopted is None:
+        if keyed is None:
             raise
-        a.write("musicxml", fp=out, makeNotation=False)  # pas d'arbitrage mesure par mesure, mais l'armure est rétablie
+        keyed.write("musicxml", fp=out, makeNotation=False)  # pas d'arbitrage mesure par mesure, mais l'armure est rétablie
         print(f"{e} ; lecture d'Audiveris gardée, avec l'armure de homr", file=sys.stderr)
 
 

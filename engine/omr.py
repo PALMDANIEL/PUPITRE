@@ -561,8 +561,13 @@ def main(src, work, layout=None, stage1=False):
             found = movements(omr)
         shutil.rmtree(alt, ignore_errors=True)
     if guess and (not found or broken(systems(omr))) and (BUDGET is None or 2 * (time.monotonic() - started) < BUDGET):
-        # les portées n'ont pas été regroupées comme sur l'image (quatre par système) : voix relues à part
+        # les portées n'ont pas été regroupées comme sur l'image (quatre par système) : voix relues à part. Deux portées :
+        # homr lit mal les accords, sa lecture ne remplace celle d'Audiveris que si elle est sûre (comme pour une copie
+        # tachée) ; depuis que les pages gardent la ligne du système, cette disposition est reconnue bien plus souvent
+        # (banc : photos penchée et sombre 92 → 60 et 42 % quand homr prenait le relais sans condition)
         print("Portées mal regroupées : lecture voix par voix", file=sys.stderr)
+        if guess == "grand":
+            min_exact = max(min_exact, 0.7)
         if by_voice(guess):
             shutil.rmtree(omr, ignore_errors=True)
             return
