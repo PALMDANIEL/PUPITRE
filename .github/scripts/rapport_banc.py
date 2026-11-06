@@ -64,9 +64,11 @@ def main(root):
         print("Reculs :\n")
         for c, x, y in sorted(worse, key=lambda t: t[2] - t[1]):
             print(f"- {c} : {x:.0%} → {y:.0%}" + (f" (échec : {new[c][3]})" if new[c][3] else ""))
-    if len(cases) <= 40:  # banc partiel : chaque copie, pour mesurer une correction avant/après
-        print("\nCopie par copie (référence → branche) :\n")
-        for c in cases:
+    # banc partiel : chaque copie, pour mesurer une correction avant/après ; banc complet : celles qui changent
+    shown = cases if len(cases) <= 40 else [c for c in cases if c in better or any(c == w[0] for w in worse)]
+    if shown:
+        print("\nCopie par copie (référence → branche) :\n" if len(cases) <= 40 else "\nCopies qui changent (référence → branche) :\n")
+        for c in shown:
             x, y = ref[c][0] / ref[c][1], new[c][0] / new[c][1]
             print(f"- {c} : {x:.1%} → {y:.1%} ({100 * (y - x):+.1f})" + (" ÉCHEC" if new[c][3] else ""))
     for label, side in (("de la branche", new), ("de la référence", ref)):

@@ -409,10 +409,23 @@ def regroup_by_place(parts):
     (dialogue avec soliste, place qui change, deux parties de même place dans une mesure).
     """
     rows = [list(p.getElementsByClass(stream.Measure)) for p in parts]
-    if len(parts) < 3 or len({len(r) for r in rows}) != 1:
+    if len(parts) < 3:
         return None
+    numbers = None
+    if len({len(r) for r in rows}) != 1:
+        # une partie plus courte que les autres (photo floue : 10 mesures contre 12) : mesures appariées par numéro,
+        # si chaque numéro est unique dans chaque partie et connu de la plus longue
+        numbers = [m.number for m in max(rows, key=len)]
+        aligned = []
+        for r in rows:
+            own = [m.number for m in r]
+            if len(set(own)) != len(own) or not set(own) <= set(numbers) or len(set(numbers)) != len(numbers):
+                return None
+            by_number = {m.number: m for m in r}
+            aligned.append([by_number.get(n) for n in numbers])
+        rows = aligned
     count = len(rows[0])
-    sings = lambda m: any(not n.duration.isGrace for n in m.recurse().notes)
+    sings = lambda m: m is not None and any(not n.duration.isGrace for n in m.recurse().notes)
     sung = [[i for i, r in enumerate(rows) if sings(r[k])] for k in range(count)]
     sizes = [len(s) for s in sung if s]
     if not sizes:
@@ -440,13 +453,19 @@ def regroup_by_place(parts):
         return None
     merged = []
     for g in groups:
-        base = copy.deepcopy(parts[g[0]])
+        first = max(g, key=lambda i: sum(m is not None for m in rows[i]))  # la plus longue (à égalité, la première)
+        base = copy.deepcopy(parts[first])
         own = list(base.getElementsByClass(stream.Measure))
+        if numbers is not None:
+            by_number = {m.number: m for m in own}
+            own = [by_number.get(n) for n in numbers]
         for k in range(count):
             singers = [i for i in g if i in sung[k]]
             if len(singers) > 1:
                 return None
-            if singers and singers[0] != g[0]:
+            if singers and singers[0] != first:
+                if own[k] is None:
+                    return None
                 _move(copy.deepcopy(rows[singers[0]][k]), own[k])
         names = {ABBR.get(t.lower()) for i in g for t in re.findall(r"[^\W\d_]+", clean_name(parts[i].partName) or "")}
         names.discard(None)
