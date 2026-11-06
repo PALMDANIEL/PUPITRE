@@ -94,9 +94,11 @@ export class ScoresApi {
   /** Relire les notes (photo, PDF), en annonçant ou non la disposition des voix */
   reread(id: string, disposition: Disposition | null) { return this.http.post<ScoreMeta>(`/api/scores/${id}/relire`, { disposition }); }
   retry(id: string) { return this.http.post<ScoreMeta>(`/api/scores/${id}/retry`, {}); }
-  correct(id: string, file: File) {
+  /** Partition corrigée ; aVerifier : mesures encore à vérifier (éditeur de notes), gardées en orange */
+  correct(id: string, file: File, aVerifier?: Record<string, number>) {
     const body = new FormData();
     body.append('file', file);
+    if (aVerifier) body.append('a_verifier', JSON.stringify(aVerifier));
     return this.http.put<ScoreMeta>(`/api/scores/${id}/partition`, body);
   }
   remove(id: string) { return this.http.delete<void>(`/api/scores/${id}`); }
