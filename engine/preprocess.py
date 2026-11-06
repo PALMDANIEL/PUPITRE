@@ -169,34 +169,6 @@ def blur_shape(gray):
     return np.array([[var[0], sxy], [sxy, var[90]]])
 
 
-def _psf(cov, base=1.2):
-    """Tache de flou gaussienne de cette covariance, moins le flou d'une photo nette (base), qu'on ne cherche pas à défaire."""
-    w, v = np.linalg.eigh(cov - base ** 2 * np.eye(2))
-    w = np.maximum(w, 0.3)
-    inv = np.linalg.inv(v @ np.diag(w) @ v.T)
-    r = int(np.ceil(3 * np.sqrt(w.max())))
-    yy, xx = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32)
-    k = np.exp(-0.5 * (inv[0, 0] * xx * xx + 2 * inv[0, 1] * xx * yy + inv[1, 1] * yy * yy))
-    return (k / k.sum()).astype(np.float32)
-
-
-def deconvolve(gray, iters=None):
-    """
-    Déconvolution de Richardson-Lucy de l'encre (papier 0, noir 1) par la tache de flou mesurée (blur_shape) : rend les
-    traits fins que le flou avait étalés, dans le sens où il les avait étalés.
-    """
-    iters = iters or int(os.environ.get("PUPITRE_RL_ITER", 15))
-    k = _psf(blur_shape(gray))
-    flipped = cv2.flip(k, -1)
-    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31).astype(np.float32)
-    ink = np.clip(1 - gray.astype(np.float32) / np.maximum(bg, 1), 0, 1) + 1e-3
-    est = ink.copy()
-    for _ in range(iters):
-        conv = cv2.filter2D(est, -1, k, borderType=cv2.BORDER_REFLECT)
-        est *= cv2.filter2D(ink / np.maximum(conv, 1e-6), -1, flipped, borderType=cv2.BORDER_REFLECT)
-    return np.clip(255 * (1 - np.clip(est - 1e-3, 0, 1)), 0, 255).astype(np.uint8)
-
-
 def unblur(gray):
     """
     Photo floue (mise au point manquée, bougé) : le seuillage coupait les lignes de portée en pointillés et faisait des
@@ -206,8 +178,6 @@ def unblur(gray):
     w = edge_width(gray)
     if w <= BLUR:
         return gray
-    if os.environ.get("PUPITRE_FLOU") == "rl":
-        return deconvolve(gray)
     amount = min(1.5, (w - BLUR) * 0.75)
     soft = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), w / 2.5)
     return np.clip(gray + amount * (gray.astype(np.float32) - soft), 0, 255).astype(np.uint8)
@@ -225,25 +195,6 @@ def interline(gray):
     gaps = np.diff(rows)[np.diff(cols) == 0]
     hist = np.convolve(np.bincount(gaps[(gaps >= 6) & (gaps <= 80)], minlength=81), [1, 2, 1], "same")
     return int(np.argmax(hist)) if hist.max() > 0 else 0
-
-
-SMALL = 17  # interligne en dessous duquel la page est agrandie (banc : petites portées 14, gravures et vraies copies 18 à 22)
-
-
-def enlarge(gray):
-    """
-    Petites portées (recueil serré, page photographiée de loin) : Audiveris prenait la clé de sol pour une clé de fa,
-    perdait l'armure et le chiffrage (interligne de 14 px), et le seuillage réduisait les dièses à des points. La page
-    est agrandie avant le seuillage, pour un interligne de 22 px, sans dépasser 19 millions de points (Audiveris
-    refuse une page de plus de 20 millions de points et n'exporte alors rien).
-    """
-    sp = interline(gray)
-    if not sp or sp >= SMALL or os.environ.get("PUPITRE_AGRANDIR") == "0":
-        return gray
-    k = min(2.0, 22 / sp, (19e6 / gray.size) ** 0.5)
-    if k < 1.1:
-        return gray
-    return cv2.resize(gray, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
 
 
 def is_digital(gray):
@@ -269,10 +220,81 @@ def plain_page(gray):
     return cv2.threshold(gray, 160, 255, cv2.THRESH_BINARY)[1]
 
 
-def clean_page(gray):
+def _ridges(s, axis, lo, d=0):
+    """
+    Crête d'un trait mince : maximum local du contraste en travers du trait (axis 0 : trait horizontal, 1 : vertical).
+    d : exige aussi du papier de part et d'autre, à d pixels (sinon une lettre, un chiffre de mesure ou le côté d'une tête
+    donnent aussi une crête). Une queue est ainsi coupée là où elle croise une ligne de portée : refermé par lines.
+    """
+    ridge = (s >= np.roll(s, 1, axis)) & (s >= np.roll(s, -1, axis)) & (s >= lo)
+    if d:
+        ridge &= s - np.maximum(np.roll(s, d, axis), np.roll(s, -d, axis)) >= 0.4 * s
+    return ridge
+
+
+def blur_threshold(gray, plain, hi=0.45, lo=0.12, mid=0.30):
+    """
+    Seuillage d'une photo floue. Le seuillage adaptatif (encre = plus sombre que la moyenne locale) y faisait deux
+    erreurs : loin de l'encre, le halo du flou passait pour de l'encre (lignes de portée épaisses de 12 px, têtes collées
+    aux lignes) ; près de l'encre, la moyenne baissait et les traits fins disparaissaient (queues coupées dans la portée,
+    dièses réduits à des points, barres en pointillés). Dans la bande des portées, chaque sorte de signe a son critère :
+      - têtes, ligatures, clés : contraste d'au moins hi (formes compactes, sans halo) ;
+      - lignes de portée, queues, barres : la crête du trait (maximum du contraste en travers, papier de part et
+        d'autre), même pâle (lo), gardée si elle est longue (1,5 interligne à l'horizontale, 1,2 à la verticale),
+        retracée sur 3 pixels d'épaisseur ; le papier est cherché à la distance où le flou s'éteint (bougé de côté :
+        les traits verticaux sont étalés deux fois plus) ;
+      - crochets, courbes des clés, liaisons, contour des têtes blanches : crête d'un trait (pas d'un point) de
+        contraste moyen (mid), à l'écart des petits points (sinon une étoile se dessine autour de chacun).
+    Hors de cette bande (paroles, titre), plain : le seuillage ordinaire (des crêtes hachaient les lettres).
+    """
+    sp = interline(gray) or 21
+    bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31).astype(np.float32)
+    c = np.clip(1 - gray.astype(np.float32) / np.maximum(bg, 1), 0, 1)
+    rect = lambda w, h: cv2.getStructuringElement(cv2.MORPH_RECT, (max(1, int(w)), max(1, int(h)) | 1))
+    blobs = c >= hi
+    ink = blobs.copy()
+
+    def lines(ridge, axis, length):
+        """Crêtes longues d'au moins length interlignes, retracées sur 3 pixels d'épaisseur."""
+        along = lambda k: rect(k, 1) if axis == 0 else rect(1, k)
+        across = np.ones((3, 1) if axis == 0 else (1, 3), np.uint8)
+        fat = cv2.dilate(ridge.astype(np.uint8), across)  # une crête bruitée zigzague d'un pixel
+        fat = cv2.morphologyEx(fat, cv2.MORPH_CLOSE, along(max(3, sp // 2)))  # coupée là où un autre trait la croise
+        return cv2.dilate(cv2.morphologyEx(fat, cv2.MORPH_OPEN, along(max(5, length * sp))) & fat, across)
+
+    smooth_h, smooth_v = cv2.blur(c, (9, 1)), cv2.blur(c, (1, 9))  # lissés le long du trait
+    # lignes de portée : traits isolés (papier dessus et dessous) longs de 4 interlignes ; la bande des portées en part
+    strict = lines(_ridges(smooth_h, 0, lo, 6), 0, 1.5)
+    long_ = cv2.morphologyEx(strict, cv2.MORPH_OPEN, rect(4 * sp, 1))
+    staves = cv2.dilate(long_, rect(6 * sp, 1.4 * sp)) > 0
+    music = cv2.dilate(long_, rect(6 * sp, 4.4 * sp)) > 0  # de 2,2 interlignes au-dessus à 2,2 au-dessous
+    # dans la portée, la crête suffit : sous la clé, l'armure et le chiffrage, la ligne passe entre des signes
+    ink |= (strict > 0) | ((lines(_ridges(smooth_h, 0, lo), 0, 1.5) > 0) & staves)
+    # traits verticaux isolés à leur tour, à la distance où le flou horizontal (bougé) s'éteint
+    side = int(np.clip(round(2.2 * np.sqrt(blur_shape(gray)[0, 0])), 5, 12))
+    ink |= lines(_ridges(smooth_v, 1, lo, side), 1, 1.2) > 0
+    s = cv2.GaussianBlur(c, (0, 0), 1.0)
+    count = np.zeros(c.shape, np.uint8)
+    for dy, dx in ((1, 0), (0, 1), (1, 1), (1, -1)):
+        count += ((s >= np.roll(s, (dy, dx), (0, 1))) & (s >= np.roll(s, (-dy, -dx), (0, 1)))).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(blobs.astype(np.uint8), 8)
+    dot = (st[:, cv2.CC_STAT_AREA] <= 0.35 * sp * sp) & (st[:, cv2.CC_STAT_WIDTH] <= 0.8 * sp) & (st[:, cv2.CC_STAT_HEIGHT] <= 0.8 * sp)
+    dot[0] = False
+    near = cv2.dilate(dot[lab].astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+    thin = cv2.dilate(((count >= 1) & (count <= 3) & (s >= mid) & ~near).astype(np.uint8), np.ones((2, 2), np.uint8))
+    n, lab, st, _ = cv2.connectedComponentsWithStats(thin, 8)
+    keep = st[:, cv2.CC_STAT_AREA] >= sp
+    keep[0] = False
+    ink |= keep[lab]
+    return np.where(music, np.where(ink, 0, 255), plain).astype(np.uint8)
+
+
+def clean_page(gray, blurred=False):
     bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
     flat = cv2.divide(gray, bg, scale=255)
     bw = cv2.adaptiveThreshold(flat, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, 15)
+    if blurred:
+        bw = blur_threshold(gray, bw)
 
     h, w = bw.shape
     # Taches et traits de bord : décidés d'un coup pour toutes les composantes (un masque de la page entière par
@@ -569,12 +591,12 @@ def main(src, out_dir):
                 raw = upright(crop_page(raw))
             gray = to_gray(raw)
             specks.append(speck_density(gray))  # avant le renforcement, qui ferait ressortir le grain de la photo
+            blurred = photo and edge_width(gray) > BLUR and os.environ.get("PUPITRE_SEUIL_FLOU") == "cretes"
             if photo:
                 gray = unblur(gray)
-            gray = enlarge(gray)
             plain = plain_page(gray)
             worn += dashed_lines(plain)
-            plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray))
+            plain, cleaned = repair_staff_lines(plain), repair_staff_lines(clean_page(gray, blurred))
             if is_digital(gray):
                 digital += 1
                 best.append(plain); other.append(cleaned)
