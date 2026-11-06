@@ -254,13 +254,24 @@ def blur_threshold(gray, plain, hi=0.45, lo=0.12, mid=0.30):
     blobs = c >= hi
     ink = blobs.copy()
 
-    def lines(ridge, axis, length):
-        """Crêtes longues d'au moins length interlignes, retracées sur 3 pixels d'épaisseur."""
+    def lines(ridge, axis, length, own=0.0):
+        """
+        Crêtes longues d'au moins length interlignes, retracées sur 3 pixels d'épaisseur. own : part de cette longueur
+        faite de crête hors des taches noires (deux points ou deux têtes l'un au-dessus de l'autre ont aussi une crête
+        verticale, et les relier inventerait une barre ou une queue).
+        """
         along = lambda k: rect(k, 1) if axis == 0 else rect(1, k)
         across = np.ones((3, 1) if axis == 0 else (1, 3), np.uint8)
         fat = cv2.dilate(ridge.astype(np.uint8), across)  # une crête bruitée zigzague d'un pixel
         fat = cv2.morphologyEx(fat, cv2.MORPH_CLOSE, along(max(3, sp // 2)))  # coupée là où un autre trait la croise
-        return cv2.dilate(cv2.morphologyEx(fat, cv2.MORPH_OPEN, along(max(5, length * sp))) & fat, across)
+        out = cv2.dilate(cv2.morphologyEx(fat, cv2.MORPH_OPEN, along(max(5, length * sp))) & fat, across)
+        if own:
+            n, lab, _st, _ = cv2.connectedComponentsWithStats(out, 8)
+            mine = np.bincount(lab[ridge & ~blobs], minlength=n)
+            keep = mine >= own * length * sp
+            keep[0] = False
+            out = keep[lab].astype(np.uint8)
+        return out
 
     smooth_h, smooth_v = cv2.blur(c, (9, 1)), cv2.blur(c, (1, 9))  # lissés le long du trait
     # lignes de portée : traits isolés (papier dessus et dessous) longs de 4 interlignes ; la bande des portées en part
@@ -272,7 +283,7 @@ def blur_threshold(gray, plain, hi=0.45, lo=0.12, mid=0.30):
     ink |= (strict > 0) | ((lines(_ridges(smooth_h, 0, lo), 0, 1.5) > 0) & staves)
     # traits verticaux isolés à leur tour, à la distance où le flou horizontal (bougé) s'éteint
     side = int(np.clip(round(2.2 * np.sqrt(blur_shape(gray)[0, 0])), 5, 12))
-    ink |= lines(_ridges(smooth_v, 1, lo, side), 1, 1.2) > 0
+    ink |= lines(_ridges(smooth_v, 1, lo, side), 1, 1.2, own=0.9) > 0
     s = cv2.GaussianBlur(c, (0, 0), 1.0)
     count = np.zeros(c.shape, np.uint8)
     for dy, dx in ((1, 0), (0, 1), (1, 1), (1, -1)):
@@ -293,8 +304,7 @@ def clean_page(gray, blurred=False):
     bg = cv2.medianBlur(cv2.dilate(gray, np.ones((7, 7), np.uint8)), 31)
     flat = cv2.divide(gray, bg, scale=255)
     bw = cv2.adaptiveThreshold(flat, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 41, 15)
-    if blurred:
-        bw = blur_threshold(gray, bw)
+    raw = bw.copy()
 
     h, w = bw.shape
     # Taches et traits de bord : décidés d'un coup pour toutes les composantes (un masque de la page entière par
@@ -323,6 +333,12 @@ def clean_page(gray, blurred=False):
         band = np.zeros((h, w), bool)
         band[:, :m] = band[:, -m:] = band[:m, :] = band[-m:, :] = True
         bw[band & wipe[lab]] = 255
+    if blurred:
+        # bords de page décidés sur le seuillage ordinaire : avec des traits fins, la ligne qui relie les portées d'un
+        # système ne touche plus les lignes de portée, et elle passait pour le bord de la page (effacée)
+        removed = (raw < 128) & (bw >= 128)
+        bw = blur_threshold(gray, bw)
+        bw[removed] = 255
 
     n, lab, stats, _ = cv2.connectedComponentsWithStats(255 - bw, 8)
     specks = stats[:, cv2.CC_STAT_AREA] < 6
@@ -591,7 +607,8 @@ def main(src, out_dir):
                 raw = upright(crop_page(raw))
             gray = to_gray(raw)
             specks.append(speck_density(gray))  # avant le renforcement, qui ferait ressortir le grain de la photo
-            blurred = photo and edge_width(gray) > BLUR and os.environ.get("PUPITRE_SEUIL_FLOU") == "cretes"
+            # photo floue : seuillage par crêtes (PUPITRE_SEUIL_FLOU=adaptatif : l'ancien, pour le banc d'essai)
+            blurred = photo and edge_width(gray) > BLUR and os.environ.get("PUPITRE_SEUIL_FLOU") != "adaptatif"
             if photo:
                 gray = unblur(gray)
             plain = plain_page(gray)
