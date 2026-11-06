@@ -47,6 +47,8 @@ def run_case(case: pathlib.Path, reuse: bool):
     t0 = time.time()
     if not (reuse and part):
         r = subprocess.run([sys.executable, str(ENGINE / "omr.py"), str(src), str(case)], capture_output=True, text=True)
+        # journal de la lecture (chemin suivi, lecteurs, arbitrage), sans les signes de vie : pour comprendre un recul
+        (case / "journal.txt").write_text("\n".join(l for l in (r.stdout + r.stderr).splitlines() if not l.startswith(("actif:", "progress:"))), encoding="utf-8")
         if r.returncode:
             return case.name, {"error": (r.stderr.strip().splitlines() or ["?"])[-1][:160]}
         part = next((p for p in case.glob("partition.*")), None)

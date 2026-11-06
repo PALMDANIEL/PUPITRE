@@ -63,11 +63,12 @@ def main(root):
         print("Reculs :\n")
         for c, x, y in sorted(worse, key=lambda t: t[2] - t[1]):
             print(f"- {c} : {x:.0%} → {y:.0%}" + (f" (échec : {new[c][3]})" if new[c][3] else ""))
-    failed = [c for c in cases if new[c][3]]
-    if failed:
-        print("\nÉchecs de la branche :\n")
-        for c in failed:
-            print(f"- {c} : {new[c][3]}")
+    for label, side in (("de la branche", new), ("de la référence", ref)):
+        failed = [c for c in cases if side[c][3]]
+        if failed:
+            print(f"\nÉchecs {label} :\n")
+            for c in failed:
+                print(f"- {c} : {side[c][3]}")
 
 
 if __name__ == "__main__":

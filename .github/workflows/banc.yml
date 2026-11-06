@@ -2,6 +2,7 @@
 # connaît les notes (PDF net, photo, photocopie, copie usée, photo WhatsApp, sombre, de travers, floue, petites portées),
 # les fait lire par le moteur de la branche ET par celui de la dernière version publiée, et compare.
 # Lancement : Actions › Banc d'essai › Run workflow (ou envoi sur une branche banc/…). Rien n'est publié.
+# Une partie seulement des copies : champ « filtre », ou « [banc: sombre,bwv267-ouverte] » dans le message de l'envoi.
 name: Banc d'essai
 
 on:
@@ -10,6 +11,9 @@ on:
       reference:
         description: Version de comparaison (étiquette ou branche)
         default: v1.5.7
+      filtre:
+        description: Copies à lire (morceaux de nom séparés par des virgules ; vide = toutes)
+        default: ''
   push:
     branches: ['banc/**']
 
@@ -19,6 +23,8 @@ permissions:
 env:
   REFERENCE: ${{ github.event.inputs.reference || 'v1.5.7' }}
   SHARDS: 6
+  FILTRE: ${{ github.event.inputs.filtre }}
+  MESSAGE: ${{ github.event.head_commit.message }}
 
 jobs:
   copies:
@@ -60,7 +66,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: banc-outils
-          sparse-checkout: engine/bench
+          sparse-checkout: |
+            engine/bench
+            .github/scripts
       - uses: actions/download-artifact@v4
         with:
           name: copies
@@ -71,21 +79,32 @@ jobs:
         shell: bash
         run: |
           rm -rf engine/bench && cp -r banc-outils/engine/bench engine/bench
-          mkdir -p "$RUNNER_TEMP/part"
+          mkdir -p "$RUNNER_TEMP/part" "$RUNNER_TEMP/scripts"
+          cp banc-outils/.github/scripts/*.py "$RUNNER_TEMP/scripts/"
+          if [ -z "$FILTRE" ]; then FILTRE=$(printf '%s' "$MESSAGE" | sed -n 's/.*\[banc: *\([^]]*\)\].*/\1/p' | head -1); fi
+          echo "Filtre : ${FILTRE:-aucun}"
           i=0
           for d in "$RUNNER_TEMP"/copies/*/*/; do
+            c=$(basename "$(dirname "$d")")-$(basename "$d")
+            if [ -n "$FILTRE" ]; then
+              keep=0
+              for f in $(printf '%s' "$FILTRE" | tr ',' ' '); do case "$c" in *"$f"*) keep=1;; esac; done
+              [ "$keep" = 1 ] || continue
+            fi
             if [ $((i % SHARDS)) -eq ${{ matrix.part }} ]; then
-              c=$(basename "$(dirname "$d")")-$(basename "$d")
               cp -r "$d" "$RUNNER_TEMP/part/$c"
             fi
             i=$((i + 1))
           done
           ls "$RUNNER_TEMP/part"
           # lectures faites dans l'image (Audiveris, homr) ; les fichiers lourds sont retirés dans l'image (écrits par root)
-          docker run --rm -v "$RUNNER_TEMP/part:/part" -v "$PWD/engine:/app/engine" -w /app/engine/bench pupitre-moteur \
-            sh -c 'mkdir -p /tmp/home && /opt/venv/bin/python3 run_bench.py /part -j 2; find /part \( -name omr -o -name omr-alt -o -name pages -o -name pre -o -name double -o -name "source.*" \) -prune -exec rm -rf {} +; chmod -R a+rwX /part' \
+          docker run --rm -v "$RUNNER_TEMP/part:/part" -v "$PWD/engine:/app/engine" -v "$RUNNER_TEMP/scripts:/app/.github/scripts" -w /app/engine/bench pupitre-moteur \
+            sh -c 'mkdir -p /tmp/home && /opt/venv/bin/python3 run_bench.py /part -j 2 && /opt/venv/bin/python3 /app/.github/scripts/diag_cas.py /part > /part/_diag.txt 2>&1; find /part \( -name omr -o -name omr-alt -o -name pages -o -name pre -o -name double -o -name "source.*" \) -prune -exec rm -rf {} +; chmod -R a+rwX /part' \
             | tee "$RUNNER_TEMP/sortie.txt"
           cp "$RUNNER_TEMP/sortie.txt" "$RUNNER_TEMP/part/_sortie.txt"
+          # résultats lisibles sans compte GitHub (annotations publiques) : une ligne par copie
+          echo "::notice title=Lecture ${{ matrix.moteur }} ${{ matrix.part }}::$(sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\n/%0A/g' "$RUNNER_TEMP/sortie.txt")"
+          [ -s "$RUNNER_TEMP/part/_diag.txt" ] && echo "::notice title=Détail ${{ matrix.moteur }} ${{ matrix.part }}::$(grep -v Warning "$RUNNER_TEMP/part/_diag.txt" | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\n/%0A/g')" || true
       - uses: actions/upload-artifact@v4
         with:
           name: lecture-${{ matrix.moteur }}-${{ matrix.part }}
