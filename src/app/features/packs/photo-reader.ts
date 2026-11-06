@@ -2,11 +2,13 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { STATUS_LABEL } from '../../core/api';
+import { PHOTO_ADVICE, PhotoProblem, checkPhoto } from '../../core/photo-check';
 import { PackStore } from '../../core/packs';
 import { RemoteJob, RemoteReader } from '../../core/remote';
 import { RenewAccess } from './renew-access';
 
-interface Page { file: File; url: string }
+/** problems : null pendant le contrôle de la photo, [] si elle est bonne */
+interface Page { file: File; url: string; problems: PhotoProblem[] | null }
 
 @Component({
   selector: 'app-photo-reader',
@@ -28,9 +30,9 @@ interface Page { file: File; url: string }
       <section class="glass pages" aria-label="Pages de la partition">
         <div class="thumbs">
           @for (p of pages(); track p.url; let i = $index) {
-            <figure>
+            <figure [class.warn]="p.problems?.length">
               @if (isImage(p.file)) { <img [src]="p.url" [alt]="'Page ' + (i + 1)"> } @else { <span class="doc">PDF</span> }
-              <figcaption>Page {{ i + 1 }}</figcaption>
+              <figcaption>Page {{ i + 1 }}@if (p.problems?.length) { · À reprendre }</figcaption>
               <button type="button" class="drop" (click)="removePage(i)" [attr.aria-label]="'Retirer la page ' + (i + 1)">×</button>
             </figure>
           }
@@ -45,6 +47,17 @@ interface Page { file: File; url: string }
             <span>Galerie ou fichier</span>
           </label>
         </div>
+        <input #retake class="visually-hidden" type="file" accept="image/*" capture="environment" (change)="replace($event)">
+        @if (advice().length) {
+          <ul class="advice" aria-live="polite">
+            @for (a of advice(); track a.index) {
+              <li>
+                <p><b>Page {{ a.index + 1 }}</b> — {{ a.text }}</p>
+                <button type="button" class="btn quiet" (click)="retakeAt(a.index, retake)" [disabled]="busy()">Reprendre la page {{ a.index + 1 }}</button>
+              </li>
+            }
+          </ul>
+        }
         <label class="title">
           <span>Titre du chant</span>
           <input name="title" [(ngModel)]="title" placeholder="Ex. Tu es présent dans cette hostie" [disabled]="busy()">
@@ -97,6 +110,13 @@ interface Page { file: File; url: string }
     .doc { display: grid; place-items: center; height: 100%; font-weight: 800; color: #34479A; }
     figcaption { position: absolute; left: 0; right: 0; bottom: 0; padding: .25rem .4rem; font-size: .72rem; font-weight: 700; color: #fff;
                  background: linear-gradient(transparent, rgba(5, 9, 24, .8)); }
+    figure.warn { border: 2px solid #E8590C; }
+    figure.warn figcaption { background: linear-gradient(transparent, rgba(150, 50, 0, .92)); }
+    .advice { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
+    .advice li { display: grid; gap: .45rem; justify-items: start; padding: .7rem .85rem; border-radius: 12px;
+                 border-left: 3px solid #E8590C; background: color-mix(in srgb, #E8590C 9%, transparent); }
+    .advice p { margin: 0; font-size: .88rem; color: var(--ink); }
+    .advice .btn { font-size: .85rem; padding: .45rem .9rem; }
     .drop { position: absolute; top: .3rem; right: .3rem; width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer;
             background: rgba(5, 9, 24, .75); color: #fff; font-size: 1.1rem; line-height: 1; }
     .add { display: grid; place-items: center; align-content: center; gap: .4rem; aspect-ratio: 3 / 4; border-radius: 12px; cursor: pointer; text-align: center;
@@ -129,6 +149,10 @@ export class PhotoReader {
   protected readonly error = signal<string | null>(null);
   protected title = '';
   protected readonly busy = computed(() => this.remote.uploading());
+  /** Conseils de prise de vue, page par page : le plus gênant d'abord (flou, puis lumière, puis taille). */
+  protected readonly advice = computed(() => this.pages().flatMap((p, index) =>
+    p.problems?.length ? [{ index, text: p.problems.map((k) => PHOTO_ADVICE[k]).join(' ') }] : []));
+  private retakeIndex = -1;
 
   constructor() {
     void this.remote.follow();
@@ -143,7 +167,32 @@ export class PhotoReader {
     const input = e.target as HTMLInputElement;
     const files = [...(input.files ?? [])];
     input.value = '';
-    this.pages.update((list) => [...list, ...files.map((file) => ({ file, url: URL.createObjectURL(file) }))]);
+    const added = files.map((file) => ({ file, url: URL.createObjectURL(file), problems: null }));
+    this.pages.update((list) => [...list, ...added]);
+    added.forEach((page) => void this.check(page.url, page.file));
+  }
+
+  /** Photo contrôlée dans le téléphone (une demi-seconde) : le conseil s'affiche sous les pages. */
+  private async check(url: string, file: File) {
+    const problems = await checkPhoto(file);
+    this.pages.update((list) => list.map((p) => (p.url === url ? { ...p, problems } : p)));
+  }
+
+  protected retakeAt(index: number, input: HTMLInputElement) {
+    this.retakeIndex = index;
+    input.click();
+  }
+
+  /** Nouvelle photo à la place de la page à reprendre (même rang dans la partition). */
+  protected replace(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    const i = this.retakeIndex;
+    if (!file || i < 0 || i >= this.pages().length) return;
+    const page = { file, url: URL.createObjectURL(file), problems: null };
+    this.pages.update((list) => { URL.revokeObjectURL(list[i].url); return list.map((p, k) => (k === i ? page : p)); });
+    void this.check(page.url, file);
   }
   protected removePage(i: number) {
     this.pages.update((list) => { URL.revokeObjectURL(list[i].url); return list.filter((_, k) => k !== i); });
