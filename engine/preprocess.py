@@ -350,13 +350,6 @@ def clean_page(gray, blurred=False):
         old[(raw < 128) & (bw >= 128)] = 255
         if os.environ.get("PUPITRE_MARGE") == "ancienne":
             page = old.copy()
-    if os.environ.get("PUPITRE_MARGE_AUDIVERIS") == "cle":
-        # essai : Audiveris reçoit aussi la clé du bord, mais pas la longue ligne verticale du système
-        sp = interline(gray) or 21
-        ink = (page[:, :m] < 128).astype(np.uint8)
-        tall = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(20, int(9 * sp)))))
-        old = page.copy()
-        old[:, :m][cv2.dilate(tall, np.ones((1, 3), np.uint8)) > 0] = 255
     out = []
     for img in (page, old):
         n, lab_, stats_, _ = cv2.connectedComponentsWithStats(255 - img, 8)
@@ -621,7 +614,7 @@ def main(src, out_dir):
         pages = load_pages(src, t)
         if not pages:
             sys.exit("Le fichier ne contient aucune page lisible.")
-        best, other, pages_out, digital, worn, specks = [], [], [], 0, 0, []
+        best, other, pages_out, digital, worn, blurry, specks = [], [], [], 0, 0, 0, []
         for i, (raw, photo) in enumerate(pages, 1):
             if photo:
                 raw = upright(crop_page(raw))
@@ -629,6 +622,7 @@ def main(src, out_dir):
             specks.append(speck_density(gray))  # avant le renforcement, qui ferait ressortir le grain de la photo
             # photo floue : seuillage par crêtes (PUPITRE_SEUIL_FLOU=adaptatif : l'ancien, pour le banc d'essai)
             blurred = photo and edge_width(gray) > BLUR and os.environ.get("PUPITRE_SEUIL_FLOU") != "adaptatif"
+            blurry += blurred
             if photo:
                 gray = unblur(gray)
             plain = plain_page(gray)
@@ -648,6 +642,8 @@ def main(src, out_dir):
         pil[0].save(out / name, save_all=True, append_images=pil[1:], resolution=300)
     # photocopie usée (lignes en tirets) : omr.py tente alors la lecture voix par voix
     (out / "usee").write_text(str(worn), encoding="utf-8") if worn else (out / "usee").unlink(missing_ok=True)
+    # photo floue (seuillage par crêtes) : Audiveris y est le plus faible, omr.py laisse alors plus de place à homr
+    (out / "flou").write_text(str(blurry), encoding="utf-8") if blurry else (out / "flou").unlink(missing_ok=True)
     # saleté de la copie : petites taches par mégapixel (médiane des pages) ; omr.py décide d'après elle (SALETE)
     (out / "salete").write_text(f"{float(np.median(specks)):.0f}", encoding="utf-8")
     print(f"Pages préparées : {len(best)} (dont {digital} numériques{f', {worn} usées' if worn else ''})")
