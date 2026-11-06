@@ -378,6 +378,8 @@ def adopt_key(a, h):
                     elif (pt.step, pt.octave) not in carried:
                         want = wanted.accidentalByStep(pt.step)
                         pt.accidental = copy.deepcopy(want) if want else None
+                        if pt.accidental is not None:  # due à l'armure, pas écrite (render la prendrait pour une lue)
+                            pt.accidental.displayStatus = False
         if measures[0].keySignature is None:
             measures[0].insert(0, key.KeySignature(target))
     return target

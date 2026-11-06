@@ -350,6 +350,13 @@ def clean_page(gray, blurred=False):
         old[(raw < 128) & (bw >= 128)] = 255
         if os.environ.get("PUPITRE_MARGE") == "ancienne":
             page = old.copy()
+    if os.environ.get("PUPITRE_MARGE_AUDIVERIS") == "cle":
+        # essai : Audiveris reçoit aussi la clé du bord, mais pas la longue ligne verticale du système
+        sp = interline(gray) or 21
+        ink = (page[:, :m] < 128).astype(np.uint8)
+        tall = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(20, int(9 * sp)))))
+        old = page.copy()
+        old[:, :m][cv2.dilate(tall, np.ones((1, 3), np.uint8)) > 0] = 255
     out = []
     for img in (page, old):
         n, lab_, stats_, _ = cv2.connectedComponentsWithStats(255 - img, 8)
