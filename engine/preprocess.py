@@ -407,19 +407,27 @@ def unshear(bw):
 def _staves_in(profile, lo=0.2):
     """Lignes de portée d'une bande verticale : rangées d'encre horizontale, par groupes de 5 régulièrement espacées."""
     rows = np.flatnonzero(profile >= lo)
-    lines, start = [], None
+    lines, start, power = [], None, []
     for k, r in enumerate(rows):
         if start is None:
             start = r
         if k + 1 == len(rows) or rows[k + 1] != r + 1:
             if r - start <= 8:  # une ligne de portée est mince
                 lines.append(((start + r) / 2, r - start + 1))
+                power.append(float(profile[start:r + 1].max()))
             start = None
+
+    def regular(i):
+        gaps = np.diff([lines[i + j][0] for j in range(5)])
+        return 10 <= gaps.mean() <= 70 and gaps.max() - gaps.min() <= 0.25 * gaps.mean()
+
     staves, i = [], 0
     while i + 4 < len(lines):
-        ys = [lines[i + j][0] for j in range(5)]
-        gaps = np.diff(ys)
-        if 10 <= gaps.mean() <= 70 and gaps.max() - gaps.min() <= 0.25 * gaps.mean():
+        if regular(i):
+            # un trait parasite juste au-dessus (ligne supplémentaire, ligature) passe aussi pour une 1re ligne : si les
+            # 5 lignes qui suivent sont aussi régulières et plus marquées, c'est elles la portée (sinon décalée d'un cran)
+            if i + 5 < len(lines) and regular(i + 1) and min(power[i + 1:i + 6]) > min(power[i:i + 5]):
+                i += 1
             staves.append([lines[i + j] for j in range(5)])
             i += 5
         else:
@@ -474,32 +482,180 @@ def staff_chains(bw, strip=160, lo=0.12, thin=None):
                 chains.append([(x0, x1, staff)])
             else:
                 chain.append((x0, x1, staff))
-    return thin, chains
+    # deux chaînes qui se chevauchent sont la même portée, l'une décalée d'une ligne (trait parasite pris pour une
+    # ligne dans quelques bandes) : on garde la plus longue, sans quoi la portée serait retracée avec 6 lignes
+    kept = []
+    for c in sorted(chains, key=lambda c: -sum(b - a for a, b, _s in c)):
+        top, bottom = np.median([st[0][0] for _a, _b, st in c]), np.median([st[4][0] for _a, _b, st in c])
+        if len(c) >= 2 and any(top < b and bottom > a for a, b in (k[1] for k in kept if len(k[0]) >= 2)):
+            continue
+        kept.append((c, (top, bottom)))
+    order = {id(c): i for i, c in enumerate(chains)}
+    return thin, sorted((c for c, _r in kept), key=lambda c: order[id(c)])
 
 
-def faded_staves(bw, chains, sp0):
+def _fragments(bw):
+    """Petits traits horizontaux (4 px au moins, 4 de haut au plus) : ce qui reste des lignes d'une portée effacée."""
+    ink = (bw < 128).astype(np.uint8)
+    frag = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 1)))
+    n, lab, st, _ = cv2.connectedComponentsWithStats(frag, 8)
+    keep = np.zeros(n, np.uint8)
+    keep[1:] = st[1:, cv2.CC_STAT_HEIGHT] <= 4
+    return keep[lab]
+
+
+def bar_marks(bw, sp, long=False):
+    """
+    Barres de mesure possibles : traits verticaux minces de la hauteur d'une portée (3,4 à 4,7 interlignes), cassures
+    comblées. Sur une copie usée, les lignes de portée ont presque disparu mais les barres restent : leur haut et leur
+    bas sont la 1re et la 5e ligne. Rend [(x, haut, bas)] (des queues de notes s'y mêlent : on ne garde ensuite que les
+    hauteurs que plusieurs traits partagent). long=True : aussi les traits plus longs (ligne qui ouvre le système).
+    """
+    if not sp:
+        return []
+    ink = (bw < 128).astype(np.uint8)
+    v = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(5, sp // 2))))
+    v = cv2.morphologyEx(v, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, sp)))
+    n, _lab, st, _ = cv2.connectedComponentsWithStats(v, 8)
+    return [(int(x + w // 2), int(y), int(y + h)) for x, y, w, h, _a in st[1:]
+            if w <= max(7, sp // 3) and 3.4 * sp <= h and (long or h <= 4.7 * sp)]
+
+
+def bar_tilt(bars, sp):
+    """
+    Pente des portées (pixels par pixel) d'après les barres : celle qui aligne le mieux les hauts et les bas des barres
+    éloignées les unes des autres. Sur une copie usée, le redressement par les lignes échoue (elles ont disparu).
+    """
+    if len(bars) < 4:
+        return 0.0
+    x, t, b = (np.array(c, float) for c in zip(*bars))
+    far = np.abs(x[:, None] - x[None]) > 3 * sp
+    best, score = 0.0, 0.0
+    for k in np.arange(-0.03, 0.03001, 0.0005):
+        dt, db = t - k * x, b - k * x
+        d = np.hypot(dt[:, None] - dt[None], db[:, None] - db[None])
+        s = float((np.exp(-(d / (sp / 5)) ** 2) * far).sum())
+        if s > score * 1.0001:
+            best, score = float(k), s
+    return best
+
+
+def faded_staves(bw, chains, sp0, bars=(), verticals=()):
     """
     Portées dont les lignes ne sont plus que des bouts épars (vieille photocopie : 70 % de chaque ligne effacés), que
-    staff_chains ne voit pas bande par bande. On cherche sur toute la largeur la forme d'une portée entière : 5 rangées
-    de petits traits horizontaux (4 px au moins) à l'interligne près (cherché au quart de pixel), dont 4 au moins portent
-    un peu d'encre, sans traits entre elles (dans les paroles, les lettres en mettent partout). Rend des chaînes comme
-    staff_chains, de l'étendue des traits retrouvés, pour les portées qui ne chevauchent aucune chaîne connue.
+    staff_chains ne voit pas bande par bande. Deux indices :
+      - les barres de mesure (bar_marks) : plusieurs barres de même haut et même bas donnent la portée exactement ;
+      - la forme d'une portée entière sur toute la largeur : 5 rangées de petits traits horizontaux à l'interligne près
+        (cherché au quart de pixel), dont 4 au moins portent un peu d'encre.
+    Dans les deux cas, les lignes doivent porter bien plus de traits que les interlignes (dans les paroles, les lettres
+    en mettent partout). Rend des chaînes comme staff_chains, de l'étendue des traits retrouvés, pour les portées qui
+    ne chevauchent aucune chaîne connue. La page doit être d'aplomb (bar_tilt). Les bouts de la portée sont pris sur
+    les traits verticaux qui la traversent de part en part (verticals : ligne du système à gauche, dernière barre à
+    droite), les restes de lignes étant trop rares pour les voir.
     """
     if not sp0:
         return []
-    ink = (bw < 128).astype(np.uint8)
-    frag = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 1)))
-    n_, lab, st, _ = cv2.connectedComponentsWithStats(frag, 8)
-    keep = np.zeros(n_, np.uint8)
-    keep[1:] = st[1:, cv2.CC_STAT_HEIGHT] <= 4
-    ev = keep[lab]
+    ev = _fragments(bw)
     h, w = ev.shape
+    known = [(float(np.median([s_[0][0] for _a, _b, s_ in c])), float(np.median([s_[4][0] for _a, _b, s_ in c])))
+             for c in chains if len(c) >= 2]
+    taken = [(t - sp0, b + sp0) for t, b in known]
+
+    def rows_at(top, sp):
+        return [int(round(top + k * sp)) for k in range(5)], [int(round(top + (k + .5) * sp)) for k in range(4)]
+
+    def present(y):
+        return ev[max(0, y - 1):min(h, y + 2)].any(0)
+
+    def extent(top, sp, xs=()):
+        """Colonnes de la portée : des traits verticaux qui la traversent (ligne du système, barres), élargies aux
+        restes de ses lignes qui les prolongent (trous de moins de 3 interlignes comblés)."""
+        lines, _mids = rows_at(top, sp)
+        cols = np.stack([present(y) for y in lines]).any(0).astype(np.uint8)[None]
+        cols = cv2.morphologyEx(cols, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (int(3 * sp), 1)))[0]
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], cols, [0]])))
+        runs = [(int(a), int(b)) for a, b in zip(edges[::2], edges[1::2])]
+        across = [x for x, t, b in verticals if t <= top + sp / 2 and b >= top + 3.5 * sp] + list(xs)
+        if across:
+            x0, x1 = min(across), max(across)
+            for a, b in runs:  # restes de lignes qui débordent des traits verticaux
+                if a < x0 <= b + sp:
+                    x0 = a
+                if a - sp <= x1 < b:
+                    x1 = b
+            return int(x0), int(x1)
+        if not runs:
+            return None
+        return max(runs, key=lambda r: r[1] - r[0])
+
+    def evidence(top, sp, span):
+        """Part des colonnes où chaque ligne (et chaque interligne) a un bout de trait."""
+        x0, x1 = span
+        lines, mids = rows_at(top, sp)
+        if lines[0] < 1 or lines[-1] >= h - 1:
+            return np.zeros(5), np.ones(4)
+        return (np.array([present(y)[x0:x1].mean() for y in lines]), np.array([present(y)[x0:x1].mean() for y in mids]))
+
+    def staff_ok(top, sp, span, strict, shifted=True):
+        """Lignes nettement plus marquées que les interlignes, dans l'étendue de la portée."""
+        if span[1] - span[0] < 8 * sp:
+            return False
+        lv, mv = evidence(top, sp, span)
+        need = 4 if strict else 3
+        if not ((lv >= 0.03).sum() >= need and lv.mean() >= (4 if strict else 2.5) * max(mv.mean(), 0.004)):
+            return False
+        # des queues de notes de même longueur (notes répétées) font aussi des groupes, décalés d'une ligne ou plus :
+        # la portée vue une ligne plus haut ou plus bas ne doit pas être plus marquée
+        here = lv.mean() - mv.mean()
+        for d in ((-2, -1, 1, 2) if shifted else ()):
+            lv2, mv2 = evidence(top + d * sp, sp, span)
+            if lv2.mean() - mv2.mean() > here:
+                return False
+        return True
+
+    out = []
+
+    def add(top, sp, span):
+        bottom = top + 4 * sp
+        if any(top < b and bottom > a for a, b in taken):
+            return
+        taken.append((top - sp, bottom + sp))
+        x0, x1 = span
+        # chaque ligne recalée sur ses restes (à un quart d'interligne près) : sinon le trait retracé double le vrai
+        r = max(2, int(sp / 4))
+        lines = []
+        for k in range(5):
+            y = int(round(top + k * sp))
+            prof = ev[max(0, y - r):y + r + 1, x0:x1].mean(1)
+            if prof.max() > 0.01:
+                y = max(0, y - r) + float((np.arange(len(prof)) * prof).sum() / prof.sum())
+            lines.append((float(y), 2))
+        mid = (x0 + x1) // 2
+        out.append([(x0, mid, lines), (mid, x1, lines)])
+
+    # 1) barres de même haut et même bas : la portée est là (un seul trait : il faut alors des lignes bien visibles)
+    groups = []
+    for x, t, b in sorted(bars, key=lambda c: c[1]):
+        g = next((g for g in groups if abs(np.median([c[1] for c in g]) - t) <= sp0 / 2
+                  and abs(np.median([c[2] for c in g]) - b) <= sp0 / 2), None)
+        (g.append((x, t, b)) if g else groups.append([(x, t, b)]))
+    for g in sorted(groups, key=len, reverse=True):
+        xs = sorted({c[0] for c in g})
+        spread = [x for x in xs if x - xs[0] > 3 * sp0]
+        top, bottom = float(np.median([c[1] for c in g])), float(np.median([c[2] for c in g]))
+        sp = (bottom - top) / 4
+        span = extent(top, sp, xs)
+        # trois barres au moins, bien écartées : ce ne sont pas des queues de notes, inutile de comparer aux décalages
+        if span and staff_ok(top, sp, span, strict=False, shifted=len(spread) < 2):
+            add(top, sp, span)
+
+    # 2) forme d'une portée sur toute la largeur (portée sans barre reconnue)
     x0, x1 = int(w * 0.06), int(w * 0.94)
     prof = ev[:, x0:x1].sum(1) / (x1 - x0)
     pm = np.maximum(prof, np.maximum(np.roll(prof, 1), np.roll(prof, -1)))
     n = len(pm) - int(np.ceil(4 * (sp0 + 1.5))) - 2
     if n <= 0:
-        return []
+        return out
     best, best_sp = np.zeros(n), np.full(n, float(sp0))
     for sp in np.arange(sp0 - 1.25, sp0 + 1.26, 0.25):
         rows = np.stack([pm[int(round(k * sp)):int(round(k * sp)) + n] for k in range(5)], axis=1)
@@ -508,27 +664,15 @@ def faded_staves(bw, chains, sp0):
         score = np.where(ok, rows.sum(1), 0.0)
         better = score > best
         best[better], best_sp[better] = score[better], sp
-    known = [(float(np.median([s_[0][0] for _a, _b, s_ in c])), float(np.median([s_[4][0] for _a, _b, s_ in c])))
-             for c in chains if len(c) >= 2]
-    taken = [(t - sp0, b + sp0) for t, b in known]
-    out = []
     for y in np.argsort(best)[::-1]:
         if best[y] <= 0:
             break
-        sp = best_sp[y]
-        top, bottom = float(y), float(y + 4 * sp)
-        if any(top < b and bottom > a for a, b in taken):
+        top, sp = float(y), float(best_sp[y])
+        if any(top < b and top + 4 * sp > a for a, b in taken):
             continue
-        taken.append((top - sp, bottom + sp))
-        lines = [(top + k * sp, 2) for k in range(5)]
-        # étendue : colonnes où au moins deux des cinq lignes ont un bout de trait
-        band = np.stack([ev[max(0, int(round(yy)) - 1):int(round(yy)) + 2].any(0) for yy, _t in lines]).sum(0) >= 2
-        xs = np.flatnonzero(band)
-        if len(xs) < 2 or xs[-1] - xs[0] < 10 * sp:
-            continue
-        left, right = int(xs[0]), int(xs[-1]) + 1
-        mid = (left + right) // 2
-        out.append([(left, mid, lines), (mid, right, lines)])
+        span = extent(top, sp)
+        if span and span[1] - span[0] >= 10 * sp:
+            add(top, sp, span)
     return out
 
 
@@ -566,8 +710,16 @@ def repair_staff_lines(bw):
     if not dashed_lines(bw):
         return bw
     bw = level(bw)
+    # lignes presque effacées : la page est remise d'aplomb d'après les barres de mesure (hauts et bas alignés)
+    sp = interline(bw)
+    bars = bar_marks(bw, sp)
+    k = bar_tilt(bars, sp)
+    H, W = bw.shape
+    if abs(k) * W >= 3:
+        bw = cv2.warpAffine(bw, np.float32([[1, 0, 0], [-k, 1, k * W / 2]]), (W, H), flags=cv2.INTER_NEAREST, borderValue=255)
+        bars = [(x, int(round(t - k * (x - W / 2))), int(round(b - k * (x - W / 2)))) for x, t, b in bars]
     thin, chains = staff_chains(bw)
-    chains += faded_staves(bw, chains, interline(bw))
+    chains += faded_staves(bw, chains, sp, bars, bar_marks(bw, sp, long=True))
     out = bw.copy()
 
     def draw(x0, x1, y0, y1, t):
