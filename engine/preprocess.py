@@ -477,6 +477,61 @@ def staff_chains(bw, strip=160, lo=0.12, thin=None):
     return thin, chains
 
 
+def faded_staves(bw, chains, sp0):
+    """
+    Portées dont les lignes ne sont plus que des bouts épars (vieille photocopie : 70 % de chaque ligne effacés), que
+    staff_chains ne voit pas bande par bande. On cherche sur toute la largeur la forme d'une portée entière : 5 rangées
+    de petits traits horizontaux (4 px au moins) à l'interligne près (cherché au quart de pixel), dont 4 au moins portent
+    un peu d'encre, sans traits entre elles (dans les paroles, les lettres en mettent partout). Rend des chaînes comme
+    staff_chains, de l'étendue des traits retrouvés, pour les portées qui ne chevauchent aucune chaîne connue.
+    """
+    if not sp0:
+        return []
+    ink = (bw < 128).astype(np.uint8)
+    frag = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (4, 1)))
+    n_, lab, st, _ = cv2.connectedComponentsWithStats(frag, 8)
+    keep = np.zeros(n_, np.uint8)
+    keep[1:] = st[1:, cv2.CC_STAT_HEIGHT] <= 4
+    ev = keep[lab]
+    h, w = ev.shape
+    x0, x1 = int(w * 0.06), int(w * 0.94)
+    prof = ev[:, x0:x1].sum(1) / (x1 - x0)
+    pm = np.maximum(prof, np.maximum(np.roll(prof, 1), np.roll(prof, -1)))
+    n = len(pm) - int(np.ceil(4 * (sp0 + 1.5))) - 2
+    if n <= 0:
+        return []
+    best, best_sp = np.zeros(n), np.full(n, float(sp0))
+    for sp in np.arange(sp0 - 1.25, sp0 + 1.26, 0.25):
+        rows = np.stack([pm[int(round(k * sp)):int(round(k * sp)) + n] for k in range(5)], axis=1)
+        mids = np.stack([pm[int(round((k + .5) * sp)):int(round((k + .5) * sp)) + n] for k in range(4)], axis=1)
+        ok = ((rows >= 0.02).sum(1) >= 4) & (rows.mean(1) >= 0.04) & (rows.mean(1) >= 3 * mids.mean(1))
+        score = np.where(ok, rows.sum(1), 0.0)
+        better = score > best
+        best[better], best_sp[better] = score[better], sp
+    known = [(float(np.median([s_[0][0] for _a, _b, s_ in c])), float(np.median([s_[4][0] for _a, _b, s_ in c])))
+             for c in chains if len(c) >= 2]
+    taken = [(t - sp0, b + sp0) for t, b in known]
+    out = []
+    for y in np.argsort(best)[::-1]:
+        if best[y] <= 0:
+            break
+        sp = best_sp[y]
+        top, bottom = float(y), float(y + 4 * sp)
+        if any(top < b and bottom > a for a, b in taken):
+            continue
+        taken.append((top - sp, bottom + sp))
+        lines = [(top + k * sp, 2) for k in range(5)]
+        # étendue : colonnes où au moins deux des cinq lignes ont un bout de trait
+        band = np.stack([ev[max(0, int(round(yy)) - 1):int(round(yy)) + 2].any(0) for yy, _t in lines]).sum(0) >= 2
+        xs = np.flatnonzero(band)
+        if len(xs) < 2 or xs[-1] - xs[0] < 10 * sp:
+            continue
+        left, right = int(xs[0]), int(xs[-1]) + 1
+        mid = (left + right) // 2
+        out.append([(left, mid, lines), (mid, right, lines)])
+    return out
+
+
 def restore_strokes(bw, bands=None):
     """
     Photocopie usée : queues de notes, barres et ligatures en pointillés, têtes de notes mouchetées. On referme
@@ -512,6 +567,7 @@ def repair_staff_lines(bw):
         return bw
     bw = level(bw)
     thin, chains = staff_chains(bw)
+    chains += faded_staves(bw, chains, interline(bw))
     out = bw.copy()
 
     def draw(x0, x1, y0, y1, t):
