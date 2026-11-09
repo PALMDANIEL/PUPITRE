@@ -6,6 +6,7 @@ import { LicenceService } from '../../core/licence';
 import { frDateShort } from '../../core/dates';
 import { shopUrl } from '../../core/shop';
 import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/api';
+import { PHOTO_ADVICE, checkPhoto } from '../../core/photo-check';
 
 @Component({
   selector: 'app-library',
@@ -52,6 +53,18 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
         }
       </span>
     </label>
+    @if (pending(); as w) {
+      <section class="photo-advice glass" role="alert">
+        <p><b>Ces photos risquent d’être mal lues.</b> Une photo nette et bien éclairée donne des notes justes.</p>
+        <ul>
+          @for (a of w.advice; track a.name) { <li><b>{{ a.name }}</b> — {{ a.text }}</li> }
+        </ul>
+        <div class="actions">
+          <button type="button" class="btn quiet" (click)="pending.set(null)">Choisir d’autres photos</button>
+          <button type="button" class="btn" (click)="confirmSend()">Envoyer quand même</button>
+        </div>
+      </section>
+    }
     @if (store.error()) { <p class="error banner" role="alert">{{ store.error() }}</p> }
 
     <section class="list" aria-labelledby="list-title">
@@ -128,6 +141,11 @@ import { ACCEPT, BUSY, STATUS_LABEL, ScoreMeta, voiceColor } from '../../core/ap
     .formats span { font-size: .75rem; font-weight: 600; padding: .22rem .6rem; border-radius: 999px; color: var(--ink-soft); border: 1px solid var(--hair); background: var(--raised); }
     .meter { width: min(280px, 60vw); height: 5px; border-radius: 5px; background: var(--hair); overflow: hidden; }
     .meter span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
+    .photo-advice { margin-top: 1rem; padding: 1rem 1.15rem; display: grid; gap: .6rem; border-left: 3px solid #E8590C; }
+    .photo-advice p { margin: 0; }
+    .photo-advice ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .35rem; font-size: .9rem; color: var(--ink-soft); }
+    .photo-advice b { color: var(--ink); }
+    .photo-advice .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
     .banner { margin-top: 1rem; padding: .8rem 1rem; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
               background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
@@ -201,7 +219,28 @@ export class Library {
   protected remove(s: ScoreMeta) {
     if (confirm(`Supprimer « ${s.title} » et ses pistes audio ?`)) void this.store.remove(s.id);
   }
+  /** Photos à reprendre de préférence : envoyées seulement si l'utilisateur le confirme. */
+  protected readonly pending = signal<{ files: File[]; advice: { name: string; text: string }[] } | null>(null);
+
   private async send(files: File[]) {
+    this.pending.set(null);
+    const advice = (await Promise.all(files.map(async (f) => ({ name: f.name, problems: await checkPhoto(f) }))))
+      .filter((a) => a.problems.length)
+      .map((a) => ({ name: a.name, text: a.problems.map((k) => PHOTO_ADVICE[k]).join(' ') }));
+    if (advice.length) {
+      this.pending.set({ files, advice });
+      return;
+    }
+    await this.upload(files);
+  }
+
+  protected confirmSend() {
+    const w = this.pending();
+    this.pending.set(null);
+    if (w) void this.upload(w.files);
+  }
+
+  private async upload(files: File[]) {
     try {
       const meta = await this.store.upload(files);
       await this.router.navigate(['/partition', meta.id]);

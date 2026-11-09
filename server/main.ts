@@ -351,7 +351,20 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
   if (KINDS[ext] !== 'musicxml') fail(415, 'La version corrigée doit être un fichier MusicXML (.musicxml, .mxl ou .xml).');
   const partitionFile = `corrected${ext}`;
   await fs.writeFile(path.join(dirOf(meta.id), partitionFile), file.buffer);
-  await fs.rm(path.join(dirOf(meta.id), 'fiabilite.json'), { force: true }); // la partition corrigée n'est plus la lecture
+  // la partition corrigée n'est plus la lecture : seules restent signalées les mesures que l'éditeur de notes n'a pas
+  // encore vérifiées (« a_verifier » : { mesure: confiance }) ; sans ce champ (fichier refait dans MuseScore), plus rien
+  const fid = path.join(dirOf(meta.id), 'fiabilite.json');
+  let left: Record<string, number> | null = null;
+  try {
+    const raw = JSON.parse(String(req.body?.a_verifier ?? 'null')) as Record<string, unknown> | null;
+    if (raw && typeof raw === 'object') left = Object.fromEntries(Object.entries(raw).filter((e): e is [string, number] => /^\d{1,5}$/.test(e[0]) && typeof e[1] === 'number'));
+  } catch { left = null; }
+  if (left && Object.keys(left).length) {
+    const old = JSON.parse(await fs.readFile(fid, 'utf8').catch(() => '{}')) as Record<string, unknown>;
+    await fs.writeFile(fid, JSON.stringify({ ...old, a_verifier: left, corrigee: true }));
+  } else {
+    await fs.rm(fid, { force: true });
+  }
   const next = await patchMeta(meta.id, { partitionFile, corrected: true, status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: 'render' });
   res.status(202).json(next);

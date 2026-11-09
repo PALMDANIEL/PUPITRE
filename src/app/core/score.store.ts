@@ -45,7 +45,7 @@ export const ScoreStore = signalStore(
       render: (opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string> | null; voyelle?: Voyelle }) => act((id) => firstValueFrom(api.render(id, opts))),
       retry: () => act((id) => firstValueFrom(api.retry(id))),
       reread: (disposition: Disposition | null) => act((id) => firstValueFrom(api.reread(id, disposition))),
-      uploadCorrection: (file: File) => act((id) => firstValueFrom(api.correct(id, file))),
+      uploadCorrection: (file: File, aVerifier?: Record<string, number>) => act((id) => firstValueFrom(api.correct(id, file, aVerifier))),
       stop() { clearTimeout(timer); },
     };
   }),
