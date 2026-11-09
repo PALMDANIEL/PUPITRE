@@ -1112,7 +1112,17 @@ def detect(page_files, worn=False):
     sizes = []
     for pf in page_files:
         bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
-        sizes += [len(g) for g in systems_on(bw, find_staves(bw))]
+        page = [len(g) for g in systems_on(bw, find_staves(bw))]
+        # dernière ligne courte (une mesure) dont les portées ne sont pas reliées sur une photo floue : les portées seules
+        # de la fin de la page qui font ensemble un système comme les autres en sont un
+        full = max(page, default=0)
+        k, tail = len(page), 0
+        while k > 1 and tail < full and page[k - 1] < full:
+            k -= 1
+            tail += page[k]
+        if full >= 2 and tail == full and k < len(page) - 1:
+            page = page[:k] + [full]
+        sizes += page
     if not sizes:
         return None
     need = 2 * len(sizes) / 3 if worn else len(sizes)

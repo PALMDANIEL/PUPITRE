@@ -346,6 +346,7 @@ def read_voices_audiveris(work: pathlib.Path, voix: pathlib.Path, layout: str):
 
 
 DOUBLE = os.environ.get("PUPITRE_DOUBLE", "1") != "0"
+DOUBLE_AUDIVERIS = os.environ.get("PUPITRE_DOUBLE_AUDIVERIS", "1") != "0"  # deux portées : Audiveris relit l'autre image
 
 
 def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path, layout: str) -> pathlib.Path:
@@ -555,6 +556,7 @@ def main(src, work, layout=None, stage1=False):
 
     omr, alt = work / "omr", work / "omr-alt"
     started = time.monotonic()
+    second_read = False  # l'autre version de l'image a-t-elle déjà été lue ?
     found = read_book(pre / "clean.pdf", pre / "alt.pdf", omr, len(pages))
     first_took = time.monotonic() - started
     first = systems(omr)
@@ -565,6 +567,7 @@ def main(src, work, layout=None, stage1=False):
         # Seconde lecture avec l'autre version de l'image ; on garde celle qui regroupe le mieux les portées
         # (un vrai couplet en solo donne le même découpage dans les deux cas : on garde alors la première).
         print("Seconde lecture avec l’autre version de l’image", file=sys.stderr)
+        second_read = True
         other = read_book(pre / "alt.pdf", pre / "clean.pdf", alt, len(pages))
         # moins de systèmes coupés, mais jamais au prix de portées perdues : une portée seule dans son système se
         # remet en place à l'assemblage (merge.stack), une portée non vue est perdue (photo sombre : 6 portées
@@ -601,6 +604,20 @@ def main(src, work, layout=None, stage1=False):
             shutil.copy(found[0], target)
     else:
         subprocess.run(step("merge", target, *found), check=True, **QUIET)
+    if guess == "grand" and DOUBLE_AUDIVERIS and not second_read and (BUDGET is None or not stage1) \
+            and (BUDGET is None or time.monotonic() - _T0 + 2 * first_took + 150 < BUDGET):
+        # deux portées (S/A, T/B) : homr y lit mal les accords et ne départage presque jamais ; Audiveris relit l'autre
+        # version de l'image (autre seuillage : il ne se trompe pas aux mêmes endroits) et les deux lectures sont
+        # arbitrées mesure par mesure (la moins fautive : trous, chevauchements, mesure trop longue ou trop courte)
+        print("Double lecture d'Audiveris : autre version de l'image", file=sys.stderr)
+        other = read_book(pre / "alt.pdf", pre / "clean.pdf", alt, len(pages))
+        if other:
+            second = work / "lecture-alt.musicxml"
+            subprocess.run(step("merge", second, *other), **QUIET)
+            if second.exists():
+                target = arbitrate(work, target, second, guess)
+                second.unlink(missing_ok=True)
+        shutil.rmtree(alt, ignore_errors=True)
     if guess and DOUBLE and homr_base() is not None:
         if stage1 and BUDGET and time.monotonic() - _T0 < 0.75 * BUDGET:
             # hébergement limité à 5 minutes : homr et l'arbitrage dans la requête suivante (comme une copie usée)
