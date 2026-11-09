@@ -1070,7 +1070,20 @@ def link(bw, upper, lower):
     ink = (bw[top:bottom, x0:x1] < 128).astype(np.uint8)
     ink = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15)))
     ink = cv2.dilate(ink, np.ones((1, 3), np.uint8))  # trait un peu penché
-    return float(ink.mean(0).max()) if ink.size else 0.0
+    score = float(ink.mean(0).max()) if ink.size else 0.0
+    if score < 0.9:
+        # copie usée : la ligne qui ouvre le système est trouée par endroits (plus de 15 pixels). Un trait vertical
+        # mince, cassures d'une interligne comblées, qui va de la 1re portée à la 2e de bout en bout les relie.
+        sp = max(6, int((upper[1] - upper[0]) / 4))
+        y0, y1 = int(upper[0]), int(lower[1]) + 1
+        # le bord gauche donné par find_staves peut venir une bande trop tard (clé, armure) : on regarde plus loin
+        roi = (bw[y0:y1, max(0, x0 - 240):x1] < 128).astype(np.uint8)
+        roi = cv2.morphologyEx(roi, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(5, sp // 2))))
+        roi = cv2.morphologyEx(roi, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, sp)))
+        _n, _lab, st, _ = cv2.connectedComponentsWithStats(roi, 8)
+        if any(w <= max(7, sp // 3) and y <= sp / 2 and y + h >= (y1 - y0) - sp / 2 for _x, y, w, h, _a in st[1:]):
+            return 1.0
+    return score
 
 
 def system_indexes(bw, staves, joined=0.75):

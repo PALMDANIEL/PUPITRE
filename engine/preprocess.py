@@ -639,15 +639,44 @@ def faded_staves(bw, chains, sp0, bars=(), verticals=()):
         g = next((g for g in groups if abs(np.median([c[1] for c in g]) - t) <= sp0 / 2
                   and abs(np.median([c[2] for c in g]) - b) <= sp0 / 2), None)
         (g.append((x, t, b)) if g else groups.append([(x, t, b)]))
-    for g in sorted(groups, key=len, reverse=True):
-        xs = sorted({c[0] for c in g})
-        spread = [x for x in xs if x - xs[0] > 3 * sp0]
-        top, bottom = float(np.median([c[1] for c in g])), float(np.median([c[2] for c in g]))
-        sp = (bottom - top) / 4
-        span = extent(top, sp, xs)
-        # trois barres au moins, bien écartées : ce ne sont pas des queues de notes, inutile de comparer aux décalages
-        if span and staff_ok(top, sp, span, strict=False, shifted=len(spread) < 2):
-            add(top, sp, span)
+    # Portées d'un même système : leurs barres tombent aux mêmes endroits, et la ligne qui ouvre le système les traverse
+    # toutes. Une portée dont il ne reste presque rien des lignes est admise si ses barres s'alignent sur celles d'une
+    # portée déjà admise (trois au moins, ou une seule si la ligne du système les réunit).
+    admitted = [(t, b) for t, b in known]
+    columns = []  # x des barres des portées admises
+
+    def same_system(top, bottom):
+        return any(t <= top + sp0 / 2 and b >= bottom - sp0 / 2 and any(t <= ta + sp0 / 2 and b >= tb - sp0 / 2 for ta, tb in admitted)
+                   for _x, t, b in verticals)
+
+    pending = sorted(groups, key=len, reverse=True)
+    while pending:
+        progress = False
+        for g in list(pending):
+            xs = sorted({c[0] for c in g})
+            spread = [x for x in xs if x - xs[0] > 3 * sp0]
+            top, bottom = float(np.median([c[1] for c in g])), float(np.median([c[2] for c in g]))
+            sp = (bottom - top) / 4
+            span = extent(top, sp, xs)
+            if not span:
+                pending.remove(g)
+                continue
+            aligned = sum(1 for x in xs if any(abs(x - c) <= sp0 / 2 for c in columns))
+            # trois barres au moins, bien écartées : ce ne sont pas des queues de notes, inutile de comparer aux décalages
+            ok = staff_ok(top, sp, span, strict=False, shifted=len(spread) < 2)
+            if not ok and (aligned >= 3 or (aligned >= 1 and same_system(top, bottom))) and span[1] - span[0] >= 8 * sp:
+                lv, mv = evidence(top, sp, span)
+                ok = lv.mean() >= 1.5 * max(mv.mean(), 0.002)
+            if ok:
+                n_before = len(out)
+                add(top, sp, span)
+                if len(out) > n_before:
+                    admitted.append((top, bottom))
+                    columns.extend(xs)
+                pending.remove(g)
+                progress = True
+        if not progress:
+            break
 
     # 2) forme d'une portée sur toute la largeur (portée sans barre reconnue)
     x0, x1 = int(w * 0.06), int(w * 0.94)
@@ -719,7 +748,8 @@ def repair_staff_lines(bw):
         bw = cv2.warpAffine(bw, np.float32([[1, 0, 0], [-k, 1, k * W / 2]]), (W, H), flags=cv2.INTER_NEAREST, borderValue=255)
         bars = [(x, int(round(t - k * (x - W / 2))), int(round(b - k * (x - W / 2)))) for x, t, b in bars]
     thin, chains = staff_chains(bw)
-    chains += faded_staves(bw, chains, sp, bars, bar_marks(bw, sp, long=True))
+    verticals = bar_marks(bw, sp, long=True)
+    chains += faded_staves(bw, chains, sp, bars, verticals)
     out = bw.copy()
 
     def draw(x0, x1, y0, y1, t):
@@ -749,6 +779,12 @@ def repair_staff_lines(bw):
             left = lo + int(xs[0])
             if xs[0] > 0:
                 break
+        # une portée va de la ligne qui ouvre le système à sa dernière barre : sur une copie usée, la clé et l'armure
+        # n'ont souvent plus aucun reste de ligne, et la portée retracée commençait après elles
+        top, bottom = chain[0][2][0][0], chain[0][2][4][0]
+        sp_c = (bottom - top) / 4
+        across = [x for x, t, b in verticals if t <= top + sp_c / 2 and b >= bottom - sp_c / 2]
+        left, right = min(across + [left]), max(across + [right])
         chain[0] = (left, chain[0][1], chain[0][2])
         chain[-1] = (chain[-1][0], right, chain[-1][2])
         for k, (xa0, xa1, sa) in enumerate(chain):
