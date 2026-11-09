@@ -1261,6 +1261,84 @@ def key_from_image(out_dir, layout):
     return statistics.mode(found) if found else None
 
 
+# place des altérations de l'armure, en interlignes sous la 1re ligne (clé de sol ; clé de fa : 1 de plus) :
+# fa do sol ré la mi si pour les dièses, si mi la ré sol do fa pour les bémols
+_SHARP_AT = [0.0, 1.5, -0.5, 1.0, 2.5, 0.5, 2.0]
+_FLAT_AT = [2.0, 0.5, 2.5, 1.0, 3.0, 1.5, 3.5]
+
+
+def _key_sign_line(c, T, B, count):
+    """
+    Dièses ou bémols, d'après la place des signes de l'armure (pas leur forme, effacée sur une photo floue) : les
+    dièses commencent en haut et descendent (fa, do), les bémols commencent au milieu et montent (si, mi). Hauteur
+    moyenne de l'encre colonne par colonne après la clé, découpée en `count` signes ; rend +1 (dièses), -1 (bémols)
+    ou 0 si la forme ne ressemble nettement à aucune des deux.
+    """
+    from preprocess import line_strokes
+    sp = (B - T) / 4
+    strokes = line_strokes(c)
+    rows = [strokes[max(0, int(round(T + k * sp)) - 2):int(round(T + k * sp)) + 3].any(0) for k in range(5)]
+    starts = np.flatnonzero(np.sum(rows, axis=0) >= 3)
+    if not len(starts):
+        return 0
+    left = int(starts[0])
+    ink = (c < 128).astype(np.uint8)
+    for k in range(5):  # lignes de portée ôtées
+        y = int(round(T + k * sp))
+        band = slice(max(0, y - 2), y + 3)
+        ink[band] &= (1 - strokes[band]).astype(np.uint8)
+    y0, y1 = max(0, int(T - 2.5 * sp)), min(c.shape[0], int(B + 1.5 * sp))
+    xs = np.arange(left, min(c.shape[1], int(left + (count + 6) * sp)))
+    weight = ink[y0:y1, xs].sum(0).astype(np.float64)
+    centre = np.where(weight > 0, (ink[y0:y1, xs] * np.arange(y0, y1)[:, None]).sum(0) / np.maximum(weight, 1), np.nan)
+    centre = (centre - T) / sp
+    if count == 1:
+        return 0  # un seul signe : sa place dépend de la clé, la forme seule ne départage pas sûrement
+    best = (0.0, 0)
+    sharp, flat = np.array(_SHARP_AT[:count]), np.array(_FLAT_AT[:count])
+    for start in range(int(1.8 * sp), int(4.8 * sp)):
+        for w in (0.9, 1.0, 1.1, 1.2):
+            slots = []
+            for i in range(count):
+                a, b = int(start + i * w * sp), int(start + (i + 1) * w * sp)
+                seg = centre[a:b]
+                seg = seg[~np.isnan(seg)]
+                if len(seg) < 0.3 * w * sp:
+                    break
+                slots.append(float(np.median(seg)))
+            if len(slots) < count or np.std(slots) < 0.3:
+                continue
+            for pattern, sign in ((sharp, 1), (flat, -1)):
+                r = float(np.corrcoef(slots, pattern)[0, 1])
+                if r > best[0]:
+                    best = (r, sign)
+    return best[1] if best[0] >= 0.85 else 0
+
+
+def key_sign_from_image(out_dir, layout, count):
+    """
+    Sens de l'armure (dièses +1, bémols -1, 0 inconnu) sur les premières lignes de chaque voix, `count` signes lus
+    ailleurs (homr confond dièses et bémols sur photo floue : 4 bémols lus pour 4 dièses). Majorité nette des voix.
+    """
+    if count < 2:
+        return 0
+    try:
+        info = json.loads((out_dir / "disposition.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    votes = []
+    for v in range(len(LAYOUTS[layout])):
+        f = out_dir / "lignes" / f"v{v + 1}-01.png"
+        if not f.exists() or v >= len(info.get("lignes", [])):
+            continue
+        T, B = info["lignes"][v][0]
+        c = imgio.imread(str(f), cv2.IMREAD_GRAYSCALE)
+        if c is not None:
+            votes.append(_key_sign_line(c, T, B, count))
+    plus, minus = votes.count(1), votes.count(-1)
+    return 1 if plus > minus else -1 if minus > plus else 0
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Paroles lues sur l'image (RapidOCR, qui accompagne homr) : bien plus fidèle que la lecture du texte d'Audiveris
 

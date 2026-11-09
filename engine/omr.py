@@ -268,6 +268,15 @@ def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
         (voix / "sortie").rename(voix / "sortie-entetes")
     if key is None:  # homr n'a rien lu en tête : l'image (signes après la clé)
         key = pupitres.key_from_image(voix, layout)
+    if key and abs(key) >= 2:
+        # dièses ou bémols : homr les confond sur photo floue ; la place des signes sur l'image tranche
+        try:
+            sign = pupitres.key_sign_from_image(voix, layout, abs(key))
+        except Exception:  # noqa: BLE001
+            sign = 0
+        if sign and sign * key < 0:
+            print(f"Armure retournée d'après la place des signes : {key:+d} → {-key:+d}", file=sys.stderr)
+            key = -key
     chrono("premières lignes lues (armure, mesure)")
     return voix, (0 if key is None else key), (time_sig or "4/4")
 
@@ -357,7 +366,7 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
         other = read_voices(sub, voix, layout, key, time_sig, passes=1)
         if other is None:
             return target
-        return arbitrate(work, target, other, layout)
+        return arbitrate(work, target, other, layout, voix)
     except Exception as e:  # noqa: BLE001 : la lecture d'Audiveris reste valable
         print(f"Double lecture impossible : {e}", file=sys.stderr)
         return target
@@ -366,10 +375,11 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
             shutil.rmtree(sub, ignore_errors=True)
 
 
-def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str) -> pathlib.Path:
-    """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target."""
+def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None) -> pathlib.Path:
+    """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target.
+    voix : lignes découpées (le sens de l'armure de homr y est vérifié sur l'image)."""
     out = work / "partition-arbitree.musicxml"
-    r = subprocess.run(step("arbitre", target, other, out, layout), capture_output=True, text=True,
+    r = subprocess.run(step("arbitre", target, other, out, layout, *([voix] if voix else [])), capture_output=True, text=True,
                        encoding="utf-8", errors="replace", **QUIET)
     sys.stderr.write(r.stderr[-2000:])
     chrono("lectures comparées")
@@ -462,7 +472,7 @@ def resume_by_voice(state: pathlib.Path, work: pathlib.Path, layout: str | None 
         first = work / f"lecture-audiveris{pathlib.Path(info['double']).suffix}"
         shutil.copy(voix / info["double"], first)
         other = read_voices(voix, voix, layout, int(info["armure"]), str(info["mesure"]), passes=1)
-        target = arbitrate(work, first, other, layout) if other else first
+        target = arbitrate(work, first, other, layout, voix) if other else first
         if target == first:  # homr n'a rien donné : la lecture d'Audiveris seule
             target = work / f"partition{first.suffix}"
             first.replace(target)
@@ -517,9 +527,11 @@ def main(src, work, layout=None, stage1=False):
         mode = os.environ.get("PUPITRE_LECTEUR", "auto")  # auto | homr | audiveris : forcer un lecteur (banc d'essai)
         if mode == "audiveris":
             guess = None
-        # PUPITRE_USEE=double (essai) : copie usée ou tachée lue comme une page nette (Audiveris, puis double lecture)
-        first_homr = os.environ.get("PUPITRE_USEE", "homr") != "double"
-        if guess and (mode == "homr" or (mode == "auto" and (worn or dirty) and first_homr)):
+        # Copie usée (lignes en tirets), une fois ses portées retracées : lue comme une page nette, Audiveris puis double
+        # lecture par homr, et voix par voix si Audiveris regroupe mal les portées (banc, 12 photocopies : 81 → 90 %,
+        # usées inchangées). Copie seulement tachée : homr d'abord, comme avant. PUPITRE_USEE=homr : l'ancien chemin.
+        first_homr = dirty and not worn or (worn and os.environ.get("PUPITRE_USEE", "double") == "homr")
+        if guess and (mode == "homr" or (mode == "auto" and first_homr)):
             # photocopie ou vieux scan : barres et accolades coupées, taches ; Audiveris lit mal les notes et comble ce
             # qu'il ne comprend pas par des silences. Le réseau de neurones lit chaque portée. Une page nette ou une
             # photo propre reste lue par Audiveris (meilleur sur elles : 100 % contre 60 % sur le banc d'essai).

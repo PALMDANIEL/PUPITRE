@@ -373,7 +373,7 @@ def _keys(score):
     return out
 
 
-def adopt_key(a, h):
+def adopt_key(a, h, voix=None, layout=None):
     """
     Armure perdue par Audiveris, lue en entier par homr : petites portées (dièses réduits à des points au seuillage :
     1 dièse lu au lieu de 3), photo bougée (chaque dièse n'est plus que deux taches : aucune armure lue). homr, entraîné
@@ -388,6 +388,17 @@ def adopt_key(a, h):
     found = set(_keys(h))
     if len(found) != 1 or not (target := found.pop()):
         return None
+    if voix and layout and abs(target) >= 2:
+        # dièses ou bémols ? homr les confond sur photo floue (4 bémols lus pour 4 dièses) : la place des signes sur
+        # l'image (les dièses descendent d'abord, les bémols montent) tranche
+        try:
+            import pupitres
+            sign = pupitres.key_sign_from_image(pathlib.Path(voix), layout, abs(target))
+        except Exception:  # noqa: BLE001
+            sign = 0
+        if sign and sign * target < 0:
+            print(f"Armure de homr retournée d'après la place des signes : {target:+d} → {-target:+d}", file=sys.stderr)
+            target = -target
     read = _keys(a)
     if any(k * target < 0 or abs(k) > abs(target) for k in read) or all(k == target for k in read):
         return None
@@ -421,10 +432,10 @@ def adopt_key(a, h):
     return target
 
 
-def arbitrate(a_path, h_path, out, layout):
+def arbitrate(a_path, h_path, out, layout, voix=None):
     a, h = converter.parse(a_path), converter.parse(h_path)
     before = sorted(set(_keys(a)))
-    adopted = adopt_key(a, h)
+    adopted = adopt_key(a, h, voix, layout)
     if adopted is not None:
         print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
     keyed = copy.deepcopy(a) if adopted is not None else None  # _arbitrate réunit des parties avant de renoncer
@@ -443,7 +454,22 @@ def _arbitrate(a, h, out, layout):
     # mêmes portées des deux côtés ; seule exception : la portée d'instrument au-dessus du chœur (disposition « grand »),
     # que homr ne lit pas.
     if sh and len(a.parts) > len(sh) + (layout == "grand"):
-        collapse(a, len(sh) + (layout == "grand"))
+        # parties d'Audiveris éparpillées (une par nom lu, photo floue : 8 parties pour 4 portées) : chacune prend sa
+        # place parmi les portées qui chantent ensemble (render.regroup_by_place, comme pour séparer les voix) ;
+        # sinon, réunion deux à deux (collapse)
+        try:
+            import render
+            placed = render.regroup_by_place(list(a.parts))
+        except Exception:  # noqa: BLE001
+            placed = None
+        if placed and len(placed) in (len(sh), len(sh) + (layout == "grand")):
+            for part in list(a.parts):
+                a.remove(part)
+            for part in placed:
+                a.insert(0, part)
+            print(f"Parties d'Audiveris regroupées par place : {len(placed)}", file=sys.stderr)
+        else:
+            collapse(a, len(sh) + (layout == "grand"))
     sa = staves(a)
     if not sh or not (len(sa) == len(sh) or (layout == "grand" and len(sa) == len(sh) + 1)):
         raise SystemExit(f"Portées différentes ({len(sa)} contre {len(sh)}) : pas d'arbitrage")
@@ -525,6 +551,6 @@ def _arbitrate(a, h, out, layout):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):  # 6e : dossier des lignes découpées (sens de l'armure lu sur l'image)
         sys.exit(__doc__)
     arbitrate(*sys.argv[1:])

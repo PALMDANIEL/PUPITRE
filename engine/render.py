@@ -123,7 +123,7 @@ def split_staff(part):
             mt.insert(el.offset, copy.deepcopy(el)); mb.insert(el.offset, copy.deepcopy(el))
         sung = [v for v in m.voices if v.notes]
         if len(sung) >= 2:
-            sung.sort(key=mean_pitch, reverse=True)
+            sung.sort(key=lambda v: mean_pitch(v) or 0.0, reverse=True)  # accord sans hauteur (lecture abîmée) : en bas
             src_t, src_b = sung[0], sung[-1]
         else:
             src_t = src_b = sung[0] if sung else (m.voices[0] if m.voices else m)

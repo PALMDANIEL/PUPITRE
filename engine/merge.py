@@ -159,6 +159,56 @@ def fix_clefs(raw, sources):
     return fixed
 
 
+def _clef_key(c):
+    return (c.sign, c.line, c.octaveChange) if c is not None else None
+
+
+def fix_odd_clefs(raw):
+    """
+    Clé lue de travers sur un système : la même portée a une autre clé sur tous les autres systèmes (au moins deux) et
+    ses notes, lues dans cette clé, sautent de registre (plus d'une quinte loin de leur hauteur habituelle), alors
+    que relues dans la clé des autres systèmes elles y retombent (à une tierce près). Petites portées : Audiveris prend
+    une clé de sol pour une clé d'ut, ou le contraire. Les notes sont relues dans la bonne clé (même place sur la
+    portée), la clé d'origine est rendue au système suivant. Rend le nombre de portées rétablies.
+    """
+    fixed = 0
+    width = max((len(st) for _p, st in raw), default=0)
+    for i in range(width):
+        rows = [(j, staves[i]) for j, (_page, staves) in enumerate(raw) if i < len(staves) and staves[i]]
+        clefs = [_clef_key(staff[0].getContextByClass(clef.Clef)) for _j, staff in rows]
+        known = [c for c in clefs if c is not None]
+        if len(rows) < 3 or not known:
+            continue
+        usual = max(set(known), key=known.count)
+        if known.count(usual) < max(2, len(rows) - 1):
+            continue
+        model = next(staff[0].getContextByClass(clef.Clef) for _j, staff in rows if _clef_key(staff[0].getContextByClass(clef.Clef)) == usual)
+        for (j, staff), c in zip(rows, clefs):
+            if c is None or c == usual:
+                continue
+            others = [p for (k, st), ck in zip(rows, clefs) if k != j and ck == usual for p in _pitches(st)]
+            here = _pitches(staff)
+            if len(others) < 8 or len(here) < 3 or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
+                continue  # changement de clé en cours de ligne : pas une clé de tête mal lue
+            read = staff[0].getContextByClass(clef.Clef)
+            steps = model.lowestLine - read.lowestLine
+            centre = statistics.median(others)
+            trial = copy.deepcopy(staff)
+            for m in trial:
+                shift_measure(m, steps)
+            if abs(statistics.median(here) - centre) > 7 and abs(statistics.median(_pitches(trial)) - centre) <= 4:
+                after = raw[j + 1][1][i] if j + 1 < len(raw) and i < len(raw[j + 1][1]) and raw[j + 1][1][i] else None
+                if after and not after[0].getElementsByClass(clef.Clef):
+                    after[0].insert(0, copy.deepcopy(read))  # clé lue rendue au système suivant (elle y vaut peut-être)
+                for m in staff:
+                    shift_measure(m, steps)
+                for old in list(staff[0].getElementsByClass(clef.Clef)):
+                    staff[0].remove(old)
+                staff[0].insert(0, copy.deepcopy(model))
+                fixed += 1
+    return fixed
+
+
 def _with_context(m, orig):
     """Mesure copiée en tête de portée : on lui rend sa clé, son armure et sa mesure (lues dans le contexte d'origine)."""
     for cls in (clef.Clef, key.KeySignature, meter.TimeSignature):
@@ -173,6 +223,7 @@ def main(out, sources, only_if_useful=False):
     movements = [converter.parse(s) for s in sources]
     raw = [s for mv in movements for s in systems_of(mv)]
     clefs = fix_clefs(raw, sources)
+    clefs += fix_odd_clefs(raw)
     systems = stack(raw)
     stacked = len(systems) < len(raw)
     if only_if_useful and len(movements) == 1 and not stacked and not clefs:
