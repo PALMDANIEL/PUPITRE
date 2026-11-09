@@ -31,6 +31,7 @@ const PICK_COLOR = '#0B7285';
         </button>
       }
       @if (making()) { <span class="hint" role="status">{{ making() }}</span> }
+      @if (correctionStatus(); as c) { <span class="hint" role="status">{{ c }}</span> }
       @if (pdfError()) { <span class="error" role="alert">{{ pdfError() }}</span> }
     </div>
     @if (editing() && view() === 'score') {
@@ -101,8 +102,15 @@ const PICK_COLOR = '#0B7285';
 })
 export class ScoreViewer {
   readonly score = input.required<ScoreMeta>();
+  /**
+   * Téléphone (chants en pack, sans ScoreStore) : enregistrement d'une correction, fait par la page du lecteur
+   * (le serveur AIT recrée l'audio). Absent : correction impossible (téléphone non relié au serveur).
+   */
+  readonly saveCorrection = input<((file: File, aVerifier: Record<string, number>) => void) | null>(null);
+  /** Téléphone : où en est l'enregistrement de la correction (recréation en ligne), affiché près de la partition */
+  readonly correctionStatus = input<string | null>(null);
   private readonly engine = inject(AudioEngine);
-  /** Absent dans le lecteur du téléphone (chants en pack) : la correction se fait sur l'ordinateur */
+  /** Ordinateur : la correction est envoyée au serveur de l'application */
   private readonly store = inject(ScoreStore, { optional: true });
   private readonly host = viewChild.required<ElementRef<HTMLDivElement>>('host');
   protected readonly view = signal<'score' | 'scan'>('score');
@@ -186,7 +194,7 @@ export class ScoreViewer {
   protected readonly verified = signal<Set<number>>(new Set());
   protected canEdit() {
     const s = this.score();
-    return !!this.store && !!s.manifest?.rebuilt && s.status === 'ready';
+    return (!!this.store || !!this.saveCorrection()) && !!s.manifest?.rebuilt && s.status === 'ready';
   }
   protected isDoubtful(measure: number) {
     return measure in (this.score().manifest?.fiabilite?.a_verifier ?? {}) && !this.verified().has(measure);
@@ -219,13 +227,15 @@ export class ScoreViewer {
     void this.redraw();
   }
   protected saveEdits() {
-    if (!this.doc || !this.store) return;
+    const save = this.saveCorrection();
+    if (!this.doc || (!this.store && !save)) return;
     const xml = new XMLSerializer().serializeToString(this.doc);
     const file = new File([xml], 'corrigee.musicxml', { type: 'application/vnd.recordare.musicxml+xml' });
     const left = Object.fromEntries(Object.entries(this.score().manifest?.fiabilite?.a_verifier ?? {})
       .filter(([m]) => !this.verified().has(Number(m))));
     this.editing.set(false);
-    void this.store.uploadCorrection(file, left);
+    if (save) save(file, left);
+    else void this.store!.uploadCorrection(file, left);
   }
 
   private async redraw() {

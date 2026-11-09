@@ -30,7 +30,7 @@ import { ScoreViewer } from '../score/score-viewer';
       <div class="workspace">
         <app-mixer [score]="s" [player]="true" [online]="remote.configured()" [busy]="busy()" [progress]="progress()" [failure]="failure()"
                    (recreate)="recreate($event)" (renamed)="renameVoice($event)" />
-        <app-score-viewer [score]="s" />
+        <app-score-viewer [score]="s" [saveCorrection]="remote.configured() && !busy() ? saveNotes : null" [correctionStatus]="fixing()" />
       </div>
     } @else {
       <p class="hint">Chargement…</p>
@@ -75,6 +75,34 @@ export class PackPlayer {
       this.score.set(await this.packs.open(fresh));
     } catch (e) {
       this.failure.set((e as Error).message);
+    } finally {
+      this.busy.set(false); this.progress.set(null);
+    }
+  }
+
+  /**
+   * Notes corrigées sur le téléphone : le serveur AIT recrée le chant à partir de la partition corrigée, avec la même
+   * sonorité et le même tempo, et il remplace celui du téléphone (comme une nouvelle sonorité).
+   */
+  protected readonly saveNotes = (file: File, aVerifier: Record<string, number>) => void this.correctNotes(file, aVerifier);
+
+  protected readonly fixing = signal<string | null>(null);
+
+  private async correctNotes(file: File, aVerifier: Record<string, number>) {
+    const m = this.score()?.manifest;
+    if (!m) return;
+    const step = (pct: number) => {
+      this.progress.set(pct);
+      this.fixing.set(`Correction envoyée : le serveur AIT recrée l’audio (${pct} %)…`);
+    };
+    this.busy.set(true); this.failure.set(null); step(0);
+    try {
+      const fresh = await this.remote.recreate(this.id(), { tempo: m.tempo, timbre: m.timbre, langue: m.langue, voyelle: m.voyelle },
+        step, { file, aVerifier, moyenne: m.fiabilite?.moyenne });
+      this.score.set(await this.packs.open(fresh));
+      this.fixing.set('Correction enregistrée : l’audio du chant est recréé.');
+    } catch (e) {
+      this.fixing.set(`Correction non enregistrée : ${(e as Error).message}`);
     } finally {
       this.busy.set(false); this.progress.set(null);
     }

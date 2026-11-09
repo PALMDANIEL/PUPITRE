@@ -276,15 +276,23 @@ export class RemoteReader {
   /**
    * Recrée l'audio d'un chant enregistré sur le téléphone (tempo, sonorité, voix chantées) : le serveur AIT
    * reçoit sa partition et renvoie un pack, qui remplace l'ancien. Renvoie l'identifiant du chant.
+   * correction : partition corrigée dans le téléphone (éditeur de notes) à la place de celle du pack, avec les
+   * mesures douteuses pas encore vérifiées (gardées en orange).
    */
   async recreate(packId: string, opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string>; voyelle?: Voyelle },
-                 onProgress: (pct: number) => void): Promise<string> {
+                 onProgress: (pct: number) => void,
+                 correction?: { file: Blob; aVerifier: Record<string, number>; moyenne?: number }): Promise<string> {
     const s = this.settings();
     if (!s.url || !s.code) throw new RemoteError('Indiquez d’abord le serveur et le code de votre chorale dans les réglages.');
     const src = await this.packs.scoreFile(packId);
     if (!src) throw new RemoteError('Ce chant n’est plus sur ce téléphone.');
     const body = new FormData();
-    body.append('file', new File([src.file], src.name.endsWith('.musicxml') ? src.name : 'score.musicxml'));
+    body.append('file', correction
+      ? new File([correction.file], 'corrigee.musicxml')
+      : new File([src.file], src.name.endsWith('.musicxml') ? src.name : 'score.musicxml'));
+    if (correction && Object.keys(correction.aVerifier).length) {
+      body.append('fiabilite', JSON.stringify({ moyenne: correction.moyenne ?? 1, a_verifier: correction.aVerifier, corrigee: true }));
+    }
     body.append('titre', src.title);
     body.append('tempo', String(opts.tempo));
     body.append('timbre', opts.timbre);
