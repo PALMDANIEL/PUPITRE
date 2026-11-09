@@ -159,6 +159,21 @@ def fix_clefs(raw, sources):
     return fixed
 
 
+def _head_clef(m):
+    """Clé en vigueur au début d'une mesure : la sienne (getContextByClass ne regarde que ce qui précède), sinon celle d'avant."""
+    own = [c for c in m.getElementsByClass(clef.Clef) if c.offset == 0]
+    return own[0] if own else m.getContextByClass(clef.Clef)
+
+
+def _bottom(c):
+    """Note de la 1re ligne (degrés diatoniques, mi4 = 31) d'une clé, octave comprise : la clé générique lue dans le
+    MusicXML (sol avec « 8 ») n'a pas toujours lowestLine juste."""
+    ref = {"G": 33, "F": 25, "C": 29}.get(c.sign)
+    if ref is None or not c.line:
+        return c.lowestLine
+    return ref - 2 * (c.line - 1) + 7 * (c.octaveChange or 0)
+
+
 def _clef_key(c):
     return (c.sign, c.line, c.octaveChange) if c is not None else None
 
@@ -175,14 +190,14 @@ def fix_odd_clefs(raw):
     width = max((len(st) for _p, st in raw), default=0)
     for i in range(width):
         rows = [(j, staves[i]) for j, (_page, staves) in enumerate(raw) if i < len(staves) and staves[i]]
-        clefs = [_clef_key(staff[0].getContextByClass(clef.Clef)) for _j, staff in rows]
+        clefs = [_clef_key(_head_clef(staff[0])) for _j, staff in rows]
         known = [c for c in clefs if c is not None]
         if len(rows) < 3 or not known:
             continue
         usual = max(set(known), key=known.count)
         if known.count(usual) < max(2, len(rows) - 1):
             continue
-        model = next(staff[0].getContextByClass(clef.Clef) for _j, staff in rows if _clef_key(staff[0].getContextByClass(clef.Clef)) == usual)
+        model = next(_head_clef(staff[0]) for _j, staff in rows if _clef_key(_head_clef(staff[0])) == usual)
         for (j, staff), c in zip(rows, clefs):
             if c is None or c == usual:
                 continue
@@ -190,8 +205,8 @@ def fix_odd_clefs(raw):
             here = _pitches(staff)
             if len(others) < 8 or len(here) < 3 or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
                 continue  # changement de clé en cours de ligne : pas une clé de tête mal lue
-            read = staff[0].getContextByClass(clef.Clef)
-            steps = model.lowestLine - read.lowestLine
+            read = _head_clef(staff[0])
+            steps = _bottom(model) - _bottom(read)
             centre = statistics.median(others)
             trial = copy.deepcopy(staff)
             for m in trial:
@@ -206,6 +221,72 @@ def fix_odd_clefs(raw):
                     staff[0].remove(old)
                 staff[0].insert(0, copy.deepcopy(model))
                 fixed += 1
+    return fixed
+
+
+# clés d'une partition de chœur : sol, sol octaviée (ténor), fa ; hauteur médiane attendue de chaque portée d'un
+# système selon leur nombre (de haut en bas : S A T B ; S/A et T/B ; contrechant, S/A, T/B ; une voix seule)
+COMMON_CLEFS = {("G", 2), ("F", 4)}  # octave à part (« 8 » sous ou sur la clé : remis par render.fix_octaves)
+CENTRES = {1: [64], 2: [67, 53], 3: [69, 64, 52], 4: [69, 64, 57, 50]}
+
+
+def _octave_free(staff):
+    """Hauteurs d'une portée ramenées à sa clé sans « 8 » (sol octaviée lue pour une clé de sol : une octave de trop)."""
+    c = _head_clef(staff[0])
+    shift = 12 * ((c.octaveChange or 0) if c is not None else 0)
+    return [p - shift for p in _pitches(staff)]
+
+
+def fix_rare_clefs(raw):
+    """
+    Clé de tête lue en une clé qu'un chœur n'emploie pas (fa 3e ligne, ut 3e ligne… : sur petites portées, Audiveris
+    lit ainsi la clé de sol de la portée S/A, et toutes ses notes tombent une treizième plus bas) : la portée est relue
+    en clé de sol ou de fa, celle qui la ramène à la hauteur de la même portée sur les autres systèmes (sinon à la
+    tessiture attendue de sa place dans le système), à une quinte près. Les clés courantes ne sont pas touchées (une
+    voix rangée par Audiveris dans la portée d'une autre est remise en place à l'assemblage). Rend le nombre de
+    portées rétablies.
+    """
+    fixed = 0
+    for j, (_page, staves) in enumerate(raw):
+        for i, staff in enumerate(staves):
+            if not staff:
+                continue
+            read = _head_clef(staff[0])
+            here = _pitches(staff)
+            if read is None or _clef_key(read)[:2] in COMMON_CLEFS or len(here) < 4 \
+                    or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
+                continue
+            usual = [p for k, (_pg, st) in enumerate(raw) if k != j and i < len(st) and st[i]
+                     and _clef_key(_head_clef(st[i][0]))[:2] in COMMON_CLEFS
+                     for p in _octave_free(st[i])]
+            if len(usual) >= 8:
+                centre = statistics.median(usual)
+            elif len(staves) in CENTRES:
+                centre = CENTRES[len(staves)][i]
+            else:
+                continue
+            gap = abs(statistics.median(here) - centre)
+            best = None
+            for cand in (clef.TrebleClef(), clef.BassClef()):
+                steps = _bottom(cand) - _bottom(read)
+                trial = copy.deepcopy(staff)
+                for m in trial:
+                    shift_measure(m, steps)
+                d = abs(statistics.median(_pitches(trial)) - centre)
+                if best is None or d < best[0]:
+                    best = (d, cand, steps)
+            if best[0] > 7 or best[0] + 5 > gap:
+                continue
+            _d, cand, steps = best
+            after = raw[j + 1][1][i] if j + 1 < len(raw) and i < len(raw[j + 1][1]) and raw[j + 1][1][i] else None
+            if after and not after[0].getElementsByClass(clef.Clef):
+                after[0].insert(0, copy.deepcopy(read))  # le système suivant gardait la clé lue
+            for m in staff:
+                shift_measure(m, steps)
+            for old in list(staff[0].getElementsByClass(clef.Clef)):
+                staff[0].remove(old)
+            staff[0].insert(0, cand)
+            fixed += 1
     return fixed
 
 
@@ -224,6 +305,7 @@ def main(out, sources, only_if_useful=False):
     raw = [s for mv in movements for s in systems_of(mv)]
     clefs = fix_clefs(raw, sources)
     clefs += fix_odd_clefs(raw)
+    clefs += fix_rare_clefs(raw)
     systems = stack(raw)
     stacked = len(systems) < len(raw)
     if only_if_useful and len(movements) == 1 and not stacked and not clefs:
@@ -260,7 +342,7 @@ def main(out, sources, only_if_useful=False):
                 n.duration.quarterLength = min(simple, key=lambda d: abs(d - float(n.duration.quarterLength)))
         score.write("musicxml", fp=out, makeNotation=False)
     extra = f", {len(raw) - len(systems)} portées remises dans leur système" if stacked else ""
-    extra += f", clé de fa rétablie sur {clefs} portées" if clefs else ""
+    extra += f", clé rétablie sur {clefs} portées" if clefs else ""
     print(f"Mouvements assemblés : {len(movements)}, {number} mesures{extra}")
 
 

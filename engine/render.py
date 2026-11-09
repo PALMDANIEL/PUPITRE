@@ -746,10 +746,19 @@ def align_measures(voices):
     return rebuilt
 
 
+def drop_empty_chords(score):
+    """Accord sans aucune tête (lecture abîmée) : remplacé par un silence de même durée (sinon moyennes impossibles)."""
+    for c in list(score.recurse().getElementsByClass(chord.Chord)):
+        if not c.pitches and c.activeSite is not None:
+            r = note.Rest(quarterLength=c.quarterLength)
+            c.activeSite.replace(c, r)
+
+
 def extract_voices(score, trust_names=True):
     """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
     c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
     Pour un fichier MusicXML ou MIDI (hauteurs exactes, ordre des pistes parfois quelconque), on trie par hauteur."""
+    drop_empty_chords(score)
     if not trust_names:
         harmonize_keys(score)
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]

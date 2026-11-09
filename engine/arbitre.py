@@ -82,6 +82,67 @@ def musical(ev, others, ks):
     return (good / total if total else 0.5) + 0.5 * in_key
 
 
+REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
+
+
+def _alter(p):
+    return float(p.accidental.alter) if p.accidental is not None else 0.0
+
+
+def only_accidentals(x, y):
+    """Deux lectures d'une portée qui ne diffèrent que par des altérations (mêmes notes, même place, même rythme)."""
+    return len(x) == len(y) and x != y and all(
+        a[0] == b[0] and a[2] == b[2] and a[3].step == b[3].step and a[3].octave == b[3].octave for a, b in zip(x, y)) \
+        and any(_alter(a[3]) != _alter(b[3]) for a, b in zip(x, y))
+
+
+def needless(ev, ks):
+    """
+    Notes portant une altération écrite qui ne sert à rien : celle que l'armure et les altérations plus tôt dans la
+    mesure donnent déjà (bécarre sur un sol quand l'armure n'a qu'un fa♯). Un graveur n'en met pas ; une lecture de
+    photo en invente en prenant un dièse pour un bécarre. Rend l'ensemble des indices de ces notes.
+    """
+    implied, out = {}, set()
+    for k, (_o, _ps, _d, p) in enumerate(ev):
+        here = (p.step, p.octave)
+        by_key = ks.accidentalByStep(p.step) if ks is not None else None
+        before = implied.get(here, float(by_key.alter) if by_key is not None else 0.0)
+        if p.accidental is not None and p.accidental.displayStatus:
+            if float(p.accidental.alter) == before:
+                out.add(k)
+            implied[here] = float(p.accidental.alter)
+    return out
+
+
+def _shown(p):
+    return p.accidental is not None and bool(p.accidental.displayStatus)
+
+
+def mix_accidentals(x, y, ks):
+    """
+    Mêmes notes, altérations différentes : note par note, celle de homr quand il a vu un signe qu'Audiveris n'a pas vu
+    (sol♯ écrit contre sol) ou quand le signe d'Audiveris ne sert à rien (bécarre sur une note déjà naturelle : dièse
+    mal lu) ; sinon celle d'Audiveris (un bécarre qui annule l'armure, fa♮ avec fa♯ à la clé, est un vrai signe que homr
+    oublie). Une altération reprise vaut pour la suite de la mesure. Rend (lecture mêlée, nombre de notes prises à homr).
+    """
+    odd, carry, out, n = needless(x, ks), {}, [], 0
+    for k, (a, b) in enumerate(zip(x, y)):
+        here = (a[3].step, a[3].octave)
+        if _alter(a[3]) != _alter(b[3]) and (k in odd or (_shown(b[3]) and not _shown(a[3]))):
+            out.append(b)
+            n += 1
+            if _shown(b[3]):
+                carry[here] = _alter(b[3])
+        elif _alter(a[3]) != _alter(b[3]) and not _shown(a[3]) and carry.get(here) == _alter(b[3]):
+            out.append(b)  # même note plus loin dans la mesure : l'altération reprise vaut encore
+            n += 1
+        else:
+            out.append(a)
+            if _shown(a[3]):
+                carry[here] = _alter(a[3])
+    return out, n
+
+
 def signature(ev):
     return [(o, ps, d) for o, ps, d, _p in ev]
 
@@ -494,7 +555,7 @@ def _arbitrate(a, h, out, layout):
     if same < 0.4 * len(pairs) * len(sh):
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
-    doubtful, changed, agreed, mixed, by_ear = {}, 0, 0, 0, 0
+    doubtful, changed, agreed, mixed, by_ear, by_usage = {}, 0, 0, 0, 0, 0
     for k in sorted(set(range(count)) - {i for i, _j in pairs}):
         doubtful[str(k + 1)] = 0.5  # une barre vue par un seul lecteur : mesure à vérifier
     for k, j in pairs:
@@ -520,7 +581,15 @@ def _arbitrate(a, h, out, layout):
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
-            if MUSICAL and fa == fh:
+            if REDONDANT and fa == fh and only_accidentals(x, y):
+                mixed_acc, taken = mix_accidentals(x, y, m.getContextByClass(key.KeySignature))
+                if taken:
+                    rebuild(m, mixed_acc, voices, length)
+                    changed += 1
+                    by_usage += taken
+                    unsure = True
+                    continue
+            if MUSICAL and fa == fh and not take_h:
                 others = [e for t, ev_ in enumerate(ea) if t != s for e in ev_]
                 ks = m.getContextByClass(key.KeySignature)
                 if musical(y, others, ks) > musical(x, others, ks) + MUSIC_MARGIN:
@@ -546,7 +615,7 @@ def _arbitrate(a, h, out, layout):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
