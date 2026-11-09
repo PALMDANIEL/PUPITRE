@@ -27,8 +27,9 @@ from music21 import converter, key, note, chord, stream
 from music21.common.numberTools import opFrac
 
 # À égalité de fautes, l'oreille du musicien : la lecture dont les notes sonnent juste avec les autres portées et
-# appartiennent à la tonalité l'emporte, si elle l'emporte nettement (sinon Audiveris, comme avant)
-MUSICAL = os.environ.get("PUPITRE_MUSICAL", "1") != "0"
+# appartiennent à la tonalité l'emporte, si elle l'emporte nettement (sinon Audiveris, comme avant). Désactivé par
+# défaut (PUPITRE_MUSICAL=1 pour l'essayer) : banc complet du 06/11, total identique (76,6 %), PDF nets 98,8 → 98,4 %.
+MUSICAL = os.environ.get("PUPITRE_MUSICAL", "0") == "1"
 MUSIC_MARGIN = 0.15
 GRID = 0.25      # double croche : pas de contrôle de la couverture
 OFF_GRID = 4     # poids d'une durée hors grille, d'une fin de mesure fausse
