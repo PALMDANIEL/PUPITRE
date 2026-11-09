@@ -158,6 +158,8 @@ jobs:
             Copies : « Partition reconstituée (PDF) » (regravée proprement, une portée par voix, avec les paroles) et « Copie nettoyée (PDF) » ; sur téléphone, téléchargement des pistes (piste de travail, voix seule, ensemble).
             Copies photocopiées ou usées (chœur à 4 voix, une portée par voix) : reconnues automatiquement, nettoyées, puis lues voix par voix portée par portée (notes par IA homr, paroles lues sur l'image), en une à deux minutes. Ordinateur et téléphone (serveur en ligne). Bouton « Relire voix par voix » pour forcer. En cas d'échec, menu Aide › Journal des erreurs, à envoyer à AIT.
             Photos prises au téléphone (de travers, sombres, floues ou bougées, envoyées par WhatsApp) et recueils à petites portées : lecture nettement améliorée (banc d'essai de 108 copies : 54 % → 80 % de notes justes ; photos floues 5 % → 81 %).
+            Photo vérifiée avant l'envoi (téléphone et ordinateur) : floue, sombre, dans l'ombre ou trop petite → conseil et bouton pour la reprendre.
+            Ordinateur : « Corriger des notes » directement dans la partition (plus haut, plus bas, ♯ ♭ ♮, « mesure juste »), puis « Enregistrer et recréer l'audio » ; les mesures douteuses non vérifiées restent en orange.
             Mac : téléchargez le fichier .dmg jusqu'au bout avant de l'ouvrir (sinon « image disque endommagée »).
             Mac : au premier lancement, si macOS refuse d'ouvrir Pupitre, *Réglages Système › Confidentialité et sécurité › Ouvrir quand même*.
             Windows : « Windows a protégé votre ordinateur » › *Informations complémentaires* › *Exécuter quand même*.
