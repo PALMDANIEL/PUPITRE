@@ -1,7 +1,8 @@
 """
 Annotations publiques d'un circuit GitHub (lisibles sans compte) : GitHub coupe chaque message à 4000 caractères environ,
 on envoie donc le texte en plusieurs morceaux, coupés entre deux copies.
-Usage : python3 annoter.py <titre> <fichier> [début de ligne d'une nouvelle copie, par exemple « === »]
+Usage : python3 annoter.py <titre> <fichier> [début de ligne d'une nouvelle copie, par exemple « === »,
+ou « retrait » : une ligne en retrait continue la copie de la ligne d'avant]
 """
 import sys
 
@@ -12,7 +13,11 @@ def blocks(lines, sep):
     """Lignes regroupées par copie (une ligne = une copie si aucun séparateur n'est donné)."""
     out = []
     for line in lines:
-        if not out or not sep or line.startswith(sep):
+        if sep == "retrait":
+            new = not line[:1].isspace()
+        else:
+            new = not sep or line.startswith(sep)
+        if not out or new:
             out.append(line)
         else:
             out[-1] += "\n" + line
