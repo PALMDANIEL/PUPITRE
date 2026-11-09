@@ -517,7 +517,9 @@ def main(src, work, layout=None, stage1=False):
         mode = os.environ.get("PUPITRE_LECTEUR", "auto")  # auto | homr | audiveris : forcer un lecteur (banc d'essai)
         if mode == "audiveris":
             guess = None
-        if guess and (mode == "homr" or (mode == "auto" and (worn or dirty))):
+        # PUPITRE_USEE=double (essai) : copie usée ou tachée lue comme une page nette (Audiveris, puis double lecture)
+        first_homr = os.environ.get("PUPITRE_USEE", "homr") != "double"
+        if guess and (mode == "homr" or (mode == "auto" and (worn or dirty) and first_homr)):
             # photocopie ou vieux scan : barres et accolades coupées, taches ; Audiveris lit mal les notes et comble ce
             # qu'il ne comprend pas par des silences. Le réseau de neurones lit chaque portée. Une page nette ou une
             # photo propre reste lue par Audiveris (meilleur sur elles : 100 % contre 60 % sur le banc d'essai).
