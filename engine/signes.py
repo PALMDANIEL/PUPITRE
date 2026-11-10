@@ -9,7 +9,7 @@ hauteur de la note, remplace celui qu'Audiveris a lu (ou son absence) ; l'altér
 Liaisons (PDF net seulement) : deux notes de même hauteur qui se suivent dans une voix, reliées par un arc sur l'image,
 qu'Audiveris a écarté (sans liaison, la note tenue est chantée deux fois).
 
-Usage : python3 signes.py <lecture.mxl> <page-01.png> [page-02.png …] [--sans-signes] [--sans-liaisons]
+Usage : python3 signes.py <lecture.mxl> <page-01.png> [page-02.png …] [--sans-signes] [--sans-liaisons] [--flou]
 (réécrit la lecture ; rien si rien à changer)
 """
 import os, sys, zipfile, pathlib
@@ -173,8 +173,10 @@ def place(notes, pw, img, page):
     return [n for n in placed if n["xy"]]
 
 
-def read_signs(notes, img):
-    """Score de chaque signe juste à gauche de chaque note (lignes de portée ôtées), à la hauteur de la note."""
+def read_signs(notes, img, blurry=False):
+    """Score de chaque signe juste à gauche de chaque note (lignes de portée ôtées), à la hauteur de la note.
+    blurry (photo floue) : un dièse empâté ressemble à une tête de note et partait avec elles ; il est cherché sur
+    l'encre où seules les lignes sont ôtées (les bécarres et bémols, eux, s'y confondent avec têtes et queues)."""
     import pupitres
     ink = (img < 128).astype(np.uint8)
     sp0 = float(np.median([n["sp"] for n in notes]))
@@ -184,6 +186,7 @@ def read_signs(notes, img):
     heads = cv2.dilate(cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))),
                        np.ones((3, 3), np.uint8))
     sym = (ink & (1 - lines) & (1 - heads)).astype(np.float32)
+    sym_blur = (ink & (1 - lines)).astype(np.float32) if blurry else None
     tpl = {k: pupitres._glyph(c, sp0).astype(np.float32) for k, c in GLYPHS.items()}
     # partie du signe hors de ses traits verticaux (panse du bémol, barres du dièse et du bécarre) : une queue de note
     # seule ressemble à la hampe d'un bémol, il faut aussi la panse
@@ -202,8 +205,11 @@ def read_signs(notes, img):
         y0, y1 = int(y - 2.2 * sp), int(y + 2.2 * sp)
         if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
             continue
-        reg = sym[y0:y1, x0:x1]
         for k, t in tpl.items():
+            if blurry and k != "sharp":
+                n["scores"][k] = _blur_score(sym_blur, t, k, x0, x1, y0, y1, xl, y, sp)
+                continue
+            reg = (sym_blur if blurry else sym)[y0:y1, x0:x1]
             if t.shape[0] > reg.shape[0] or t.shape[1] > reg.shape[1]:
                 continue
             r = cv2.matchTemplate(reg, t, cv2.TM_CCOEFF_NORMED)
@@ -220,15 +226,37 @@ def read_signs(notes, img):
             row, col = np.flatnonzero(rows)[i], np.flatnonzero(cols)[j]
             patch = reg[row:row + t.shape[0], col:col + t.shape[1]]
             filled = float((patch * body[k]).sum() / max(1.0, body[k].sum()))
-            n["scores"][k] = float(sub[i, j]) if filled >= 0.45 else 0.0
+            n["scores"][k] = float(sub[i, j]) if filled >= 0.45 or blurry else 0.0
     return notes
 
 
-def decide(n):
-    """Signe nettement reconnu à gauche de la note (ou None)."""
+def _blur_score(sym, t, k, x0, x1, y0, y1, xl, y, sp):
+    """Score brut d'un signe (sans contrôle de la panse) sur l'encre aux lignes ôtées : sert de point de comparaison
+    pour le dièse d'une photo floue (un bécarre aussi bien noté que le dièse : on s'abstient)."""
+    reg = sym[y0:y1, x0:x1]
+    if t.shape[0] > reg.shape[0] or t.shape[1] > reg.shape[1]:
+        return 0.0
+    r = cv2.matchTemplate(reg, t, cv2.TM_CCOEFF_NORMED)
+    want = (y - y0) - (0.55 * sp if k == "flat" else 0.0) - t.shape[0] / 2
+    rows = np.abs(np.arange(r.shape[0]) - want) <= 0.45 * sp
+    right = x0 + np.arange(r.shape[1]) + t.shape[1]
+    cols = (right >= xl - 1.0 * sp) & (right <= xl + 0.1 * sp)
+    return float(r[np.ix_(rows, cols)].max()) if rows.any() and cols.any() else 0.0
+
+
+SHARP_BLUR, SHARP_BLUR_MARGIN = 0.40, 0.05  # photo floue : vrais dièses 0,43–0,53, faux 0,32 au plus (bwv153.1)
+
+
+def decide(n, blurry=False):
+    """Signe nettement reconnu à gauche de la note (ou None). Photo floue : seulement un dièse, nettement devant le
+    bécarre (sur l'encre empâtée, bécarres et bémols ne se distinguent pas des têtes et des queues)."""
     s = n.get("scores") or {}
     if not s:
         return None
+    if blurry:
+        sharp = s.get("sharp", 0.0)
+        others = max(s.get("natural", 0.0), s.get("flat", 0.0) - 0.1)
+        return "sharp" if sharp >= SHARP_BLUR and sharp - s.get("natural", 0.0) >= SHARP_BLUR_MARGIN and sharp > others else None
     best = max(s, key=s.get)
     rest = max([v for k, v in s.items() if k != best], default=0.0)
     if s[best] >= SCORE + (0.05 if best != "sharp" else 0.0) and s[best] - rest >= MARGIN:
@@ -236,7 +264,7 @@ def decide(n):
     return None
 
 
-def apply(notes):
+def apply(notes, blurry=False):
     """Signes reconnus écrits dans la lecture ; l'altération vaut pour la suite de la mesure, sur la même portée."""
     changed = 0
     by_measure = {}
@@ -254,7 +282,7 @@ def apply(notes):
         for n in group:
             here = (n["step"], n["octave"])
             leading = n["first"] and n["x"] <= lead.get((n["page"], n["system"], n["part"], n["staff"]), -1) + 5
-            sign = None if leading else decide(n)
+            sign = None if leading else decide(n, blurry)
             if sign is not None and (n["acc"] != sign or n["alter"] != ALTER[sign]):
                 _set(n["el"], ALTER[sign], sign)
                 carry[here] = ALTER[sign]
@@ -381,7 +409,7 @@ def write_ties(pairs):
     return len(pairs)
 
 
-def fix(mxl, pages, signs=True, ties=True):
+def fix(mxl, pages, signs=True, ties=True, blurry=False):
     root, name = _read(mxl)
     notes, pw = notes_of(root)
     if not notes:
@@ -395,10 +423,10 @@ def fix(mxl, pages, signs=True, ties=True):
         if not mine:
             continue
         if signs:
-            seen += read_signs(mine, img)
+            seen += read_signs(mine, img, blurry)
         if ties:
             links += read_ties(mine, img)
-    changed = apply(seen) if signs else 0
+    changed = apply(seen, blurry) if signs else 0
     tied = write_ties(links) if ties else 0
     if changed or tied:
         _write(mxl, root, name)
@@ -410,6 +438,7 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     args = sys.argv[1:]
     signs, ties = "--sans-signes" not in args, "--sans-liaisons" not in args
-    args = [a for a in args if a not in ("--sans-signes", "--sans-liaisons")]
-    n, t = fix(args[0], args[1:], signs=signs, ties=ties)
+    blurry = "--flou" in args and os.environ.get("PUPITRE_SIGNES_FLOU", "1") == "1"
+    args = [a for a in args if a not in ("--sans-signes", "--sans-liaisons", "--flou")]
+    n, t = fix(args[0], args[1:], signs=signs, ties=ties, blurry=blurry)
     print(f"Altérations relues sur l'image : {n} notes, liaisons : {t}", file=sys.stderr)

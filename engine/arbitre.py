@@ -86,6 +86,7 @@ REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
 VOTE = os.environ.get("PUPITRE_VOTE", "1") == "1"  # trois lectures (deux portées) : deux contre une
 PAD = os.environ.get("PUPITRE_VIDES", "1") == "1"  # mesures jetées par Audiveris sur une portée : laissées vides
 IMAGE_MAP = os.environ.get("PUPITRE_RECOUPE", "1") == "1"  # mesures d'Audiveris recoupées d'après les barres de l'image
+OCTAVE = os.environ.get("PUPITRE_OCTAVE_HOMR", "1") == "1"  # mesure de homr hors tessiture : pas reprise
 INSERT = os.environ.get("PUPITRE_INSERTION", "1") == "1"  # mesure perdue sur toutes les portées : reprise de homr
 RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"  # lectures trop différentes : homr ne remplit que ces mesures
 # à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
@@ -945,6 +946,14 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
+            if take_h and OCTAVE and voices == 1 and medians[s][0] is not None and x and y:
+                # homr une octave à côté (clé de la ligne mal suivie : ténor lu en clé de sol sans 8) : sa mesure,
+                # plus cohérente en rythme, mettrait la voix hors de sa tessiture
+                mx = statistics.median(e[1] for e in x)
+                my = statistics.median(e[1] for e in y)
+                if abs(my - medians[s][0]) > 9 and abs(mx - medians[s][0]) <= 7:
+                    take_h = False
+                    unsure = True
             if HEADS and fa == fh and counter is not None and not only_accidentals(x, y):
                 seen = counter.count(s, j)
                 if seen is not None and abs(filled(y) - seen) < abs(filled(x) - seen):

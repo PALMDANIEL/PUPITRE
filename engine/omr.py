@@ -364,6 +364,8 @@ def reread_signs(pre: pathlib.Path, pages_dir: pathlib.Path, found, pages: int) 
     # PDF net : seulement les liaisons (Audiveris en écarte souvent l'arc), pas les altérations (il y lit juste) ;
     # photo et copie usée : seulement les altérations (lignes de portée épaisses : de faux arcs partout)
     which = ["--sans-signes"] if nettes >= pages else ["--sans-liaisons"]
+    if (pre / "flou").exists():
+        which.append("--flou")  # dièses empâtés : cherchés sans ôter les têtes (signes.read_signs)
     r = subprocess.run(step("signes", found[0], *images, *which), capture_output=True, text=True, encoding="utf-8",
                        errors="replace", **QUIET)
     msg = [l for l in r.stderr.splitlines() if l.startswith("Altérations")]
