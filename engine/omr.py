@@ -351,8 +351,8 @@ SIGNES = os.environ.get("PUPITRE_SIGNES", "1") != "0"
 def reread_signs(pre: pathlib.Path, pages_dir: pathlib.Path, found, pages: int) -> None:
     """
     Photo ou copie usée : les altérations écrites dans la mesure (♯ ♮ ♭) qu'Audiveris a perdues ou mal lues sont
-    relues sur l'image (signes.py). Pas sur un PDF net (il y lit juste), ni sur une lecture coupée en mouvements
-    (la place de chaque système sur la page n'est alors plus connue).
+    relues sur l'image (signes.py) ; sur un PDF net, les liaisons qu'il a écartées. Pas sur une lecture coupée en
+    mouvements (la place de chaque système sur la page n'est alors plus connue).
     """
     if not SIGNES or len(found) != 1:
         return
@@ -360,10 +360,11 @@ def reread_signs(pre: pathlib.Path, pages_dir: pathlib.Path, found, pages: int) 
         nettes = int((pre / "nettes").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         nettes = 0
-    if nettes >= pages:
-        return
     images = sorted(pages_dir.glob("page-*.png"))
-    r = subprocess.run(step("signes", found[0], *images), capture_output=True, text=True, encoding="utf-8",
+    # PDF net : seulement les liaisons (Audiveris en écarte souvent l'arc), pas les altérations (il y lit juste) ;
+    # photo et copie usée : seulement les altérations (lignes de portée épaisses : de faux arcs partout)
+    which = ["--sans-signes"] if nettes >= pages else ["--sans-liaisons"]
+    r = subprocess.run(step("signes", found[0], *images, *which), capture_output=True, text=True, encoding="utf-8",
                        errors="replace", **QUIET)
     msg = [l for l in r.stderr.splitlines() if l.startswith("Altérations")]
     if msg:

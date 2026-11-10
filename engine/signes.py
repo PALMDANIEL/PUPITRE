@@ -6,7 +6,11 @@ le MusicXML, en dixièmes d'interligne), puis on compare l'encre juste à sa gau
 dessins du dièse, du bécarre et du bémol (police Bravura, celle d'Audiveris). Un signe nettement reconnu, à la
 hauteur de la note, remplace celui qu'Audiveris a lu (ou son absence) ; l'altération vaut pour la suite de la mesure.
 
-Usage : python3 signes.py <lecture.mxl> <page-01.png> [page-02.png …]   (réécrit la lecture ; rien si rien à changer)
+Liaisons (PDF net seulement) : deux notes de même hauteur qui se suivent dans une voix, reliées par un arc sur l'image,
+qu'Audiveris a écarté (sans liaison, la note tenue est chantée deux fois).
+
+Usage : python3 signes.py <lecture.mxl> <page-01.png> [page-02.png …] [--sans-signes] [--sans-liaisons]
+(réécrit la lecture ; rien si rien à changer)
 """
 import os, sys, zipfile, pathlib
 import xml.etree.ElementTree as ET
@@ -50,7 +54,7 @@ def notes_of(root):
     out = []
     for pi, part in enumerate(root.findall("part")):
         page, system, x0, sysleft, clefs, octs = 0, -1, 0.0, 0.0, {}, {}
-        for m in part.findall("measure"):
+        for mindex, m in enumerate(part.findall("measure")):
             pr = m.find("print")
             if pr is not None and pr.get("new-page") == "yes":
                 page += 1
@@ -72,6 +76,8 @@ def notes_of(root):
                     continue
                 st = int(n.findtext("staff") or 1)
                 out.append(dict(part=pi, staff=st, page=page, system=system, measure=m, first=first, el=n,
+                                voice=n.findtext("voice") or "1", mindex=mindex, order=k,
+                                tied={t.get("type") for t in n.findall("tie")},
                                 x=lm + sysleft + x0 + float(n.get("default-x")), step=n.findtext("pitch/step"),
                                 octave=int(n.findtext("pitch/octave")), alter=float(n.findtext("pitch/alter") or 0),
                                 acc=n.findtext("accidental"), clef=clefs.get(st), oc=octs.get(st, 0)))
@@ -87,32 +93,47 @@ def place(notes, pw, img, page):
     mine = [n for n in notes if n["page"] == page]
     if not mine or not staves:
         return []
-    per_part = {}
-    for n in mine:
-        per_part[n["part"]] = max(per_part.get(n["part"], 1), n["staff"])
-    per_system = sum(per_part.values())
-    for n in mine:
-        idx = n["system"] * per_system + sum(per_part[p] for p in sorted(per_part) if p < n["part"]) + n["staff"] - 1
-        n["xy"] = None
-        if idx >= len(staves) or n["clef"] is None or n["clef"] not in BOTTOM:
-            continue
-        t, b, _l, _r = staves[idx]
-        sp = (b - t) / 4
-        d = "CDEFGAB".index(n["step"]) + 7 * n["octave"] + 1
-        n["xy"], n["sp"] = (n["x"] * W / pw, b - (d - BOTTOM[n["clef"]] - 7 * n["oc"]) * sp / 2), sp
-    placed = [n for n in mine if n["xy"]]
-    if len(placed) < 4 or len(staves) % per_system:
-        return []
-    # têtes pleines vues sur l'image : la position calculée est recalée système par système (droite ajustée), puis
-    # chaque note sur la tête la plus proche de sa rangée
+    # têtes pleines vues sur l'image
     ink = (img < 128).astype(np.uint8)
-    sp0 = float(np.median([n["sp"] for n in placed]))
+    sp0 = float(np.median([(bb - tt) / 4 for tt, bb, _l, _r in staves]))
     k = max(3, int(0.55 * sp0)) | 1
     heads = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     _nb, _lab, st, cen = cv2.connectedComponentsWithStats(heads, 8)
-    keep = [(c[0], c[1], s[cv2.CC_STAT_WIDTH]) for s, c in zip(st[1:], cen[1:])
-            if 0.6 * sp0 <= s[cv2.CC_STAT_HEIGHT] <= 1.6 * sp0 and 0.8 * sp0 <= s[cv2.CC_STAT_WIDTH] <= 2.2 * sp0]
+    keep = [(c[0], c[1], s_[cv2.CC_STAT_WIDTH]) for s_, c in zip(st[1:], cen[1:])
+            if 0.6 * sp0 <= s_[cv2.CC_STAT_HEIGHT] <= 1.6 * sp0 and 0.8 * sp0 <= s_[cv2.CC_STAT_WIDTH] <= 2.2 * sp0]
     B = np.array(keep, float) if keep else np.zeros((0, 3))
+
+    def y_on(n, staff):
+        t, b_, _l, _r = staff
+        d = "CDEFGAB".index(n["step"]) + 7 * n["octave"] + 1
+        return b_ - (d - BOTTOM[n["clef"]] - 7 * n["oc"]) * (b_ - t) / 8
+
+    # chaque groupe de notes (système, partie, portée de la partie) va sur la portée de l'image où ses têtes sont vues :
+    # Audiveris éparpille parfois une page en plus de parties qu'il n'y a de portées par système (8 pour 4)
+    groups = {}
+    for n in mine:
+        n["xy"] = None
+        if n["clef"] in BOTTOM:
+            groups.setdefault((n["system"], n["part"], n["staff"]), []).append(n)
+    for group in groups.values():
+        best, votes = None, 0
+        for staff in staves:
+            sp = (staff[1] - staff[0]) / 4
+            v = 0
+            for n in group:
+                x, y = n["x"] * W / pw, y_on(n, staff)
+                if len(B) and ((np.abs(B[:, 1] - y) <= 0.45 * sp) & (np.abs(B[:, 0] - x) <= 3 * sp)).any():
+                    v += 1
+            if v > votes:
+                best, votes = staff, v
+        if best is None or votes < max(2, 0.3 * len(group)):
+            continue
+        t, b_, _l, _r = best
+        for n in group:
+            n["xy"], n["sp"], n["staff_tb"] = (n["x"] * W / pw, y_on(n, best)), (b_ - t) / 4, (t, b_)
+    placed = [n for n in mine if n["xy"]]
+    if len(placed) < 4:
+        return []
 
     def nearest(x, y, sp, reach):
         if not len(B):
@@ -267,27 +288,128 @@ def _set(el, alter, sign):
     acc.text = sign
 
 
-def fix(mxl, pages):
+def _tie_arc(img_sym, a, b):
+    """
+    Arc de liaison entre deux têtes de même hauteur : au-dessus ou au-dessous d'elles, une courbe mince qui couvre
+    presque tout l'espace qui les sépare (une barre de mesure entre elles, toute droite, ne compte pas).
+    """
+    sp = a["sp"]
+    xa = (a["head"] if a.get("head") is not None else a["xy"][0] - 0.65 * sp) + 1.3 * sp
+    xb = (b["head"] if b.get("head") is not None else b["xy"][0] - 0.65 * sp) - 0.1 * sp
+    if xb - xa < 0.8 * sp or abs(a["xy"][1] - b["xy"][1]) > 0.4 * sp:
+        return False
+    y = (a["xy"][1] + b["xy"][1]) / 2
+    H, W = img_sym.shape
+    t, bot = a["staff_tb"]
+    line_rows = {int(round(t + k * sp)) + d for k in range(5) for d in (-1, 0, 1)}  # lignes de portée : ignorées
+    for lo, hi in ((y - 1.6 * sp, y - 0.25 * sp), (y + 0.25 * sp, y + 1.6 * sp)):
+        y0, y1, x0, x1 = max(0, int(lo)), min(H, int(hi)), max(0, int(xa)), min(W, int(xb))
+        keep = [r for r in range(y0, y1) if r not in line_rows]
+        band = img_sym[keep, x0:x1] if keep else img_sym[0:0, x0:x1]
+        if band.size == 0:
+            continue
+        tall = band.sum(0) >= 0.8 * band.shape[0]  # trait vertical (barre, queue) : colonne ignorée
+        cols = band[:, ~tall]
+        if cols.shape[1] < 0.6 * band.shape[1]:
+            continue
+        inked = cols.any(0)
+        if inked.mean() < 0.65:
+            continue
+        thin = cols.sum(0)[inked] <= max(3, 0.4 * sp)
+        # une courbe : d'une colonne à l'autre, son centre bouge peu (des lettres, des têtes voisines sautent)
+        rows = np.arange(cols.shape[0])[:, None]
+        centre = (cols * rows).sum(0)[inked] / np.maximum(1, cols.sum(0)[inked])
+        smooth = np.median(np.abs(np.diff(centre))) <= 1.5 if len(centre) > 2 else False
+        if thin.mean() >= 0.8 and smooth:
+            return True
+    return False
+
+
+def read_ties(notes, img):
+    """
+    Liaisons qu'Audiveris n'a pas écrites (il en trouve les courbes, puis en écarte la plupart) : deux notes qui se
+    suivent dans la même voix, de même hauteur, reliées sur l'image par un arc. Sans elles, une note tenue par-dessus
+    la barre est chantée deux fois. Rend [(note, note suivante)].
+    """
+    if not notes:
+        return []
+    ink = (img < 128).astype(np.uint8)
+    sp0 = float(np.median([n["sp"] for n in notes]))
+    k = max(3, int(0.55 * sp0)) | 1
+    heads = cv2.dilate(cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))),
+                       np.ones((3, 3), np.uint8))
+    sym = ink & (1 - heads)  # lignes de portée gardées : un arc les longe souvent ; leurs rangées sont ignorées
+    seq = {}
+    for n in notes:
+        seq.setdefault((n["page"], n["part"], n["staff"], n["voice"]), []).append(n)
+    pairs = []
+    for group in seq.values():
+        group.sort(key=lambda n: (n["mindex"], n["x"]))
+        onsets = []
+        for n in group:  # notes d'un même accord : même position
+            if onsets and onsets[-1][0]["mindex"] == n["mindex"] and abs(onsets[-1][0]["x"] - n["x"]) < 3:
+                onsets[-1].append(n)
+            else:
+                onsets.append([n])
+        for cur, nxt in zip(onsets, onsets[1:]):
+            if cur[0]["system"] != nxt[0]["system"]:
+                continue  # liaison coupée par un changement de ligne : on ne la cherche pas
+            for a in cur:
+                for b in nxt:
+                    if (a["step"], a["octave"]) == (b["step"], b["octave"]) and "start" not in a["tied"] \
+                            and _tie_arc(sym, a, b):
+                        pairs.append((a, b))
+    return pairs
+
+
+def write_ties(pairs):
+    """Liaisons écrites dans la lecture : <tie> et <tied>, la seconde note prend l'altération de la première."""
+    for a, b in pairs:
+        for n, kind in ((a["el"], "start"), (b["el"], "stop")):
+            if any(t.get("type") == kind for t in n.findall("tie")):
+                continue
+            tie = ET.Element("tie", {"type": kind})
+            kids = list(n)
+            after = next((i for i, c in enumerate(kids) if c.tag == "duration"), 0)
+            n.insert(after + 1, tie)
+            notations = n.find("notations")
+            if notations is None:
+                notations = ET.SubElement(n, "notations")
+            ET.SubElement(notations, "tied", {"type": kind})
+        if a["alter"] != b["alter"]:
+            _set(b["el"], a["alter"], None)
+    return len(pairs)
+
+
+def fix(mxl, pages, signs=True, ties=True):
     root, name = _read(mxl)
     notes, pw = notes_of(root)
     if not notes:
-        return 0
-    seen = []
+        return 0, 0
+    seen, links = [], []
     for k, page in enumerate(pages):
         img = imgio.imread(str(page), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
         mine = place(notes, pw, img, k)
-        if mine:
+        if not mine:
+            continue
+        if signs:
             seen += read_signs(mine, img)
-    changed = apply(seen)
-    if changed:
+        if ties:
+            links += read_ties(mine, img)
+    changed = apply(seen) if signs else 0
+    tied = write_ties(links) if ties else 0
+    if changed or tied:
         _write(mxl, root, name)
-    return changed
+    return changed, tied
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         sys.exit(__doc__)
-    n = fix(sys.argv[1], sys.argv[2:])
-    print(f"Altérations relues sur l'image : {n} notes", file=sys.stderr)
+    args = sys.argv[1:]
+    signs, ties = "--sans-signes" not in args, "--sans-liaisons" not in args
+    args = [a for a in args if a not in ("--sans-signes", "--sans-liaisons")]
+    n, t = fix(args[0], args[1:], signs=signs, ties=ties)
+    print(f"Altérations relues sur l'image : {n} notes, liaisons : {t}", file=sys.stderr)

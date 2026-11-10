@@ -38,7 +38,14 @@ def score_voice(got, want):
 def read_voices(partition):
     sc = converter.parse(str(partition))
     voices = render.extract_voices(sc, trust_names=False)
-    return [[int(max(n.pitches, key=lambda q: q.ps).midi) for n in v.recurse().notes if n.pitches] for v in voices]  # accord vide : sauté
+    # une note liée compte une fois, comme dans la vérité (make_corpus.four_parts : stripTies) ; accord vide : sauté
+    return [[int(max(n.pitches, key=lambda q: q.ps).midi) for n in v.recurse().notes if n.pitches and not held(n)]
+            for v in voices]
+
+
+def held(n):
+    """Suite d'une note liée (pas une nouvelle attaque)."""
+    return n.tie is not None and n.tie.type in ("stop", "continue")
 
 
 def run_case(case: pathlib.Path, reuse: bool):

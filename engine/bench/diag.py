@@ -55,7 +55,8 @@ def detail(part, truth):
     voices = render.extract_voices(converter.parse(str(part)), trust_names=False)
     lines = []
     for k, v in enumerate(voices[:4]):
-        notes = [(int(max(n.pitches, key=lambda q: q.ps).midi), n.measureNumber) for n in v.recurse().notes if n.pitches]
+        notes = [(int(max(n.pitches, key=lambda q: q.ps).midi), n.measureNumber) for n in v.recurse().notes
+                 if n.pitches and not run_bench.held(n)]
         got = [m for m, _b in notes]
         want = truth[NAMES[k]]
         out = []
