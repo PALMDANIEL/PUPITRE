@@ -173,7 +173,7 @@ def place(notes, pw, img, page):
     return [n for n in placed if n["xy"]]
 
 
-def read_signs(notes, img, blurry=False):
+def read_signs(notes, img, blurry=False, both=False):
     """Score de chaque signe juste à gauche de chaque note (lignes de portée ôtées), à la hauteur de la note.
     blurry (photo floue) : un dièse empâté ressemble à une tête de note et partait avec elles ; il est cherché sur
     l'encre où seules les lignes sont ôtées (les bécarres et bémols, eux, s'y confondent avec têtes et queues)."""
@@ -186,7 +186,7 @@ def read_signs(notes, img, blurry=False):
     heads = cv2.dilate(cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))),
                        np.ones((3, 3), np.uint8))
     sym = (ink & (1 - lines) & (1 - heads)).astype(np.float32)
-    sym_blur = (ink & (1 - lines)).astype(np.float32) if blurry else None
+    sym_blur = (ink & (1 - lines)).astype(np.float32) if blurry or both else None
     tpl = {k: pupitres._glyph(c, sp0).astype(np.float32) for k, c in GLYPHS.items()}
     # partie du signe hors de ses traits verticaux (panse du bémol, barres du dièse et du bécarre) : une queue de note
     # seule ressemble à la hampe d'un bémol, il faut aussi la panse
@@ -205,6 +205,9 @@ def read_signs(notes, img, blurry=False):
         y0, y1 = int(y - 2.2 * sp), int(y + 2.2 * sp)
         if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
             continue
+        if both and not blurry:
+            # photo nette : en plus, le dièse cherché comme sur une photo floue (collé à la tête, il partait avec elle)
+            n["scores_blur"] = {k: _blur_score(sym_blur, t, k, x0, x1, y0, y1, xl, y, sp) for k, t in tpl.items()}
         for k, t in tpl.items():
             if blurry and k != "sharp":
                 n["scores"][k] = _blur_score(sym_blur, t, k, x0, x1, y0, y1, xl, y, sp)
@@ -254,14 +257,18 @@ def decide(n, blurry=False):
     if not s:
         return None
     if blurry:
-        sharp = s.get("sharp", 0.0)
-        others = max(s.get("natural", 0.0), s.get("flat", 0.0) - 0.1)
-        return "sharp" if sharp >= SHARP_BLUR and sharp - s.get("natural", 0.0) >= SHARP_BLUR_MARGIN and sharp > others else None
+        return _blur_sharp(s)
     best = max(s, key=s.get)
     rest = max([v for k, v in s.items() if k != best], default=0.0)
     if s[best] >= SCORE + (0.05 if best != "sharp" else 0.0) and s[best] - rest >= MARGIN:
         return best
-    return None
+    return _blur_sharp(n["scores_blur"]) if n.get("scores_blur") else None
+
+
+def _blur_sharp(s):
+    sharp = s.get("sharp", 0.0)
+    others = max(s.get("natural", 0.0), s.get("flat", 0.0) - 0.1)
+    return "sharp" if sharp >= SHARP_BLUR and sharp - s.get("natural", 0.0) >= SHARP_BLUR_MARGIN and sharp > others else None
 
 
 def apply(notes, blurry=False):
@@ -409,7 +416,7 @@ def write_ties(pairs):
     return len(pairs)
 
 
-def fix(mxl, pages, signs=True, ties=True, blurry=False):
+def fix(mxl, pages, signs=True, ties=True, blurry=False, both=False):
     root, name = _read(mxl)
     notes, pw = notes_of(root)
     if not notes:
@@ -423,7 +430,7 @@ def fix(mxl, pages, signs=True, ties=True, blurry=False):
         if not mine:
             continue
         if signs:
-            seen += read_signs(mine, img, blurry)
+            seen += read_signs(mine, img, blurry, both)
         if ties:
             links += read_ties(mine, img)
     changed = apply(seen, blurry) if signs else 0
@@ -439,6 +446,7 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     signs, ties = "--sans-signes" not in args, "--sans-liaisons" not in args
     blurry = "--flou" in args and os.environ.get("PUPITRE_SIGNES_FLOU", "1") == "1"
+    both = not blurry and os.environ.get("PUPITRE_DIESES_COLLES", "1") == "1"  # photo nette : dièse collé à la tête
     args = [a for a in args if a not in ("--sans-signes", "--sans-liaisons", "--flou")]
-    n, t = fix(args[0], args[1:], signs=signs, ties=ties, blurry=blurry)
+    n, t = fix(args[0], args[1:], signs=signs, ties=ties, blurry=blurry, both=both)
     print(f"Altérations relues sur l'image : {n} notes, liaisons : {t}", file=sys.stderr)
