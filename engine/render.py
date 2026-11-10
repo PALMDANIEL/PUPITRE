@@ -56,6 +56,7 @@ def keep_highest_or_lowest(line, pick):
 
 
 GAPS = os.environ.get("PUPITRE_TROUS", "1") != "0"  # banc d'essai : 0 pour comparer sans fill_gaps
+MAIN_VOICES = os.environ.get("PUPITRE_VOIX_PRINCIPALES", "1") != "0"  # 0 : 3 voix lues ou plus → la plus aiguë et la plus grave, comme avant
 
 
 def _sounding(dst):
@@ -81,7 +82,7 @@ def _free(dst, a, b):
     return all(y <= a + 1e-6 or x >= b - 1e-6 for x, y in _sounding(dst))
 
 
-def fill_gaps(mt, mb, others):
+def fill_gaps(mt, mb, others, lost=None):
     """
     Notes qu'une lecture serrée perd en séparant deux voix d'une portée : (1) accord de la voix du haut là où celle du
     bas se tait (la lecture a rattaché les deux têtes à la même hampe) : sa note basse va à la voix du bas, et
@@ -114,7 +115,51 @@ def fill_gaps(mt, mb, others):
                     _place(line, m)
                     added += 1
                     break
+            else:
+                if lost is not None:
+                    lost.append(n)  # aucune des deux voix n'a de place pour elle
     return added
+
+
+def _leaps(line, pick):
+    """Somme des sauts mélodiques d'une voix dans la mesure (demi-tons), d'après la note que la voix garde d'un accord."""
+    ps = [pick(p.ps for p in n.pitches) for n in sorted(line.notes, key=lambda n: float(n.offset)) if n.pitches]
+    return sum(abs(b - a) for a, b in zip(ps, ps[1:]))
+
+
+def _crossings(mt, mb):
+    """Nombre de moments où la voix du haut passe sous celle du bas."""
+    count = 0
+    for a in mt.notes:
+        for b in mb.notes:
+            if a.pitches and b.pitches and float(a.offset) < float(b.offset + b.quarterLength) - 1e-6 \
+                    and float(b.offset) < float(a.offset + a.quarterLength) - 1e-6 \
+                    and max(p.ps for p in a.pitches) < min(p.ps for p in b.pitches):
+                count += 1
+    return count
+
+
+def two_voices(m, sung, model):
+    """
+    Mesure où la lecture a créé trois ou quatre « voix » sur une portée à deux voix (tête isolée, rythme mal compris) :
+    quelles sont les deux voix du chœur ? Chaque paire est essayée (les autres notes vont dans les silences des deux
+    voix, fill_gaps) et jugée comme le ferait un chef : le moins de notes perdues, les lignes les plus conjointes, pas
+    de croisement. À égalité, la plus aiguë et la plus grave (l'ancien choix). Rend (mesure du haut, mesure du bas).
+    """
+    best = None
+    for i in range(len(sung)):
+        for j in range(i + 1, len(sung)):
+            mt, mb = copy.deepcopy(model), copy.deepcopy(model)
+            for src, dst in ((sung[i], mt), (sung[j], mb)):
+                for el in src.notesAndRests:
+                    dst.insert(el.offset, copy.deepcopy(el))
+            lost = []
+            fill_gaps(mt, mb, [v for k, v in enumerate(sung) if k not in (i, j)], lost)
+            cost = 5 * len(lost) + _leaps(mt, max) + _leaps(mb, min) + 4 * _crossings(mt, mb)
+            rank = (cost, 0 if (i, j) == (0, len(sung) - 1) else 1)
+            if best is None or rank < best[0]:
+                best = (rank, mt, mb)
+    return best[1], best[2]
 
 
 def split_staff(part):
@@ -131,6 +176,10 @@ def split_staff(part):
             src_t, src_b = sung[0], sung[-1]
         else:
             src_t = src_b = sung[0] if sung else (m.voices[0] if m.voices else m)
+        if len(sung) >= 3 and GAPS and MAIN_VOICES:
+            mt, mb = two_voices(m, sung, mt)
+            top.append(mt); bottom.append(mb)
+            continue
         for src, dst in ((src_t, mt), (src_b, mb)):
             for el in src.notesAndRests:
                 dst.insert(el.offset, copy.deepcopy(el))

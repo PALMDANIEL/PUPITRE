@@ -228,6 +228,7 @@ def fix_odd_clefs(raw):
 # système selon leur nombre (de haut en bas : S A T B ; S/A et T/B ; contrechant, S/A, T/B ; une voix seule)
 COMMON_CLEFS = {("G", 2), ("F", 4)}  # octave à part (« 8 » sous ou sur la clé : remis par render.fix_octaves)
 CENTRES = {1: [64], 2: [67, 53], 3: [69, 64, 52], 4: [69, 64, 57, 50]}
+PLACE_CLEFS = {1: "G", 2: "GF", 3: "GGF", 4: "GGGF"}  # clé de chaque portée d'un système de chœur, de haut en bas
 
 
 def _octave_free(staff):
@@ -290,6 +291,58 @@ def fix_rare_clefs(raw):
     return fixed
 
 
+def fix_clefs_by_place(raw):
+    """
+    Clé courante mais fausse pour la place de la portée : clé de fa lue en tête de la portée du haut d'un système à deux
+    portées (petites portées : soprano et alto lus une octave et une sixte trop bas), clé de sol sur celle du bas… La
+    portée chante alors à plus d'une sixte de la hauteur de la même portée sur les autres systèmes (ou, à défaut, de la
+    tessiture attendue à cette place) ; relue dans l'autre clé (sol ou fa), elle y revient à une quarte près : on
+    change la clé. Rend le nombre de portées rétablies.
+    """
+    fixed = 0
+    for j, (_page, staves) in enumerate(raw):
+        n = len(staves)
+        if n not in CENTRES or n < 2:  # une portée seule (couplet de soliste) : sa clé peut être l'une ou l'autre
+            continue
+        for i, staff in enumerate(staves):
+            if not staff:
+                continue
+            read = _head_clef(staff[0])
+            here = _pitches(staff)
+            if read is None or len(here) < 4 or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
+                continue
+            centre = CENTRES[n][i]
+            others = [p for k, (_pg, st) in enumerate(raw) if k != j and len(st) == n and st[i] for p in _pitches(st[i])]
+            if len(others) >= 8 and abs(statistics.median(others) - centre) <= 7:
+                centre = statistics.median(others)
+            gap = abs(statistics.median(here) - centre)
+            if gap <= 9:
+                continue
+            # la clé attendue à cette place (sol en haut, fa en bas) : une clé de sol lue sans son « 8 » (ténor) met aussi
+            # la portée loin de sa tessiture, mais c'est une octave à rendre (render.fix_octaves), pas une clé à changer
+            want = PLACE_CLEFS[n][i]
+            if read.sign == want:
+                continue
+            cand = clef.TrebleClef() if want == "G" else clef.BassClef()
+            steps = _bottom(cand) - _bottom(read)
+            trial = copy.deepcopy(staff)
+            for m in trial:
+                shift_measure(m, steps)
+            d = abs(statistics.median(_pitches(trial)) - centre)
+            if d > 6 or d + 8 > gap:
+                continue
+            after = raw[j + 1][1][i] if j + 1 < len(raw) and i < len(raw[j + 1][1]) and raw[j + 1][1][i] else None
+            if after and not after[0].getElementsByClass(clef.Clef):
+                after[0].insert(0, copy.deepcopy(read))  # le système suivant gardait la clé lue
+            for m in staff:
+                shift_measure(m, steps)
+            for old in list(staff[0].getElementsByClass(clef.Clef)):
+                staff[0].remove(old)
+            staff[0].insert(0, cand)
+            fixed += 1
+    return fixed
+
+
 def _with_context(m, orig):
     """Mesure copiée en tête de portée : on lui rend sa clé, son armure et sa mesure (lues dans le contexte d'origine)."""
     for cls in (clef.Clef, key.KeySignature, meter.TimeSignature):
@@ -306,6 +359,7 @@ def main(out, sources, only_if_useful=False):
     clefs = fix_clefs(raw, sources)
     clefs += fix_odd_clefs(raw)
     clefs += fix_rare_clefs(raw)
+    clefs += fix_clefs_by_place(raw)
     systems = stack(raw)
     stacked = len(systems) < len(raw)
     if only_if_useful and len(movements) == 1 and not stacked and not clefs:

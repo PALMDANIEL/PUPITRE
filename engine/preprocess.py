@@ -521,6 +521,26 @@ def bar_marks(bw, sp, long=False):
             if w <= max(7, sp // 3) and 3.4 * sp <= h and (long or h <= 4.7 * sp)]
 
 
+def mend_bars(bw, sp):
+    """
+    Barres de mesure et ligne qui ouvre le système, coupées par endroits sur une vieille copie : cassures comblées
+    (jusqu'à une interligne). Sans la ligne du système d'un seul tenant, Audiveris fait de chaque portée un système à
+    part (copie usée sur deux portées : 6 portées, 5 « systèmes », 4 mouvements, voix perdues) ; sans barres entières,
+    il perd des mesures. Seuls les traits verticaux minces d'au moins une portée de haut sont repris (bar_marks).
+    """
+    if not sp:
+        return bw
+    ink = (bw < 128).astype(np.uint8)
+    v = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(5, sp // 2))))
+    v = cv2.morphologyEx(v, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, sp)))
+    n, lab, st, _ = cv2.connectedComponentsWithStats(v, 8)
+    keep = np.zeros(n, bool)
+    keep[1:] = (st[1:, cv2.CC_STAT_WIDTH] <= max(7, sp // 3)) & (st[1:, cv2.CC_STAT_HEIGHT] >= 3.4 * sp)
+    out = bw.copy()
+    out[keep[lab]] = 0
+    return out
+
+
 def bar_tilt(bars, sp):
     """
     Pente des portées (pixels par pixel) d'après les barres : celle qui aligne le mieux les hauts et les bas des barres
@@ -630,8 +650,30 @@ def faded_staves(bw, chains, sp0, bars=(), verticals=()):
             if prof.max() > 0.01:
                 y = max(0, y - r) + float((np.arange(len(prof)) * prof).sum() / prof.sum())
             lines.append((float(y), 2))
-        mid = (x0 + x1) // 2
-        out.append([(x0, mid, lines), (mid, x1, lines)])
+        # la portée n'est jamais tout à fait droite après le redressement (2 à 3 px d'un bout à l'autre) : tronçon par
+        # tronçon, les cinq lignes ensemble sont recalées sur leurs restes ; sans cela le trait retracé double l'ancien
+        step, pieces, last = 200, [], 0.0
+        for xa in range(x0, x1, step):
+            xb = min(x1, xa + step)
+            if x1 - xb < step // 2:
+                xb = x1
+            best, score = None, 0.0
+            for d in range(-r, r + 1):
+                rows_ = [int(round(y_ + d)) for y_, _t in lines]
+                if rows_[0] < 1 or rows_[-1] >= h - 1:
+                    continue
+                # la rangée même compte double (sinon, à un pixel près, tous les décalages voisins se valent)
+                v = sum(float(ev[y_, xa:xb].mean()) + 0.5 * float(ev[y_ - 1:y_ + 2, xa:xb].any(0).mean()) for y_ in rows_) \
+                    - 0.005 * abs(d - last)
+                if v > score:
+                    best, score = d, v
+            if best is None or score < 0.15:
+                best = last  # trop peu de restes ici : comme le tronçon voisin
+            last = float(best)
+            pieces.append((xa, xb, [(y_ + best, t_) for y_, t_ in lines]))
+            if xb >= x1:
+                break
+        out.append(pieces if len(pieces) >= 2 else [(x0, (x0 + x1) // 2, lines), ((x0 + x1) // 2, x1, lines)])
 
     # 1) barres de même haut et même bas : la portée est là (un seul trait : il faut alors des lignes bien visibles)
     groups = []
@@ -814,6 +856,7 @@ def repair_staff_lines(bw):
     if abs(k) * W >= 3:
         bw = cv2.warpAffine(bw, np.float32([[1, 0, 0], [-k, 1, k * W / 2]]), (W, H), flags=cv2.INTER_NEAREST, borderValue=255)
         bars = [(x, int(round(t - k * (x - W / 2))), int(round(b - k * (x - W / 2)))) for x, t, b in bars]
+    page_sp = sp  # interligne de la page (sp est repris plus bas, portée par portée)
     thin, chains = staff_chains(bw)
     verticals = bar_marks(bw, sp, long=True)
     chains += faded_staves(bw, chains, sp, bars, verticals)
@@ -879,6 +922,8 @@ def repair_staff_lines(bw):
             staves.append((top, bottom, chain[0][0], chain[-1][1]))
     if os.environ.get("PUPITRE_TACHES") != "0":  # avant de refermer les signes : une tache près d'une queue s'y collerait
         out = despeckle(out, staves)
+    if os.environ.get("PUPITRE_BARRES") != "0":
+        out = mend_bars(out, page_sp)
     return restore_strokes(out, bands)
 
 
