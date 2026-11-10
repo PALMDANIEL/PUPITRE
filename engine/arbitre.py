@@ -23,7 +23,7 @@ Usage : python3 arbitre.py <partition_audiveris> <partition_homr> <sortie.musicx
 import copy, json, os, pathlib, re, statistics, sys
 from fractions import Fraction
 
-from music21 import converter, key, note, chord, stream
+from music21 import converter, key, layout, note, chord, stream
 from music21.common.numberTools import opFrac
 
 # À égalité de fautes, l'oreille du musicien : la lecture dont les notes sonnent juste avec les autres portées et
@@ -85,9 +85,12 @@ def musical(ev, others, ks):
 REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
 VOTE = os.environ.get("PUPITRE_VOTE", "1") == "1"  # trois lectures (deux portées) : deux contre une
 PAD = os.environ.get("PUPITRE_VIDES", "1") == "1"  # mesures jetées par Audiveris sur une portée : laissées vides
+IMAGE_MAP = os.environ.get("PUPITRE_RECOUPE", "1") == "1"  # mesures d'Audiveris recoupées d'après les barres de l'image
 INSERT = os.environ.get("PUPITRE_INSERTION", "1") == "1"  # mesure perdue sur toutes les portées : reprise de homr
 RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"  # lectures trop différentes : homr ne remplit que ces mesures
-HEADS = os.environ.get("PUPITRE_TETES", "1") == "1"  # à égalité : le nombre de têtes pleines de l'image
+# à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
+# complet du 10/11, bwv153.1 ouverte nette A 98 → 100 mais bwv269 ouverte photo et sombre A 100 → 88 (homr pris à tort)
+HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
 
 
 def _alter(p):
@@ -443,6 +446,126 @@ def image_measures(voix):
         return None
 
 
+def _audiveris_systems(part):
+    """Systèmes d'une lecture d'Audiveris : [(marge gauche, [fin de chaque mesure])] en dixièmes, et (système, rang) de
+    chaque mesure ; None sans largeurs de mesures."""
+    systems, where = [], []
+    for k, m in enumerate(part.getElementsByClass(stream.Measure)):
+        if m.layoutWidth is None:
+            return None, None
+        sl = list(m.getElementsByClass(layout.SystemLayout))
+        pl = list(m.getElementsByClass(layout.PageLayout))
+        if k == 0 or any(x.isNew for x in sl) or any(x.isNew for x in pl):
+            systems.append([next((x.leftMargin for x in sl if x.leftMargin is not None), None), []])
+        ends = systems[-1][1]
+        ends.append((ends[-1] if ends else 0.0) + float(m.layoutWidth))
+        where.append((len(systems) - 1, len(ends) - 1))
+    return systems, where
+
+
+def image_map(score, voix):
+    """
+    Mesures d'Audiveris replacées sur l'image : largeurs et marges (dixièmes d'interligne) mises à l'échelle de la page,
+    comparées aux barres vues sur l'image (disposition de la lecture par homr). Rend, pour chaque mesure d'Audiveris,
+    les mesures de l'image qu'elle couvre (plusieurs : barres manquées, mesures fusionnées ; aucune image non couverte :
+    mesure perdue), ou None si les deux découpages ne se correspondent pas (systèmes coupés autrement).
+    """
+    try:
+        img = json.loads((pathlib.Path(voix) / "disposition.json").read_text(encoding="utf-8"))["systems"]
+    except Exception:  # noqa: BLE001
+        return None
+    for part in score.parts:
+        systems, where = _audiveris_systems(part)
+        if systems is not None:
+            break
+    else:
+        return None
+    if len(systems) != len(img) or any(left is None or not ends for left, ends in systems) or \
+            any(not s_.get("barres") for s_ in img):
+        return None
+    scale = statistics.median(s_["barres"][-1] / (left + ends[-1]) for (left, ends), s_ in zip(systems, img))
+    sp = statistics.median((st[1] - st[0]) / 4 for s_ in img for st in s_["staves"])
+    starts, base = [], 0
+    for s_ in img:
+        starts.append(base)
+        base += len(s_["barres"])
+    out = []
+    for si, mi in where:
+        left, ends = systems[si]
+        bars = img[si]["barres"]
+        a0, a1 = (left + (ends[mi - 1] if mi else 0.0)) * scale, (left + ends[mi]) * scale
+        covered = []
+        for q, hi in enumerate(bars):
+            lo = bars[q - 1] if q else min(a0, hi - sp)
+            if a0 - 0.5 * sp < (lo + hi) / 2 < a1 + 0.5 * sp and hi > a0 + sp:
+                covered.append(starts[si] + q)
+        out.append(covered)
+    flat = [q for c in out for q in c]
+    if flat != sorted(set(flat)) or sum(len(c) == 1 for c in out) < 0.7 * len(out):
+        return None  # image couverte deux fois, dans le désordre : découpages incompatibles
+    return out
+
+
+def restructure(a, sh, voices, mapping, total):
+    """
+    Mesures d'Audiveris qui en couvrent plusieurs sur l'image (barres manquées : notes perdues, durées fausses) et
+    mesures de l'image qu'aucune ne couvre (perdues) : remplacées par celles de homr, découpées comme l'image. Rend
+    le nombre de mesures reprises.
+    """
+    if len(sh[0]) != total:
+        return 0
+    plan, taken = [], set()  # plan : pour chaque mesure de sortie, ("a", i) ou ("h", j)
+    for i, cov in enumerate(mapping):
+        gap = [q for q in range(max(taken, default=-1) + 1, cov[0])] if cov else []
+        for q in gap:
+            plan.append(("h", q))
+            taken.add(q)
+        if len(cov) == 1:
+            plan.append(("a", i))
+        elif len(cov) > 1:
+            plan.extend(("h", q) for q in cov)
+        else:
+            plan.append(("a", i))
+        taken.update(cov)
+    for q in range(max(taken, default=-1) + 1, total):
+        plan.append(("h", q))
+    redone = sum(1 for kind, _ in plan if kind == "h")
+    if not redone:
+        return 0
+    parts = list(a.parts)
+    offset_parts = len(parts) - len(sh)
+    for pi, part in enumerate(parts):
+        ms = list(part.getElementsByClass(stream.Measure))
+        out = []
+        for kind, idx in plan:
+            if kind == "a":
+                out.append(ms[idx])
+                continue
+            evs = [events(st[idx]) for st in sh]
+            bar = float(sh[0][idx].duration.quarterLength) or 4.0
+            ends = {round(end_of(e), 3) for e in evs if e}
+            if len(ends) == 1 and 0 < min(ends) <= bar:
+                bar = min(ends)
+            new = stream.Measure()
+            new.append(note.Rest(quarterLength=bar))
+            new.pupitre_insere = True
+            if pi >= offset_parts and evs[pi - offset_parts]:
+                rebuild(new, evs[pi - offset_parts], voices, bar)
+            out.append(new)
+        first = ms[0] if ms else None
+        for x in ms:
+            part.remove(x)
+        at, number = 0.0, (first.number if first is not None else 1)
+        for k, x in enumerate(out):
+            if k == 0 and x is not first and first is not None:
+                for el in first.getElementsByClass(("Clef", "KeySignature", "TimeSignature")):
+                    x.insert(0, copy.deepcopy(el))  # clé, armure et mesure du début gardées
+            x.number = number + k
+            part.insert(at, x)
+            at += float(x.duration.quarterLength)
+    return redone
+
+
 def insert_missing(a, sh, pairs, voices, seen):
     """
     Mesure perdue par Audiveris sur toutes les portées (barre lue comme un arpège, mesure jugée fausse) : homr la lit et
@@ -727,6 +850,15 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
         if padded:
             print(f"Mesures absentes d'une portée chez Audiveris, laissées vides pour l'autre lecture : {len(padded)}",
                   file=sys.stderr)
+    restructured = 0
+    if IMAGE_MAP and voix and sh:
+        total = image_measures(voix)
+        mapping = image_map(a, voix) if total and len(sh[0]) == total else None
+        if mapping is not None:
+            restructured = restructure(a, sh, voices, mapping, total)
+            if restructured:
+                print(f"Mesures d'Audiveris recoupées d'après les barres de l'image, reprises de homr : {restructured}",
+                      file=sys.stderr)
     sa = staves(a)
     if not sh or not (len(sa) == len(sh) or (layout == "grand" and len(sa) == len(sh) + 1)):
         raise SystemExit(f"Portées différentes ({len(sa)} contre {len(sh)}) : pas d'arbitrage")
@@ -765,7 +897,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
         print(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : "
               "seules les mesures vides ou jetées par Audiveris sont reprises de homr", file=sys.stderr)
     doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote, by_heads = {}, 0, 0, 0, 0, 0, 0, 0
-    changed += inserted
+    changed += inserted + restructured
     counter = HeadCounter(voix) if voix and HEADS else None
     # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
     st_t = None
@@ -847,7 +979,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
                 unsure = True
         if unsure or getattr(ma[0], "pupitre_insere", False):
             doubtful[str(k + 1)] = 0.5
-    if rescue and not changed and not inserted:
+    if rescue and not changed and not inserted and not restructured:
         raise SystemExit("Aucune mesure vide à reprendre : pas d'arbitrage")
     a.write("musicxml", fp=out)
     mean = 1 - 0.5 * len(doubtful) / max(1, count)
