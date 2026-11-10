@@ -652,6 +652,13 @@ def faded_staves(bw, chains, sp0, bars=(), verticals=()):
             if prof.max() > 0.01:
                 y = max(0, y - r) + float((np.arange(len(prof)) * prof).sum() / prof.sum())
             lines.append((float(y), 2))
+        # cinq lignes équidistantes : droite ajustée sur les positions recalées (un reste trompeur — paroles, tête — ne
+        # déplace plus une ligne seule ; une portée aux lignes inégales est refusée par Audiveris, qui perd ses voix)
+        ys = np.array([y_ for y_, _t in lines])
+        b_, a_ = np.polyfit(np.arange(5), ys, 1)
+        if abs(b_ - sp) > 0.12 * sp:
+            b_, a_ = sp, float(np.median(ys - sp * np.arange(5)))
+        lines = [(float(a_ + b_ * k_), 2) for k_ in range(5)]
         # la portée n'est jamais tout à fait droite après le redressement (2 à 3 px d'un bout à l'autre) : tronçon par
         # tronçon, les cinq lignes ensemble sont recalées sur leurs restes ; sans cela le trait retracé double l'ancien
         step, pieces, last = 200, [], 0.0
