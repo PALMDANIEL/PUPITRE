@@ -526,12 +526,24 @@ def restructure(a, sh, voices, mapping, total):
         n_h = sum(len(events(st[q])) for st in sh for q in cov)
         return n_a < 0.6 * n_h
 
+    def sound(cov):
+        """Les mesures de homr sont toutes rythmiquement justes (sinon, sur deux portées, ses accords sont peu sûrs)."""
+        for q in cov:
+            bar = float(sh[0][q].duration.quarterLength) or 4.0
+            evs = [events(st[q]) for st in sh]
+            ends = {round(end_of(e), 3) for e in evs if e}
+            if len(ends) == 1 and 0 < min(ends) <= bar:
+                bar = min(ends)
+            if not all(e and faults(e, [], bar, voices) == 0 for e in evs):
+                return False
+        return True
+
     for i, cov in enumerate(mapping):
         gap = [q for q in range(max(taken, default=-1) + 1, cov[0])] if cov else []
         for q in gap:
             plan.append(("h", q))
             taken.add(q)
-        if len(cov) > 1 and lost(i, cov):
+        if len(cov) > 1 and (lost(i, cov) or sound(cov)):
             plan.extend(("h", q) for q in cov)
         else:
             plan.append(("a", i))
@@ -859,7 +871,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
         if padded:
             print(f"Mesures absentes d'une portée chez Audiveris, laissées vides pour l'autre lecture : {len(padded)}",
                   file=sys.stderr)
-    restructured = 0
+    restructured, mapping = 0, None
     if IMAGE_MAP and voix and sh:
         total = image_measures(voix)
         mapping = image_map(a, voix) if total and len(sh[0]) == total else None
@@ -878,7 +890,9 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
     pairs = pair_measures(sa_used, sh)
     if len(pairs) < 0.6 * count:
         raise SystemExit(f"Mesures impossibles à apparier ({len(pairs)}/{count}) : pas d'arbitrage")
-    inserted = insert_missing(a, sh, pairs, voices, image_measures(voix)) if INSERT and voix else 0
+    # mesures replacées sur l'image : les mesures vraiment perdues y ont déjà été reprises (restructure) ; sinon, d'après
+    # l'appariement des notes (une mesure fusionnée par Audiveris y passerait pour perdue : notes en double)
+    inserted = insert_missing(a, sh, pairs, voices, image_measures(voix)) if INSERT and voix and mapping is None else 0
     if inserted:
         n_ins = inserted
         print(f"Mesures perdues par Audiveris, reprises de homr (nombre vu sur l'image) : {n_ins}", file=sys.stderr)
