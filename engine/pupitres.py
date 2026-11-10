@@ -24,6 +24,7 @@ import numpy as np
 import imgio
 
 PAR_SYSTEMES = os.environ.get("PUPITRE_SYSTEMES", "1") == "1"  # systèmes vus par les barres avant de compléter
+BARRES_TETES = os.environ.get("PUPITRE_BARRES", "") != "ancienne"  # queues de notes écartées des barres de mesure
 
 # (nom, clé) de chaque portée d'un système, de haut en bas
 LAYOUTS = {
@@ -1147,6 +1148,69 @@ def bar_count(bw, group):
     return len(bar_lines(bw, group))
 
 
+def _bar_runs(bw, s, sp, weak=None):
+    """
+    Traits qui traversent toute la hauteur d'une portée, sans tête de note accolée : [(x0, x1)]. Sur une portée à deux
+    voix (S/A, T/B), la colonne au bord des têtes d'un accord (queue de la voix du haut, tête du haut, tête du bas)
+    traverse souvent toute la portée : c'est une queue, pas une barre (banc : deux fois trop de mesures vues).
+    weak : seuil de hauteur couverte ; rend alors aussi les traits plus courts ou accolés à une tête (barre floue, au
+    bord d'une photo penchée, note collée à la barre), qui confirment une barre vue nettement sur une autre portée.
+    """
+    top, bottom = int(round(s[0])), int(round(s[1]))
+    ink = (bw[top:bottom + 1, :] < 128).astype(np.uint8)
+    closed = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 7)))
+    cover = closed.mean(0)
+    if weak is not None:
+        xs = np.flatnonzero(cover >= weak)
+        return [(int(g[0]), int(g[-1])) for g in np.split(xs, np.flatnonzero(np.diff(xs) > 1) + 1)
+                if xs.size and g[-1] - g[0] + 1 <= 0.9 * sp]
+    xs = np.flatnonzero(cover >= 0.9)  # toute la hauteur : une queue de note ou un chiffre de mesure, non
+    if not xs.size:
+        return []
+    # lignes de portée ôtées (traits horizontaux longs : une photo penche, des rangées fixes ne suffisent pas)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(2 * sp)), 1)))
+    body = ink & (1 - lines)
+    reach = max(2, int(round(0.45 * sp)))
+    runs = []
+    for g in np.split(xs, np.flatnonzero(np.diff(xs) > 1) + 1):
+        x0, x1 = int(g[0]), int(g[-1])
+        if x1 - x0 + 1 > 0.9 * sp:  # trop large : tête, ligature
+            continue
+        if not BARRES_TETES:
+            runs.append((x0, x1))
+            continue
+        # tête accolée : encre qui part du trait et s'en écarte d'une demi-interligne, sur une hauteur de tête
+        left = body[:, max(0, x0 - reach):x0][:, ::-1]
+        right = body[:, x1 + 1:x1 + 1 + reach]
+        heads = [int((np.cumprod(side, axis=1).sum(1) >= reach).sum()) for side in (left, right) if side.size]
+        if max(heads, default=0) >= 0.4 * sp:
+            continue
+        runs.append((x0, x1))
+    return runs
+
+
+def _opening(bw, s, sp, x):
+    """Trait d'ouverture du système (accolade, barre initiale) : les lignes de la portée ne se prolongent pas à sa gauche."""
+    x0, x1 = max(0, int(x - 2.5 * sp)), max(0, int(x - 0.6 * sp))
+    if x1 - x0 < 3:
+        return True
+    lo, hi = max(0, int(s[0] - sp)), min(bw.shape[0], int(s[1] + sp))
+    ink = (bw[lo:hi, max(0, x0 - int(sp)):x1 + int(sp)] < 128).astype(np.uint8)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(1.5 * sp)), 1)))
+    rows = lines[:, int(sp):int(sp) + x1 - x0].mean(1) > 0.6
+    count = int(np.count_nonzero(rows[1:] & ~rows[:-1])) + int(rows[0]) if rows.size else 0  # traits horizontaux
+    return count < 3
+
+
+def _line_end(bw, s, sp):
+    """Bout droit réel des lignes d'une portée (find_staves ne le donne qu'à une bande près)."""
+    lo, hi = max(0, int(s[0] - sp / 2)), min(bw.shape[0], int(s[1] + sp / 2))
+    ink = (bw[lo:hi] < 128).astype(np.uint8)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(1.5 * sp)), 1)))
+    cols = np.flatnonzero(lines.sum(0) >= 3)  # au moins trois lignes présentes dans la colonne
+    return int(cols[-1]) if cols.size else int(s[3])
+
+
 def bar_lines(bw, group):
     """
     Barres de mesure d'un système, vues sur l'image : une barre traverse toute la hauteur de chacune de ses
@@ -1158,22 +1222,34 @@ def bar_lines(bw, group):
     right = int(max(s[3] for s in group))
     sp = statistics.median((s[1] - s[0]) / 4 for s in group)
     staves = [s for s in group if len(s) < 5 or s[4] == "vue"] or group
-    votes = 0
+    n = len(staves)
+    votes, seen = np.zeros(bw.shape[1], np.int32), np.zeros(bw.shape[1], np.int32)
     for s in staves:
-        top, bottom = int(round(s[0])), int(round(s[1]))
-        ink = (bw[top:bottom + 1, :] < 128).astype(np.uint8)
-        ink = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 7)))
-        full = ink.mean(0) >= 0.9  # toute la hauteur : une queue de note ou un chiffre de mesure, non
-        votes = votes + cv2.dilate(full.astype(np.uint8)[None, :], np.ones((1, int(1.2 * sp)), np.uint8))[0]  # barre penchée
-    # une barre peut manquer sur une portée de la copie : trois portées sur quatre suffisent
-    hits = votes >= max(1, len(staves) - 1) if len(staves) > 1 else votes >= 1
+        for runs, acc in ((_bar_runs(bw, s, sp), votes), (_bar_runs(bw, s, sp, 0.8 if n <= 2 else 0.9), seen)):
+            mark = np.zeros(bw.shape[1], np.uint8)
+            for x0, x1 in runs:
+                mark[x0:x1 + 1] = 1
+            acc += cv2.dilate(mark[None, :], np.ones((1, int(1.2 * sp)), np.uint8))[0]  # barre penchée
+    if not BARRES_TETES:
+        hits = votes >= max(1, n - 1) if n > 1 else votes >= 1
+    elif n <= 2:
+        # deux portées : nette sur l'une (sans tête accolée), au moins esquissée sur l'autre
+        hits = (votes >= 1) & (seen >= n)
+    else:
+        # une barre peut manquer sur une portée de la copie : trois portées sur quatre suffisent, dont deux sans tête
+        hits = (votes >= n - 2) & (seen >= n - 1)
+    if BARRES_TETES:
+        right = max(right, max(_line_end(bw, s_, sp) for s_ in staves))
     xs = np.flatnonzero(hits[:right + int(sp)])
     bars, last = [], -10**9
     for x in xs:
         if x - last > 1.5 * sp:  # barre double, de reprise : un seul trait de mesure
             bars.append(x + int(0.6 * sp))  # milieu de la zone élargie (pente tolérée)
         last = x
-    return [x for x in bars if x > left + 2 * sp]
+    bars = [x for x in bars if x > left + 2 * sp]
+    if BARRES_TETES and bars and _opening(bw, staves[0], sp, bars[0]):
+        bars = bars[1:]  # find_staves ne donne le bord gauche des lignes qu'à une bande près
+    return bars
 
 
 def _signs(c, T, B):
