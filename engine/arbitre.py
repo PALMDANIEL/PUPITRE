@@ -516,14 +516,22 @@ def restructure(a, sh, voices, mapping, total):
     if len(sh[0]) != total:
         return 0
     plan, taken = [], set()  # plan : pour chaque mesure de sortie, ("a", i) ou ("h", j)
+    sa = staves(a)
+    sa_used = sa[len(sa) - len(sh):]
+
+    def lost(i, cov):
+        """La mesure fusionnée d'Audiveris a perdu des notes (barre manquée seule : ses notes sont souvent toutes là,
+        et celles de homr, sur deux portées, moins sûres)."""
+        n_a = sum(len(events(st[i])) for st in sa_used)
+        n_h = sum(len(events(st[q])) for st in sh for q in cov)
+        return n_a < 0.6 * n_h
+
     for i, cov in enumerate(mapping):
         gap = [q for q in range(max(taken, default=-1) + 1, cov[0])] if cov else []
         for q in gap:
             plan.append(("h", q))
             taken.add(q)
-        if len(cov) == 1:
-            plan.append(("a", i))
-        elif len(cov) > 1:
+        if len(cov) > 1 and lost(i, cov):
             plan.extend(("h", q) for q in cov)
         else:
             plan.append(("a", i))
