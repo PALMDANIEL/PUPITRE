@@ -975,7 +975,15 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             if OCTAVE and usual is not None and x and y:
                 mx = statistics.median(e[1] for e in x)
                 my = statistics.median(e[1] for e in y)
-                if take_h and abs(my - usual) > 9 and abs(mx - usual) <= 7:
+                same_notes = sorted(round(e[1]) % 12 for e in x) == sorted(round(e[1]) % 12 for e in y)
+                if same_notes and 10 <= abs(mx - my) <= 14:
+                    # mêmes notes à l'octave près (clé de ténor suivie autrement d'une ligne à l'autre) : la lecture la
+                    # plus proche de la tessiture habituelle de la portée
+                    closer = abs(my - usual) < abs(mx - usual)
+                    if closer != take_h:
+                        take_h = closer
+                        unsure = True
+                elif take_h and abs(my - usual) > 9 and abs(mx - usual) <= 7:
                     # homr une octave à côté (clé de la ligne mal suivie : ténor lu en clé de sol sans 8) : sa
                     # mesure, plus cohérente en rythme, mettrait la voix hors de sa tessiture
                     take_h = False
