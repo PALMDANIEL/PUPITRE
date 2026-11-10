@@ -125,10 +125,11 @@ def mix_accidentals(x, y, ks):
     mal lu) ; sinon celle d'Audiveris (un bécarre qui annule l'armure, fa♮ avec fa♯ à la clé, est un vrai signe que homr
     oublie). Une altération reprise vaut pour la suite de la mesure. Rend (lecture mêlée, nombre de notes prises à homr).
     """
-    odd, carry, out, n = needless(x, ks), {}, [], 0
+    odd, odd_h, carry, out, n = needless(x, ks), needless(y, ks), {}, [], 0
     for k, (a, b) in enumerate(zip(x, y)):
         here = (a[3].step, a[3].octave)
-        if _alter(a[3]) != _alter(b[3]) and (k in odd or (_shown(b[3]) and not _shown(a[3]))):
+        # un signe de homr qui ne sert à rien (ré♯ écrit quand l'armure a déjà ré♯) est lui aussi mal lu (un bécarre)
+        if _alter(a[3]) != _alter(b[3]) and (k in odd or (_shown(b[3]) and not _shown(a[3]) and k not in odd_h)):
             out.append(b)
             n += 1
             if _shown(b[3]):
