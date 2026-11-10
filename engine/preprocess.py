@@ -825,10 +825,17 @@ def repair_staff_lines(bw):
             y = int(round(y0 + (y1 - y0) * ((x - x0) / max(1, x1 - x0))))
             cv2.rectangle(out, (x, y - (t - 1) // 2), (xe - 1, y + t // 2), 0, -1)
 
+    # épaisseur des lignes de la page, d'après leurs restes (encre / nombre de traits, colonne par colonne) : mesurée
+    # bande par bande, la moindre pente la gonflait (4 px pour 2) et Audiveris ne reconnaissait plus une portée
+    # retracée plus épaisse que les autres (photocopie : portée de fa du 2e système perdue, ténor et basse à 50 %)
+    strokes = int((thin[1:] & (1 - thin[:-1])).sum()) + int(thin[0].sum())
+    page_thick = max(2, min(4, int(round(float(thin.sum()) / max(1, strokes)))))
     for chain in chains:
         if len(chain) < 2:
             continue  # vue dans une seule bande : trop peu sûr
         thick = max(2, min(4, int(round(np.median([t for _a, _b, st_ in chain for _y, t in st_])))))
+        if os.environ.get("PUPITRE_EPAISSEUR") != "ancienne":
+            thick = min(thick, page_thick)
         # bouts de la portée : là où ses fragments commencent et finissent vraiment (pas le bord des bandes)
         def ends(x0, x1, staff):
             cols = np.stack([thin[max(0, int(y) - 2):int(y) + 3, x0:x1].any(0) for y, _t in staff]).sum(0) >= 3
