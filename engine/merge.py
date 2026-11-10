@@ -14,8 +14,11 @@ portée qui chante plus haut que la portée du dessus est relue en clé de fa (v
 Usage : python3 merge.py [--si-utile] <sortie.musicxml> <mvt1.mxl> <mvt2.mxl> ...
   --si-utile : avec un seul mouvement, n'écrit rien (code 3) s'il n'y a aucune portée à superposer ni clé à rétablir.
 """
-import copy, pathlib, re, statistics, sys
+import copy, os, pathlib, re, statistics, sys
 from music21 import clef, converter, key, layout, meter, note, pitch, stream
+
+
+FANTOMES = os.environ.get("PUPITRE_FANTOMES", "1") == "1"  # parties fantômes d'un système coupé : ignorées
 
 
 def rest_measure(model: stream.Measure) -> stream.Measure:
@@ -52,9 +55,20 @@ def _widths(staff):
     return [m.layoutWidth for m in staff]
 
 
+def _real(staves):
+    """Portées réellement lues d'un système : Audiveris complète un système coupé par une partie fantôme (« dummyPart »),
+    sans largeurs de mesures."""
+    if not FANTOMES:
+        return staves
+    return [st for st in staves if st and all(m.layoutWidth is not None for m in st)]
+
+
 def same_system(a, b):
     """Mêmes barres de mesure : même nombre de mesures (au moins 2) et mêmes largeurs, à 2 % près."""
-    wa, wb = _widths(a[1][0]), _widths(b[1][0])
+    ra, rb = _real(a[1]), _real(b[1])
+    if not ra or not rb:
+        return False
+    wa, wb = _widths(ra[0]), _widths(rb[0])
     if b[0] or len(wa) < 2 or len(wa) != len(wb) or None in wa or None in wb:
         return False
     return all(abs(x - y) <= max(4.0, 0.02 * x) for x, y in zip(wa, wb))
@@ -68,7 +82,11 @@ def stack(systems):
             out[-1].append(sysm)
         else:
             out.append([sysm])
-    return [(group[0][0], [staff for _page, staves in group for staff in staves]) for group in out]
+    # système coupé en deux par Audiveris (portée de sol, puis portée de fa, chacune avec une partie fantôme vide) :
+    # seules les portées lues sont superposées
+    return [(group[0][0], [staff for _page, staves in group for staff in (staves if len(group) == 1 else
+                                                                          _real(staves) or staves)])
+            for group in out]
 
 
 _SHEET = r"\[[^\]#]+(?:#(\d+))?\]"

@@ -660,7 +660,7 @@ def main(src, work, layout=None, stage1=False):
                 return
         elif BUDGET is None or time.monotonic() - _T0 + 150 < BUDGET:
             target = double_read(pages_dir, work, target, guess, third)
-    if third is not None:
+    if third is not None and not os.environ.get("PUPITRE_GARDER"):
         third.unlink(missing_ok=True)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
