@@ -637,6 +637,7 @@ def harmonize_keys(score):
 
 # Centre de la tessiture de chaque pupitre (MIDI) : La4, Mi4, La3, Ré3.
 CENTERS = {4: [69, 64, 57, 50]}
+NOMS_PAR_PLACE = os.environ.get("PUPITRE_NOMS_PLACE", "1") == "1"  # nom contraire à la place et à la tessiture : écarté
 
 
 def pitches_of(obj):
@@ -830,6 +831,17 @@ def extract_voices(score, trust_names=True):
     else:
         centers = CENTERS.get(len(voices))
         named = {"Soprano": 69, "Alto": 64, "Ténor": 57, "Basse": 50, "Mezzo": 66, "Baryton": 53}
+        if centers and NOMS_PAR_PLACE:
+            for i, v in enumerate(voices):
+                # nom mal lu (« Alto » pour « Basse », parties d'Audiveris regroupées par place) : la voix est à sa
+                # place et chante dans sa tessiture ; le nom, lui, la ferait monter d'une octave
+                c = named.get((v.partName or "").split(" ")[0])
+                ps = pitches_of(v)
+                if c is not None and ps and c != centers[i]:
+                    med = statistics.median(ps)
+                    if abs(med - c) > 7 and abs(med - centers[i]) < abs(med - c):
+                        print(f"Voix {i + 1} : nom lu « {v.partName} » écarté (tessiture de sa place)", file=sys.stderr)
+                        v.partName = ""
         for i, v in enumerate(voices):
             fix_octaves(v, named.get((v.partName or "").split(" ")[0]) or (centers[i] if centers else None))
     satb = ("Soprano", "Alto", "Ténor", "Basse")
