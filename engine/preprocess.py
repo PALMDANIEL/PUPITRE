@@ -526,7 +526,7 @@ def mend_bars(bw, sp):
     Barres de mesure et ligne qui ouvre le système, coupées par endroits sur une vieille copie : cassures comblées
     (jusqu'à une interligne). Sans la ligne du système d'un seul tenant, Audiveris fait de chaque portée un système à
     part (copie usée sur deux portées : 6 portées, 5 « systèmes », 4 mouvements, voix perdues) ; sans barres entières,
-    il perd des mesures. Seuls les traits verticaux minces d'au moins une portée de haut sont repris (bar_marks).
+    il perd des mesures. Seuls les traits verticaux minces qui traversent au moins deux portées sont repris.
     """
     if not sp:
         return bw
@@ -535,7 +535,9 @@ def mend_bars(bw, sp):
     v = cv2.morphologyEx(v, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, sp)))
     n, lab, st, _ = cv2.connectedComponentsWithStats(v, 8)
     keep = np.zeros(n, bool)
-    keep[1:] = (st[1:, cv2.CC_STAT_WIDTH] <= max(7, sp // 3)) & (st[1:, cv2.CC_STAT_HEIGHT] >= 3.4 * sp)
+    # seulement les traits qui traversent au moins deux portées (ligne du système, barres qui relient les portées) :
+    # une queue de note recousue en barre sur une seule portée fait planter Audiveris (mesure absente d'une portée)
+    keep[1:] = (st[1:, cv2.CC_STAT_WIDTH] <= max(7, sp // 3)) & (st[1:, cv2.CC_STAT_HEIGHT] >= 6 * sp)
     out = bw.copy()
     out[keep[lab]] = 0
     return out
@@ -885,6 +887,7 @@ def repair_staff_lines(bw):
     # retracée plus épaisse que les autres (photocopie : portée de fa du 2e système perdue, ténor et basse à 50 %)
     strokes = int((thin[1:] & (1 - thin[:-1])).sum()) + int(thin[0].sum())
     page_thick = max(2, min(4, int(round(float(thin.sum()) / max(1, strokes)))))
+    sized = []  # (chaîne, épaisseur, haut, bas, interligne) des portées à retracer
     for chain in chains:
         if len(chain) < 2:
             continue  # vue dans une seule bande : trop peu sûr
@@ -916,6 +919,31 @@ def repair_staff_lines(bw):
         left, right = min(across + [left]), max(across + [right])
         chain[0] = (left, chain[0][1], chain[0][2])
         chain[-1] = (chain[-1][0], right, chain[-1][2])
+        sized.append((chain, thick, top, bottom, sp_c))
+    # les portées d'un même système (reliées par un long trait vertical : ligne du système, barres qui les traversent)
+    # ont les mêmes bouts ; une barre finale trouée laissait la portée du bas plus courte que celle du haut, et Audiveris
+    # plantait sur la dernière mesure, vue sur une seule portée (copie usée : rien d'exporté)
+    if os.environ.get("PUPITRE_BOUTS") != "0":
+        tall = [(x, t, b) for x, t, b in verticals if b - t >= 6 * page_sp]
+        groups = []
+        for x, t, b in tall:
+            members = [i for i, (_c, _th, top, bottom, sp_c) in enumerate(sized) if t <= top + sp_c / 2 and b >= bottom - sp_c / 2]
+            if len(members) < 2:
+                continue
+            for g in [g for g in groups if g & set(members)]:
+                groups.remove(g)
+                members = list(set(members) | g)
+            groups.append(set(members))
+        for g in groups:
+            lo = min(sized[i][0][0][0] for i in g)
+            hi = max(sized[i][0][-1][1] for i in g)
+            for i in g:
+                chain, _th, _t, _b, sp_c = sized[i]
+                if chain[0][0] - lo <= 30 * sp_c:
+                    chain[0] = (lo, chain[0][1], chain[0][2])
+                if hi - chain[-1][1] <= 30 * sp_c:
+                    chain[-1] = (chain[-1][0], hi, chain[-1][2])
+    for chain, thick, _t, _b, _s in sized:
         for k, (xa0, xa1, sa) in enumerate(chain):
             for y, _t in sa:
                 draw(xa0, xa1, y, y, thick)
