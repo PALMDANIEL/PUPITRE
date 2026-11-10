@@ -83,6 +83,7 @@ def musical(ev, others, ks):
 
 
 REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
+VOTE = os.environ.get("PUPITRE_VOTE", "1") == "1"  # trois lectures (deux portées) : deux contre une
 
 
 def _alter(p):
@@ -500,7 +501,7 @@ def adopt_key(a, h, voix=None, layout=None):
     return target
 
 
-def arbitrate(a_path, h_path, out, layout, voix=None):
+def arbitrate(a_path, h_path, out, layout, voix=None, third=None):
     a, h = converter.parse(a_path), converter.parse(h_path)
     before = sorted(set(_keys(a)))
     adopted = adopt_key(a, h, voix, layout)
@@ -508,7 +509,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None):
         print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
     keyed = copy.deepcopy(a) if adopted is not None else None  # _arbitrate réunit des parties avant de renoncer
     try:
-        _arbitrate(a, h, out, layout)
+        _arbitrate(a, h, out, layout, third)
     except SystemExit as e:
         if keyed is None:
             raise
@@ -516,7 +517,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None):
         print(f"{e} ; lecture d'Audiveris gardée, avec l'armure de homr", file=sys.stderr)
 
 
-def _arbitrate(a, h, out, layout):
+def _arbitrate(a, h, out, layout, third=None):
     sh = staves(h)
     voices = 2 if layout == "grand" else 1
     # mêmes portées des deux côtés ; seule exception : la portée d'instrument au-dessus du chœur (disposition « grand »),
@@ -562,7 +563,16 @@ def _arbitrate(a, h, out, layout):
     if same < 0.4 * len(pairs) * len(sh):
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
-    doubtful, changed, agreed, mixed, by_ear, by_usage = {}, 0, 0, 0, 0, 0
+    doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote = {}, 0, 0, 0, 0, 0, 0
+    # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
+    st_t = None
+    if third and VOTE:
+        try:
+            tt = staves(converter.parse(third))
+            if len(tt) == len(sa) and all(len(x) == count for x in tt[len(tt) - len(sh):]):
+                st_t = tt[len(tt) - len(sh):]
+        except Exception:  # noqa: BLE001 : sans troisième lecture, l'arbitrage à deux
+            st_t = None
     for k in sorted(set(range(count)) - {i for i, _j in pairs}):
         doubtful[str(k + 1)] = 0.5  # une barre vue par un seul lecteur : mesure à vérifier
     for k, j in pairs:
@@ -583,6 +593,12 @@ def _arbitrate(a, h, out, layout):
         for s, (m, x, y) in enumerate(zip(ma, ea, eh)):
             if signature(x) == signature(y):
                 agreed += 1
+                continue
+            if st_t is not None and signature(events(st_t[s][k])) == signature(y):
+                # vote : homr et l'autre lecture d'Audiveris s'accordent contre la première (deux sur trois)
+                rebuild(m, y, voices, length)
+                changed += 1
+                by_vote += 1
                 continue
             fa, fh = faults(x, y, length, voices), faults(y, x, length, voices)
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
@@ -622,11 +638,17 @@ def _arbitrate(a, h, out, layout):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (5, 6):  # 6e : dossier des lignes découpées (sens de l'armure lu sur l'image)
+    args = sys.argv[1:]
+    third = None
+    if "--troisieme" in args:  # troisième lecture (Audiveris, autre version de l'image) : vote à trois
+        k = args.index("--troisieme")
+        third = args[k + 1]
+        del args[k:k + 2]
+    if len(args) not in (4, 5):  # 5e : dossier des lignes découpées (sens de l'armure lu sur l'image)
         sys.exit(__doc__)
-    arbitrate(*sys.argv[1:])
+    arbitrate(*args, third=third)

@@ -374,7 +374,8 @@ DOUBLE = os.environ.get("PUPITRE_DOUBLE", "1") != "0"
 DOUBLE_AUDIVERIS = os.environ.get("PUPITRE_DOUBLE_AUDIVERIS", "1") != "0"  # deux portées : Audiveris relit l'autre image
 
 
-def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path, layout: str) -> pathlib.Path:
+def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path, layout: str,
+                third=None) -> pathlib.Path:
     """
     Page nette lue par Audiveris : homr relit chaque portée, puis arbitrage mesure par mesure (arbitre.py). Les deux
     lecteurs se trompent rarement au même endroit (Audiveris : accords serrés, unissons, croches à crochet ; homr : tête
@@ -392,7 +393,7 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
         other = read_voices(sub, voix, layout, key, time_sig, passes=1)
         if other is None:
             return target
-        return arbitrate(work, target, other, layout, voix)
+        return arbitrate(work, target, other, layout, voix, third)
     except Exception as e:  # noqa: BLE001 : la lecture d'Audiveris reste valable
         print(f"Double lecture impossible : {e}", file=sys.stderr)
         return target
@@ -401,11 +402,13 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
             shutil.rmtree(sub, ignore_errors=True)
 
 
-def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None) -> pathlib.Path:
+def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None,
+              third=None) -> pathlib.Path:
     """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target.
     voix : lignes découpées (le sens de l'armure de homr y est vérifié sur l'image)."""
     out = work / "partition-arbitree.musicxml"
-    r = subprocess.run(step("arbitre", target, other, out, layout, *([voix] if voix else [])), capture_output=True, text=True,
+    extra = [*([voix] if voix else []), *(["--troisieme", third] if third and pathlib.Path(third).exists() else [])]
+    r = subprocess.run(step("arbitre", target, other, out, layout, *extra), capture_output=True, text=True,
                        encoding="utf-8", errors="replace", **QUIET)
     sys.stderr.write(r.stderr[-2000:])
     chrono("lectures comparées")
@@ -630,6 +633,7 @@ def main(src, work, layout=None, stage1=False):
             shutil.copy(found[0], target)
     else:
         subprocess.run(step("merge", target, *found), check=True, **QUIET)
+    third = None  # lecture d'Audiveris sur l'autre version de l'image (deux portées), pour le vote à trois
     if guess == "grand" and DOUBLE_AUDIVERIS and not second_read and (BUDGET is None or not stage1) \
             and (BUDGET is None or time.monotonic() - _T0 + 2 * first_took + 150 < BUDGET):
         # deux portées (S/A, T/B) : homr y lit mal les accords et ne départage presque jamais ; Audiveris relit l'autre
@@ -643,7 +647,7 @@ def main(src, work, layout=None, stage1=False):
             subprocess.run(step("merge", second, *other), **QUIET)
             if second.exists():
                 target = arbitrate(work, target, second, guess)
-                second.unlink(missing_ok=True)
+                third = second  # gardée pour le vote à trois avec homr
         shutil.rmtree(alt, ignore_errors=True)
     if guess and DOUBLE and homr_base() is not None:
         if stage1 and BUDGET and time.monotonic() - _T0 < 0.75 * BUDGET:
@@ -654,7 +658,9 @@ def main(src, work, layout=None, stage1=False):
                 print(f"etat:{state.name}", flush=True)
                 return
         elif BUDGET is None or time.monotonic() - _T0 + 150 < BUDGET:
-            target = double_read(pages_dir, work, target, guess)
+            target = double_read(pages_dir, work, target, guess, third)
+    if third is not None:
+        third.unlink(missing_ok=True)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
 
