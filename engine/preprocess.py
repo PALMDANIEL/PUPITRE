@@ -728,6 +728,73 @@ def restore_strokes(bw, bands=None):
     return np.where(fixed > 0, 0, 255).astype(np.uint8)
 
 
+def despeckle(bw, staves):
+    """
+    Vieille photocopie : des centaines de petites taches (jusqu'à un tiers d'interligne) parsèment les portées. Les
+    lecteurs les prennent pour des points de prolongation ou des notes : rythmes faux, notes en trop, voix mêlées.
+    Dans la bande de chaque portée, on efface les petites taches isolées (lignes de portée mises à part ; rien d'autre
+    à moins d'un cinquième d'interligne : un morceau de chiffre, de dièse ou de queue cassée reste), sauf :
+      - le point d'une note pointée : une tête de note juste à gauche, à la même hauteur ;
+      - les points de la clé de fa (tête de la portée) ;
+      - les deux points d'une barre de reprise (l'un sur l'autre, de part et d'autre de la ligne du milieu).
+    staves : [(haut, bas, gauche, droite)] (lignes 1 et 5). Rend l'image nettoyée.
+    """
+    if not staves:
+        return bw
+    ink = (bw < 128).astype(np.uint8)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (41, 1)))
+    signs = ink & (1 - lines)
+    n, lab, st, cen = cv2.connectedComponentsWithStats(signs, 8)
+    sp0 = float(np.median([(b - t) / 4 for t, b, _l, _r in staves]))
+    lim = max(4, int(0.45 * sp0))
+    small = (st[:, cv2.CC_STAT_WIDTH] <= lim) & (st[:, cv2.CC_STAT_HEIGHT] <= lim)
+    small[0] = False
+    big = cv2.integral(((signs > 0) & ~small[lab]).astype(np.uint8))  # encre des vrais signes : somme d'un rectangle en 4 lectures
+    H, W = ink.shape
+
+    def filled(x0, y0, x1, y1):
+        x0, y0, x1, y1 = max(0, int(x0)), max(0, int(y0)), min(W, int(x1)), min(H, int(y1))
+        if x1 <= x0 or y1 <= y0:
+            return 0.0
+        return float(big[y1, x1] - big[y0, x1] - big[y1, x0] + big[y0, x0]) / ((x1 - x0) * (y1 - y0))
+
+    ids = np.flatnonzero(small)
+    home = {}  # tache → portée dont la bande la contient
+    for k in ids:
+        cx, cy = cen[k]
+        for t, b, l, r in staves:
+            sp = (b - t) / 4
+            if t - 2.5 * sp <= cy <= b + 1.5 * sp and l - 2 * sp <= cx <= r + 2 * sp:
+                home[k] = (t, b, l, r, sp)
+                break
+    erase = np.zeros(n, bool)
+    middle = {}  # points de reprise possibles : dans le 2e ou le 3e interligne
+    for k, (t, b, l, r, sp) in home.items():
+        cx, cy = cen[k]
+        if cx <= l + 5.5 * sp and t - 0.3 * sp <= cy <= b + 0.3 * sp:
+            continue  # tête de la portée : points de la clé de fa
+        if filled(cx - 1.9 * sp, cy - 0.6 * sp, cx - 0.35 * sp, cy + 0.6 * sp) >= 0.30:
+            continue  # tête de note juste à gauche : note pointée
+        x, y, w, h = st[k, :4]
+        near = max(3, int(0.2 * sp))
+        if filled(x - near, y - near, x + w + near, y + h + near) > 0:
+            continue  # collée à un signe (morceau d'un chiffre, d'un dièse, d'une queue cassée) : pas une tache isolée
+        slot = round((cy - t) / sp - 0.5)
+        if slot in (1, 2) and abs((cy - t) / sp - 0.5 - slot) <= 0.3:
+            middle.setdefault((round(t), slot), []).append(k)
+        erase[k] = True
+    for (t, slot), ks in middle.items():  # reprise : un point dans chacun des deux interlignes, l'un sur l'autre
+        if slot != 1:
+            continue
+        for k in ks:
+            for j in middle.get((t, 2), []):
+                if abs(cen[k][0] - cen[j][0]) <= 0.25 * sp0:
+                    erase[k] = erase[j] = False
+    out = bw.copy()
+    out[erase[lab]] = 255
+    return out
+
+
 def repair_staff_lines(bw):
     """
     Photocopies et fax : lignes de portée réduites à des tirets, qu'Audiveris ne reconnaît plus comme portées
@@ -795,13 +862,16 @@ def repair_staff_lines(bw):
                 for (ya, _ta), (yb, _tb) in zip(sa, sb):
                     draw(xa1, xb0, ya, yb, thick)
     # bandes des portées : des têtes de notes au-dessus (2,5 interlignes) à la fin des queues dessous, avant les paroles
-    bands = []
+    bands, staves = [], []
     for chain in chains:
         if len(chain) >= 2:
             top = float(np.median([st[0][0] for _a, _b, st in chain]))
             bottom = float(np.median([st[4][0] for _a, _b, st in chain]))
             sp = (bottom - top) / 4
             bands.append((top - 2.5 * sp, bottom + 1.5 * sp))
+            staves.append((top, bottom, chain[0][0], chain[-1][1]))
+    if os.environ.get("PUPITRE_TACHES") != "0":  # avant de refermer les signes : une tache près d'une queue s'y collerait
+        out = despeckle(out, staves)
     return restore_strokes(out, bands)
 
 
