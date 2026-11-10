@@ -967,6 +967,62 @@ def repair_staff_lines(bw):
     return restore_strokes(out, bands)
 
 
+def straighten_bars(bw):
+    """
+    Barres de mesure ondulées (photo, JPEG de WhatsApp) : Audiveris les prend pour des arpèges (trait vertical
+    ondulé) et les retire comme barres ; deux mesures se fondent et leurs notes se perdent (bwv86.6 fermée WhatsApp :
+    la barre de fin de phrase lue « ARPEGGIATO », 2 mesures sur 6 perdues dans le système). Un trait qui couvre toute
+    la hauteur de chaque portée d'un système, au même endroit (une queue de note ne le fait jamais sur toutes les
+    portées), est retracé droit, à l'épaisseur d'une barre. Rend l'image (inchangée sans système de deux portées).
+    """
+    import pupitres
+    ink = (bw < 128).astype(np.uint8)
+    staves = pupitres.find_staves(bw)
+    if len(staves) < 2:
+        return bw
+    out = bw.copy()
+    H, W = bw.shape
+    closed = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 7)))
+    for group in pupitres.systems_on(bw, staves):
+        if len(group) < 2:
+            continue
+        sp = float(np.median([(b - t) / 4 for t, b, _l, _r in group]))
+        reach = max(2, int(0.6 * sp))
+        full = None
+        covers = []
+        for t, b, _l, _r in group:
+            cov = closed[int(t):int(b) + 1].mean(0)
+            covers.append(cov)
+            hit = cv2.dilate((cov >= 0.9).astype(np.uint8)[None, :], np.ones((1, 2 * reach + 1), np.uint8))[0] > 0
+            full = hit if full is None else full & hit
+        xs = np.flatnonzero(full)
+        runs = np.split(xs, np.flatnonzero(np.diff(xs) > 1) + 1) if len(xs) else []
+        for run in runs:
+            for (t, b, _l, _r), cov in zip(group, covers):
+                a0, a1 = max(0, int(run[0]) - reach), min(W, int(run[-1]) + reach + 1)
+                xc = a0 + int(np.argmax(cov[a0:a1]))
+                if cov[xc] < 0.9:
+                    continue
+                left, right = xc, xc
+                while left > a0 and cov[left - 1] >= 0.5:
+                    left -= 1
+                while right < a1 - 1 and cov[right + 1] >= 0.5:
+                    right += 1
+                if right - left + 1 > max(8, sp / 3):
+                    continue  # trait large : barre épaisse (fin, reprise), laissée telle quelle
+                y0, y1 = int(round(t)), int(round(b))
+                keep = np.zeros(H, bool)  # lignes de portée, gardées sous la barre effacée
+                for k in range(5):
+                    y = int(round(t + k * sp))
+                    keep[max(0, y - 2):y + 3] = True
+                band = out[y0:y1 + 1, left:right + 1]
+                band[~keep[y0:y1 + 1]] = 255
+                width = max(3, min(right - left + 1, int(round(sp / 5))))
+                c0 = int(round((left + right) / 2 - (width - 1) / 2))
+                out[y0:y1 + 1, c0:c0 + width] = 0
+    return out
+
+
 def pdf_pages(pdf, tmp):
     """Pages du PDF en niveaux de gris à 300 dpi (pypdfium2 : embarqué, rien à installer)."""
     import pypdfium2 as pdfium
@@ -1039,7 +1095,13 @@ def main(src, out_dir):
                 digital += 1
                 pages_out.append(plain); best.append(plain); other.append(for_audiveris)
             else:
-                pages_out.append(cleaned); best.append(for_audiveris); other.append(plain)
+                # photo nette : barres ondulées prises pour des arpèges (sur photo floue, les têtes collées aux barres
+                # seraient entamées : local, bwv267 fermée floue 86 → 79 %)
+                if os.environ.get("PUPITRE_BARRES_DROITES") != "0" and not blurred:
+                    for_audiveris, plain_a = straighten_bars(for_audiveris), straighten_bars(plain)
+                else:
+                    plain_a = plain
+                pages_out.append(cleaned); best.append(for_audiveris); other.append(plain_a)
             imgio.imwrite(str(out / f"page-{i:02d}.png"), pages_out[-1])
             print(f"actif:page {i}/{len(pages)}", flush=True)  # signe de vie : omr.py le relaie à la surveillance
     # clean.pdf : la meilleure version pour Audiveris ; alt.pdf : l'autre, essayée si la première échoue.
