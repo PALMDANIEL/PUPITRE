@@ -84,6 +84,7 @@ def musical(ev, others, ks):
 
 REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
 VOTE = os.environ.get("PUPITRE_VOTE", "1") == "1"  # trois lectures (deux portées) : deux contre une
+HEADS = os.environ.get("PUPITRE_TETES", "1") == "1"  # à égalité : le nombre de têtes pleines de l'image
 
 
 def _alter(p):
@@ -315,6 +316,73 @@ def rebuild(m, ev, voices, length, split=None):
             m.insert(0, v)
 
 
+class HeadCounter:
+    """
+    Têtes pleines visibles sur la page, mesure par mesure, d'après la disposition de la lecture par homr (place des
+    portées et des barres de chaque système) : à égalité de fautes, la lecture dont le nombre de têtes pleines
+    (noires, croches…) est celui de l'image l'emporte (Audiveris fond parfois deux croches liées par une barre en une
+    noire : do4-ré4 lu ré4).
+    """
+
+    def __init__(self, voix):
+        self.ok = False
+        try:
+            import cv2
+            self.cv2 = cv2
+            d = json.loads((pathlib.Path(voix) / "disposition.json").read_text(encoding="utf-8"))
+            self.pages = pathlib.Path(voix).parent.parent / "pages"
+            self.systems = d["systems"]
+            self.cache = {}
+            self.ok = all("barres" in s_ for s_ in self.systems) and self.pages.exists()
+        except Exception:  # noqa: BLE001 : sans disposition, pas de comptage
+            self.ok = False
+
+    def _blobs(self, page):
+        if page not in self.cache:
+            import numpy as np
+            cv2 = self.cv2
+            img = cv2.imread(str(self.pages / page), cv2.IMREAD_GRAYSCALE)
+            sps = [(b - t) / 4 for s_ in self.systems for t, b, *_r in s_["staves"]]
+            sp = float(np.median(sps)) if sps else 20.0
+            ink = (img < 128).astype(np.uint8)
+            k = max(3, int(0.55 * sp)) | 1
+            heads = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+            _n, _l, st, cen = cv2.connectedComponentsWithStats(heads, 8)
+            keep = [(c[0], c[1], s_[cv2.CC_STAT_WIDTH]) for s_, c in zip(st[1:], cen[1:])
+                    if 0.6 * sp <= s_[cv2.CC_STAT_HEIGHT] <= 1.6 * sp and 0.8 * sp <= s_[cv2.CC_STAT_WIDTH] <= 2.6 * sp]
+            self.cache[page] = (keep, sp)
+        return self.cache[page]
+
+    def count(self, staff, j):
+        """Têtes pleines de la mesure j (numérotation de homr) sur la portée staff, ou None."""
+        if not self.ok:
+            return None
+        k = j
+        for s_ in self.systems:
+            n = len(s_["barres"])
+            if k < n:
+                blobs, sp = self._blobs(s_["page"])
+                if staff >= len(s_["staves"]):
+                    return None
+                t, b = s_["staves"][staff][0], s_["staves"][staff][1]
+                x1 = s_["barres"][k]
+                x0 = s_["barres"][k - 1] if k else x1 - 12 * sp  # 1re mesure : depuis la tête de ligne (approché)
+                if not k:
+                    return None
+                heads = 0
+                for x, y, w in blobs:
+                    if x0 + 0.3 * sp < x < x1 - 0.3 * sp and t - 3 * sp <= y <= b + 3 * sp:
+                        heads += max(1, int(round(w / (1.35 * sp))))  # deux têtes accolées (seconde) : un seul blob
+                return heads
+            k -= n
+        return None
+
+
+def filled(m_events):
+    """Têtes pleines d'une lecture de mesure (noires et plus courtes ; blanches et rondes sont creuses)."""
+    return sum(1 for _o, _ps, d, _p in m_events if d <= 1.5 + 1e-6)
+
+
 def staves(score):
     return [list(p.getElementsByClass(stream.Measure)) for p in score.parts]
 
@@ -509,7 +577,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None, third=None):
         print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
     keyed = copy.deepcopy(a) if adopted is not None else None  # _arbitrate réunit des parties avant de renoncer
     try:
-        _arbitrate(a, h, out, layout, third)
+        _arbitrate(a, h, out, layout, third, voix)
     except SystemExit as e:
         if keyed is None:
             raise
@@ -517,7 +585,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None, third=None):
         print(f"{e} ; lecture d'Audiveris gardée, avec l'armure de homr", file=sys.stderr)
 
 
-def _arbitrate(a, h, out, layout, third=None):
+def _arbitrate(a, h, out, layout, third=None, voix=None):
     sh = staves(h)
     voices = 2 if layout == "grand" else 1
     # mêmes portées des deux côtés ; seule exception : la portée d'instrument au-dessus du chœur (disposition « grand »),
@@ -563,7 +631,8 @@ def _arbitrate(a, h, out, layout, third=None):
     if same < 0.4 * len(pairs) * len(sh):
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
-    doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote = {}, 0, 0, 0, 0, 0, 0
+    doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote, by_heads = {}, 0, 0, 0, 0, 0, 0, 0
+    counter = HeadCounter(voix) if voix and HEADS else None
     # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
     st_t = None
     if third and VOTE:
@@ -604,6 +673,11 @@ def _arbitrate(a, h, out, layout, third=None):
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
+            if HEADS and fa == fh and counter is not None and not only_accidentals(x, y):
+                seen = counter.count(s, j)
+                if seen is not None and abs(filled(y) - seen) < abs(filled(x) - seen):
+                    take_h = True  # homr a autant de têtes pleines que l'image, Audiveris non
+                    by_heads += 1
             if REDONDANT and fa == fh and only_accidentals(x, y):
                 mixed_acc, taken = mix_accidentals(x, y, _key_at(m))
                 if taken:
@@ -638,7 +712,7 @@ def _arbitrate(a, h, out, layout, third=None):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 

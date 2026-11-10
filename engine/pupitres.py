@@ -16,12 +16,14 @@ Usage (assemblage, après Audiveris) : python3 pupitres.py <sortie.musicxml> <di
   [--notes v1.musicxml v2.musicxml v3.musicxml v4.musicxml] : notes lues par homr (une page par voix),
   paroles prises dans la lecture d'Audiveris.
 """
-import copy, json, pathlib, statistics, sys
+import copy, json, os, pathlib, statistics, sys
 
 import cv2
 import numpy as np
 
 import imgio
+
+PAR_SYSTEMES = os.environ.get("PUPITRE_SYSTEMES", "1") == "1"  # systèmes vus par les barres avant de compléter
 
 # (nom, clé) de chaque portée d'un système, de haut en bas
 LAYOUTS = {
@@ -219,7 +221,14 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
     for pf in page_files:
         bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
         if layout == "satb":
-            staves = complete(bw, find_staves(bw), n)
+            found = find_staves(bw)
+            linked = systems_on(bw, found) if PAR_SYSTEMES else []
+            if linked and all(len(g) == n for g in linked) and sum(map(len, linked)) == len(found):
+                # systèmes complets, vus par leurs barres : rien à compléter (plusieurs couplets sous la soprano du
+                # 1er système creusent l'écart S → A : une portée « absente » y était inventée, les voix décalées)
+                staves = [(*s, "vue") for s in found]
+            else:
+                staves = complete(bw, found, n)
             groups = [list(range(k, k + n)) for k in range(0, len(staves) - len(staves) % n, n)]
         else:  # écriture serrée : les deux dernières portées de chaque système (une portée instrumentale peut les précéder)
             staves = [(*s, "vue") for s in find_staves(bw)]
