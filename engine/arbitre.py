@@ -114,6 +114,12 @@ def needless(ev, ks):
     return out
 
 
+def _key_at(m):
+    """Armure en vigueur dans une mesure : la sienne (getContextByClass ne regarde que ce qui précède), sinon la précédente."""
+    own = list(m.getElementsByClass(key.KeySignature))
+    return own[0] if own else m.getContextByClass(key.KeySignature)
+
+
 def _shown(p):
     return p.accidental is not None and bool(p.accidental.displayStatus)
 
@@ -583,7 +589,7 @@ def _arbitrate(a, h, out, layout):
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
             if REDONDANT and fa == fh and only_accidentals(x, y):
-                mixed_acc, taken = mix_accidentals(x, y, m.getContextByClass(key.KeySignature))
+                mixed_acc, taken = mix_accidentals(x, y, _key_at(m))
                 if taken:
                     rebuild(m, mixed_acc, voices, length)
                     changed += 1
@@ -592,7 +598,7 @@ def _arbitrate(a, h, out, layout):
                     continue
             if MUSICAL and fa == fh and not take_h:
                 others = [e for t, ev_ in enumerate(ea) if t != s for e in ev_]
-                ks = m.getContextByClass(key.KeySignature)
+                ks = _key_at(m)
                 if musical(y, others, ks) > musical(x, others, ks) + MUSIC_MARGIN:
                     take_h = True
                     by_ear += 1
