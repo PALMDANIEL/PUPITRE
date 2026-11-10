@@ -301,18 +301,19 @@ def fix_clefs_by_place(raw):
     """
     fixed = 0
     for j, (_page, staves) in enumerate(raw):
-        n = len(staves)
+        # place parmi les portées qui chantent : Audiveris éparpille parfois un système en 8 parties dont 4 vides
+        singing = [i for i, st in enumerate(staves) if st and len(_pitches(st)) >= 4]
+        n = len(singing)
         if n not in CENTRES or n < 2:  # une portée seule (couplet de soliste) : sa clé peut être l'une ou l'autre
             continue
-        for i, staff in enumerate(staves):
-            if not staff:
-                continue
+        for rank, i in enumerate(singing):
+            staff = staves[i]
             read = _head_clef(staff[0])
             here = _pitches(staff)
-            if read is None or len(here) < 4 or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
+            if read is None or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
                 continue
-            centre = CENTRES[n][i]
-            others = [p for k, (_pg, st) in enumerate(raw) if k != j and len(st) == n and st[i] for p in _pitches(st[i])]
+            centre = CENTRES[n][rank]
+            others = [p for k, (_pg, st) in enumerate(raw) if k != j and len(st) == len(staves) and st[i] for p in _pitches(st[i])]
             if len(others) >= 8 and abs(statistics.median(others) - centre) <= 7:
                 centre = statistics.median(others)
             gap = abs(statistics.median(here) - centre)
@@ -320,7 +321,7 @@ def fix_clefs_by_place(raw):
                 continue
             # la clé attendue à cette place (sol en haut, fa en bas) : une clé de sol lue sans son « 8 » (ténor) met aussi
             # la portée loin de sa tessiture, mais c'est une octave à rendre (render.fix_octaves), pas une clé à changer
-            want = PLACE_CLEFS[n][i]
+            want = PLACE_CLEFS[n][rank]
             if read.sign == want:
                 continue
             cand = clef.TrebleClef() if want == "G" else clef.BassClef()
