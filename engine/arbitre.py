@@ -497,7 +497,7 @@ def image_map(score, voix):
         a0, a1 = (left + (ends[mi - 1] if mi else 0.0)) * scale, (left + ends[mi]) * scale
         covered = []
         for q, hi in enumerate(bars):
-            lo = bars[q - 1] if q else min(a0, hi - sp)
+            lo = bars[q - 1] if q else min(left * scale, hi - sp)  # 1re mesure : depuis le début du système
             if a0 - 0.5 * sp < (lo + hi) / 2 < a1 + 0.5 * sp and hi > a0 + sp:
                 covered.append(starts[si] + q)
         out.append(covered)
