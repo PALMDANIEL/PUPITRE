@@ -84,6 +84,8 @@ def musical(ev, others, ks):
 
 REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
 VOTE = os.environ.get("PUPITRE_VOTE", "1") == "1"  # trois lectures (deux portées) : deux contre une
+PAD = os.environ.get("PUPITRE_VIDES", "1") == "1"  # mesures jetées par Audiveris sur une portée : laissées vides
+RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"  # lectures trop différentes : homr ne remplit que ces mesures
 HEADS = os.environ.get("PUPITRE_TETES", "1") == "1"  # à égalité : le nombre de têtes pleines de l'image
 
 
@@ -383,6 +385,53 @@ def filled(m_events):
     return sum(1 for _o, _ps, d, _p in m_events if d <= 1.5 + 1e-6)
 
 
+def _mkey(m):
+    return (m.number, m.numberSuffix or "")
+
+
+def pad_missing(score):
+    """
+    Mesures qu'Audiveris a jetées sur une portée seulement (mesure jugée fausse : la portée de sol perd ses mesures
+    7 et 8, celle de fa les garde) : remplacées par des mesures vides, pour que les portées aient le même nombre de
+    mesures et que l'autre lecture puisse les remplir (une mesure vide est la plus fautive). Seulement si une partie
+    porte tous les numéros des autres. Rend les mesures ajoutées {(n° de partie, rang de la mesure)}.
+    """
+    parts = list(score.parts)
+    keys = [[_mkey(m) for m in p.getElementsByClass(stream.Measure)] for p in parts]
+    if len(parts) < 2 or all(k == keys[0] for k in keys):
+        return set()
+    full = max(keys, key=len)
+    if len(set(full)) != len(full) or any(not set(k) <= set(full) for k in keys):
+        return set()
+    if any([x for x in full if x in set(k)] != k for k in keys):
+        return set()  # numéros dans un autre ordre
+    model = parts[keys.index(full)]
+    by_key = {_mkey(m): m for m in model.getElementsByClass(stream.Measure)}
+    added = set()
+    for pi, (part, k) in enumerate(zip(parts, keys)):
+        if k == full:
+            continue
+        have = {_mkey(m): m for m in part.getElementsByClass(stream.Measure)}
+        rebuilt = []
+        for pos, key_ in enumerate(full):
+            if key_ in have:
+                rebuilt.append(have[key_])
+                continue
+            ref = by_key[key_]
+            m = stream.Measure(number=ref.number)
+            m.numberSuffix = ref.numberSuffix
+            m.append(note.Rest(quarterLength=ref.duration.quarterLength or 4.0))
+            rebuilt.append(m)
+            added.add((pi, pos))
+        for m in list(part.getElementsByClass(stream.Measure)):
+            part.remove(m)
+        offset = 0.0
+        for m in rebuilt:
+            part.insert(offset, m)
+            offset += float(by_key[_mkey(m)].duration.quarterLength) if _mkey(m) in by_key else float(m.duration.quarterLength)
+    return added
+
+
 def staves(score):
     return [list(p.getElementsByClass(stream.Measure)) for p in score.parts]
 
@@ -607,6 +656,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             print(f"Parties d'Audiveris regroupées par place : {len(placed)}", file=sys.stderr)
         else:
             collapse(a, len(sh) + (layout == "grand"))
+    padded = set()
+    if PAD:
+        padded = pad_missing(a)
+        if padded:
+            print(f"Mesures absentes d'une portée chez Audiveris, laissées vides pour l'autre lecture : {len(padded)}",
+                  file=sys.stderr)
     sa = staves(a)
     if not sh or not (len(sa) == len(sh) or (layout == "grand" and len(sa) == len(sh) + 1)):
         raise SystemExit(f"Portées différentes ({len(sa)} contre {len(sh)}) : pas d'arbitrage")
@@ -628,9 +683,14 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
                     per[v].extend(e[1] for e in line)
         medians.append([statistics.median(p) if p else None for p in per])
     same = sum(signature(events(st_a[i])) == signature(events(st_h[j])) for st_a, st_h in zip(sa_used, sh) for i, j in pairs)
-    if same < 0.4 * len(pairs) * len(sh):
+    rescue = same < 0.4 * len(pairs) * len(sh)
+    if rescue and not RESCUE:
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
+    if rescue:
+        # secours seulement : homr ne remplit que les mesures qu'Audiveris a laissées vides ou jetées (pad_missing)
+        print(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : "
+              "seules les mesures vides ou jetées par Audiveris sont reprises de homr", file=sys.stderr)
     doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote, by_heads = {}, 0, 0, 0, 0, 0, 0, 0
     counter = HeadCounter(voix) if voix and HEADS else None
     # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
@@ -662,6 +722,13 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
         for s, (m, x, y) in enumerate(zip(ma, ea, eh)):
             if signature(x) == signature(y):
                 agreed += 1
+                continue
+            if rescue:
+                part_index = len(sa) - len(sh) + s
+                if ((part_index, k) in padded or not x) and y and faults(y, [], length, voices) == 0:
+                    rebuild(m, y, voices, length)
+                    changed += 1
+                    unsure = True
                 continue
             if st_t is not None and signature(events(st_t[s][k])) == signature(y):
                 # vote : homr et l'autre lecture d'Audiveris s'accordent contre la première (deux sur trois)
@@ -707,6 +774,8 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
                 unsure = True
         if unsure:
             doubtful[str(k + 1)] = 0.5
+    if rescue and not changed:
+        raise SystemExit("Aucune mesure vide à reprendre : pas d'arbitrage")
     a.write("musicxml", fp=out)
     mean = 1 - 0.5 * len(doubtful) / max(1, count)
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
