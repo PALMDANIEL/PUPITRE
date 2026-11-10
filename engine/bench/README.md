@@ -27,12 +27,19 @@ référence, et compare. Dans le message de l'envoi :
 - `[env: PUPITRE_SEUIL_FLOU=adaptatif]` : réglages passés au moteur de la branche (pas à la référence) ; pour mesurer
   une correction avant/après : `PUPITRE_SEUIL_FLOU=adaptatif` (photos floues sans le seuillage par crêtes),
   `PUPITRE_ARMURE=audiveris` (pas d'armure reprise de homr), `PUPITRE_MARGE=ancienne` (bande du bord effacée aussi
-  sur les pages), `PUPITRE_TROUS=0`, `PUPITRE_REDRESSEMENT=hough` ;
-- `[ref: banc/conditions-reelles]` : version de comparaison (branche ou étiquette ; sinon la dernière publiée).
+  sur les pages), `PUPITRE_TROUS=0`, `PUPITRE_REDRESSEMENT=hough`, `PUPITRE_USEE=homr` (copie usée lue d'abord par
+  homr, l'ancien chemin), `PUPITRE_DOUBLE_AUDIVERIS=0` (deux portées sans seconde lecture d'Audiveris),
+  `PUPITRE_REDONDANT=0` (altérations : toujours celles d'Audiveris à égalité) ;
+- `[voir: floue,bwv269-fermee]` (ou `[voir: -]` pour toutes) : chaque erreur note par note, avec sa mesure
+  (« A m5 Sol4→Sol#4 » : lu sol au lieu de sol♯ ; « -Mi4 » oubliée ; « +Ré5 » en trop), dans les annotations
+  « Familles » (`diag.py --detail`) ;
+- `[ref: banc/conditions-reelles]` : version de comparaison (branche, étiquette ou empreinte complète d'un commit ;
+  une empreinte courte fait échouer la référence).
 
 Résultats lisibles sans compte : annotations de la page du circuit (« Lecture », « Détail » par part, « Banc d'essai »
 pour le rapport, avec le détail copie par copie quand le banc porte sur 40 copies au plus), ou par l'API anonyme
-(60 requêtes par heure : `actions/runs/<id>/jobs`, puis `check-runs/<id du job rapport>/annotations`).
+(60 requêtes par heure : `actions/runs/<id>/jobs`, puis `check-runs/<id du job rapport>/annotations`) ; au-delà, la
+page du circuit dans un navigateur (texte des annotations).
 
 Résultats du 24/10/2026 (6 chorals × 2 mises en page × net/photo) : 81 % → 96 % de notes justes, 22/24 → 24/24 cas en 4 voix.
 La dernière ligne courte (une mesure seule), longtemps ignorée par Audiveris, est lue depuis le 05/11/2026 (`omr.STAFF_OPTIONS`).

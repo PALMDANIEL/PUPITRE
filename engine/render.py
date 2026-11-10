@@ -5,7 +5,7 @@ Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72
 """
 import argparse, copy, json, os, pathlib, re, shutil, statistics, subprocess, sys, zipfile
 from fractions import Fraction
-from music21 import converter, chord, clef, harmony, instrument, key, meter, note, stream, tempo as m21tempo
+from music21 import converter, chord, clef, harmony, instrument, key, meter, note, pitch, stream, tempo as m21tempo
 from music21.common.numberTools import opFrac
 import coherence
 
@@ -44,6 +44,8 @@ def needs_split(part):
 
 def keep_highest_or_lowest(line, pick):
     for c in real_chords(line):
+        if not c.pitches:
+            continue  # accord sans tête (lecture abîmée) : laissé muet
         n = note.Note(pick(c.pitches, key=lambda p: p.ps))
         n.duration = copy.deepcopy(c.duration)
         if c.tie is not None:
@@ -1046,7 +1048,7 @@ def main():
                 for j, other in enumerate(voices):
                     practice.insert(0, prepare(other, tempo_qpm, a.timbre, 112 if i == j else 27))  # sa voix ≈ 12 dB devant
                 work = to_mp3(practice, out / f"{vid}_travail")
-        pitches = [p for n in v.recurse().notes for p in n.pitches]
+        pitches = [p for n in v.recurse().notes for p in n.pitches] or [pitch.Pitch("C4")]
         lo, hi = min(pitches, key=lambda p: p.ps), max(pitches, key=lambda p: p.ps)
         entries.append({"id": vid, "name": vname, "stem": stem, "practice": work,
                         "notes": len(v.recurse().notes), "range": [fr_name(lo), fr_name(hi)],

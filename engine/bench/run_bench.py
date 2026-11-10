@@ -38,7 +38,7 @@ def score_voice(got, want):
 def read_voices(partition):
     sc = converter.parse(str(partition))
     voices = render.extract_voices(sc, trust_names=False)
-    return [[int(p.midi) for n in v.recurse().notes for p in [max(n.pitches, key=lambda q: q.ps)]] for v in voices]
+    return [[int(max(n.pitches, key=lambda q: q.ps).midi) for n in v.recurse().notes if n.pitches] for v in voices]  # accord vide : sauté
 
 
 def run_case(case: pathlib.Path, reuse: bool):
