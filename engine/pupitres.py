@@ -1236,8 +1236,9 @@ def bar_lines(bw, group):
         # deux portées : nette sur l'une (sans tête accolée), au moins esquissée sur l'autre
         hits = (votes >= 1) & (seen >= n)
     else:
-        # une barre peut manquer sur une portée de la copie : trois portées sur quatre suffisent, dont deux sans tête
-        hits = (votes >= n - 2) & (seen >= n - 1)
+        # une barre peut manquer sur une portée de la copie : trois portées sur quatre suffisent, dont deux sans tête ;
+        # vue sur toutes les portées, même collée à une note (levée serrée contre la barre sur une photocopie)
+        hits = ((votes >= n - 2) & (seen >= n - 1)) | (seen >= n)
     if BARRES_TETES:
         right = max(right, max(_line_end(bw, s_, sp) for s_ in staves))
     xs = np.flatnonzero(hits[:right + int(sp)])
