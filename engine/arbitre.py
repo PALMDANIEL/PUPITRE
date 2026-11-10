@@ -85,6 +85,7 @@ def musical(ev, others, ks):
 REDONDANT = os.environ.get("PUPITRE_REDONDANT", "1") == "1"
 VOTE = os.environ.get("PUPITRE_VOTE", "1") == "1"  # trois lectures (deux portées) : deux contre une
 PAD = os.environ.get("PUPITRE_VIDES", "1") == "1"  # mesures jetées par Audiveris sur une portée : laissées vides
+INSERT = os.environ.get("PUPITRE_INSERTION", "1") == "1"  # mesure perdue sur toutes les portées : reprise de homr
 RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"  # lectures trop différentes : homr ne remplit que ces mesures
 HEADS = os.environ.get("PUPITRE_TETES", "1") == "1"  # à égalité : le nombre de têtes pleines de l'image
 
@@ -421,6 +422,7 @@ def pad_missing(score):
             m = stream.Measure(number=ref.number)
             m.numberSuffix = ref.numberSuffix
             m.append(note.Rest(quarterLength=ref.duration.quarterLength or 4.0))
+            m.pupitre_vide = True  # repérée ensuite même si des mesures sont insérées avant elle
             rebuilt.append(m)
             added.add((pi, pos))
         for m in list(part.getElementsByClass(stream.Measure)):
@@ -430,6 +432,69 @@ def pad_missing(score):
             part.insert(offset, m)
             offset += float(by_key[_mkey(m)].duration.quarterLength) if _mkey(m) in by_key else float(m.duration.quarterLength)
     return added
+
+
+def image_measures(voix):
+    """Nombre de mesures vu sur l'image (barres de chaque système, disposition de la lecture par homr), ou None."""
+    try:
+        d = json.loads((pathlib.Path(voix) / "disposition.json").read_text(encoding="utf-8"))
+        return sum(int(s_["mesures"]) for s_ in d["systems"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def insert_missing(a, sh, pairs, voices, seen):
+    """
+    Mesure perdue par Audiveris sur toutes les portées (barre lue comme un arpège, mesure jugée fausse) : homr la lit et
+    son nombre de mesures est celui de l'image (seen). Entre deux mesures appariées qui se suivent chez Audiveris, une
+    ou deux mesures de homr sans correspondante sont insérées, si elles sont rythmiquement justes sur chaque portée.
+    Rend le nombre de mesures insérées.
+    """
+    parts = list(a.parts)
+    sa = staves(a)
+    n, m = len(sa[0]), len(sh[0])
+    if seen is None or m != seen or n >= m:
+        return 0
+    inserts = []  # (après la mesure i d'Audiveris, [mesures j de homr])
+    for (i0, j0), (i1, j1) in zip([(-1, -1)] + pairs, pairs + [(n, m)]):
+        if i1 == i0 + 1 and 1 <= j1 - j0 - 1 <= 2:
+            inserts.append((i0, list(range(j0 + 1, j1))))
+    plan = []
+    for i0, js in inserts:
+        for j in js:
+            bar = float(sh[0][j].duration.quarterLength) or 4.0
+            evs = [events(st[j]) for st in sh]
+            ends = {round(end_of(e), 3) for e in evs if e}
+            if len(ends) == 1 and 0 < min(ends) <= bar:
+                bar = min(ends)  # mesure courte (levée après une double barre), comme Audiveris l'écrit
+            if not all(e and faults(e, [], bar, voices) == 0 for e in evs):
+                break
+            plan.append((i0, j, bar, evs))
+    if not plan:
+        return 0
+    offset_parts = len(parts) - len(sh)  # disposition « grand » : portée d'instrument au-dessus, non lue par homr
+    for pi, part in enumerate(parts):
+        ms = list(part.getElementsByClass(stream.Measure))
+        out = []
+        for i in range(-1, len(ms)):
+            if i >= 0:
+                out.append(ms[i])
+            for i0, j, bar, evs in plan:
+                if i0 == i:
+                    new = stream.Measure()
+                    new.append(note.Rest(quarterLength=bar))
+                    new.pupitre_insere = True  # mesure à vérifier (lue par homr seul)
+                    if pi >= offset_parts:
+                        rebuild(new, evs[pi - offset_parts], voices, bar)
+                    out.append(new)
+        for x in ms:
+            part.remove(x)
+        at, number = 0.0, (ms[0].number if ms else 1)
+        for k, x in enumerate(out):
+            x.number = number + k
+            part.insert(at, x)
+            at += float(x.duration.quarterLength)
+    return len(plan)
 
 
 def staves(score):
@@ -672,6 +737,14 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
     pairs = pair_measures(sa_used, sh)
     if len(pairs) < 0.6 * count:
         raise SystemExit(f"Mesures impossibles à apparier ({len(pairs)}/{count}) : pas d'arbitrage")
+    inserted = insert_missing(a, sh, pairs, voices, image_measures(voix)) if INSERT and voix else 0
+    if inserted:
+        n_ins = inserted
+        print(f"Mesures perdues par Audiveris, reprises de homr (nombre vu sur l'image) : {n_ins}", file=sys.stderr)
+        sa = staves(a)
+        sa_used = sa[len(sa) - len(sh):]
+        count = len(sa_used[0])
+        pairs = pair_measures(sa_used, sh)
     # hauteur habituelle de chaque voix de chaque portée, sur les mesures où les deux lectures s'accordent
     medians = []
     for st_a, st_h in zip(sa_used, sh):
@@ -692,6 +765,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
         print(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : "
               "seules les mesures vides ou jetées par Audiveris sont reprises de homr", file=sys.stderr)
     doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote, by_heads = {}, 0, 0, 0, 0, 0, 0, 0
+    changed += inserted
     counter = HeadCounter(voix) if voix and HEADS else None
     # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
     st_t = None
@@ -724,8 +798,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
                 agreed += 1
                 continue
             if rescue:
-                part_index = len(sa) - len(sh) + s
-                if ((part_index, k) in padded or not x) and y and faults(y, [], length, voices) == 0:
+                if (getattr(m, "pupitre_vide", False) or not x) and y and faults(y, [], length, voices) == 0:
                     rebuild(m, y, voices, length)
                     changed += 1
                     unsure = True
@@ -772,9 +845,9 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
                 changed += 1
             if min(fa, fh) > 0 or fa == fh:
                 unsure = True
-        if unsure:
+        if unsure or getattr(ma[0], "pupitre_insere", False):
             doubtful[str(k + 1)] = 0.5
-    if rescue and not changed:
+    if rescue and not changed and not inserted:
         raise SystemExit("Aucune mesure vide à reprendre : pas d'arbitrage")
     a.write("musicxml", fp=out)
     mean = 1 - 0.5 * len(doubtful) / max(1, count)
