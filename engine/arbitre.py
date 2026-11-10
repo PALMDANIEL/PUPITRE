@@ -898,6 +898,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
         print(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : "
               "seules les mesures vides ou jetées par Audiveris sont reprises de homr", file=sys.stderr)
     doubtful, changed, agreed, mixed, by_ear, by_usage, by_vote, by_heads = {}, 0, 0, 0, 0, 0, 0, 0
+    by_range = 0
     changed += inserted + restructured
     counter = HeadCounter(voix) if voix and HEADS else None
     # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
@@ -946,14 +947,26 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
-            if take_h and OCTAVE and voices == 1 and medians[s][0] is not None and x and y:
-                # homr une octave à côté (clé de la ligne mal suivie : ténor lu en clé de sol sans 8) : sa mesure,
-                # plus cohérente en rythme, mettrait la voix hors de sa tessiture
+            usual = medians[s][0] if voices == 1 else None
+            if usual is None and voices == 1 and layout == "satb" and len(sh) == 4:
+                usual = (69, 64, 57, 50)[s]  # aucune mesure commune : tessiture de la voix à sa place
+            if OCTAVE and usual is not None and x and y:
                 mx = statistics.median(e[1] for e in x)
                 my = statistics.median(e[1] for e in y)
-                if abs(my - medians[s][0]) > 9 and abs(mx - medians[s][0]) <= 7:
+                if take_h and abs(my - usual) > 9 and abs(mx - usual) <= 7:
+                    # homr une octave à côté (clé de la ligne mal suivie : ténor lu en clé de sol sans 8) : sa
+                    # mesure, plus cohérente en rythme, mettrait la voix hors de sa tessiture
                     take_h = False
                     unsure = True
+                elif not take_h and abs(mx - usual) > (9 if medians[s][0] is not None else 12) and abs(my - usual) <= 7 \
+                        and min(abs(abs(mx - my) - 12), abs(abs(mx - my) - 24)) > 1.5:
+                    # (une octave pile : clé de ténor lue sans 8 sur toute la voix, que le rendu ramène en entier ;
+                    # mêler des mesures des deux lectures fausserait cette correction)
+                    # Audiveris hors de la tessiture (petite portée : têtes rapportées dix degrés trop bas), homr dedans
+                    take_h = True
+                    by_range += 1
+                    if os.environ.get("PUPITRE_DEBUG_TESSITURE"):
+                        print(f"tessiture : portée {s} mesure {k + 1} habituelle {usual} audiveris {mx} homr {my}", file=sys.stderr)
             if HEADS and fa == fh and counter is not None and not only_accidentals(x, y):
                 seen = counter.count(s, j)
                 if seen is not None and abs(filled(y) - seen) < abs(filled(x) - seen):
@@ -995,7 +1008,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image, {by_range} par la tessiture), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
