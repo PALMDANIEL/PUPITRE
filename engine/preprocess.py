@@ -776,6 +776,7 @@ def despeckle(bw, staves):
     lecteurs les prennent pour des points de prolongation ou des notes : rythmes faux, notes en trop, voix mêlées.
     Dans la bande de chaque portée, on efface les petites taches isolées (lignes de portée mises à part ; rien d'autre
     à moins d'un cinquième d'interligne : un morceau de chiffre, de dièse ou de queue cassée reste), sauf :
+      - les bouts d'une queue ou d'une barre de mesure en pointillés (alignés l'un sur l'autre) ;
       - le point d'une note pointée : une tête de note juste à gauche, à la même hauteur ;
       - les points de la clé de fa (tête de la portée) ;
       - les deux points d'une barre de reprise (l'un sur l'autre, de part et d'autre de la ligne du milieu).
@@ -800,6 +801,13 @@ def despeckle(bw, staves):
             return 0.0
         return float(big[y1, x1] - big[y0, x1] - big[y1, x0] + big[y0, x0]) / ((x1 - x0) * (y1 - y0))
 
+    # bouts d'une queue ou d'une barre de mesure en pointillés : petits eux aussi, mais alignés l'un sur l'autre. Refermés
+    # en hauteur (jusqu'à 0,6 interligne), ils forment un trait mince et haut : on les garde (sans eux, la barre
+    # disparaissait et Audiveris fondait deux mesures en une ; banc : 13 mesures lues → 12)
+    joined = cv2.morphologyEx(signs, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(5, int(0.6 * sp0)))))
+    _n2, lab2, st2, _c2 = cv2.connectedComponentsWithStats(joined, 8)
+    stroke = (st2[:, cv2.CC_STAT_WIDTH] <= max(5, 0.4 * sp0)) & (st2[:, cv2.CC_STAT_HEIGHT] >= 1.2 * sp0)
+    stroke[0] = False
     ids = np.flatnonzero(small)
     home = {}  # tache → portée dont la bande la contient
     for k in ids:
@@ -815,9 +823,13 @@ def despeckle(bw, staves):
         cx, cy = cen[k]
         if cx <= l + 5.5 * sp and t - 0.3 * sp <= cy <= b + 0.3 * sp:
             continue  # tête de la portée : points de la clé de fa
-        if filled(cx - 1.9 * sp, cy - 0.6 * sp, cx - 0.35 * sp, cy + 0.6 * sp) >= 0.30:
-            continue  # tête de note juste à gauche : note pointée
         x, y, w, h = st[k, :4]
+        space = (cy - t) / sp - 0.5  # un point de prolongation est dans un interligne, jamais sur une ligne
+        if min(w, h) >= 0.22 * sp and abs(space - round(space)) <= 0.3 \
+                and filled(cx - 1.7 * sp, cy - 0.6 * sp, cx - 0.4 * sp, cy + 0.6 * sp) >= 0.30:
+            continue  # tête de note juste à gauche, point de la bonne taille : note pointée
+        if stroke[lab2[min(H - 1, int(round(cy))), min(W - 1, int(round(cx)))]] or stroke[lab2[y:y + h, x:x + w]].any():
+            continue  # bout d'une queue ou d'une barre en pointillés
         near = max(3, int(0.2 * sp))
         if filled(x - near, y - near, x + w + near, y + h + near) > 0:
             continue  # collée à un signe (morceau d'un chiffre, d'un dièse, d'une queue cassée) : pas une tache isolée
@@ -920,10 +932,10 @@ def repair_staff_lines(bw):
             sp = (bottom - top) / 4
             bands.append((top - 2.5 * sp, bottom + 1.5 * sp))
             staves.append((top, bottom, chain[0][0], chain[-1][1]))
+    if os.environ.get("PUPITRE_BARRES") != "0":  # d'abord : une barre recousue n'est plus une suite de petites taches
+        out = mend_bars(out, page_sp)
     if os.environ.get("PUPITRE_TACHES") != "0":  # avant de refermer les signes : une tache près d'une queue s'y collerait
         out = despeckle(out, staves)
-    if os.environ.get("PUPITRE_BARRES") != "0":
-        out = mend_bars(out, page_sp)
     return restore_strokes(out, bands)
 
 
