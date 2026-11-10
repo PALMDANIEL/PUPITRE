@@ -345,6 +345,31 @@ def read_voices_audiveris(work: pathlib.Path, voix: pathlib.Path, layout: str):
     return target
 
 
+SIGNES = os.environ.get("PUPITRE_SIGNES", "1") != "0"
+
+
+def reread_signs(pre: pathlib.Path, pages_dir: pathlib.Path, found, pages: int) -> None:
+    """
+    Photo ou copie usée : les altérations écrites dans la mesure (♯ ♮ ♭) qu'Audiveris a perdues ou mal lues sont
+    relues sur l'image (signes.py). Pas sur un PDF net (il y lit juste), ni sur une lecture coupée en mouvements
+    (la place de chaque système sur la page n'est alors plus connue).
+    """
+    if not SIGNES or len(found) != 1:
+        return
+    try:
+        nettes = int((pre / "nettes").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        nettes = 0
+    if nettes >= pages:
+        return
+    images = sorted(pages_dir.glob("page-*.png"))
+    r = subprocess.run(step("signes", found[0], *images), capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", **QUIET)
+    msg = [l for l in r.stderr.splitlines() if l.startswith("Altérations")]
+    if msg:
+        print(msg[-1], file=sys.stderr)
+
+
 DOUBLE = os.environ.get("PUPITRE_DOUBLE", "1") != "0"
 DOUBLE_AUDIVERIS = os.environ.get("PUPITRE_DOUBLE_AUDIVERIS", "1") != "0"  # deux portées : Audiveris relit l'autre image
 
@@ -592,6 +617,7 @@ def main(src, work, layout=None, stage1=False):
     if not found:
         sys.exit("Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.")
 
+    reread_signs(pre, pages_dir, found, len(pages))
     for old in ("partition.mxl", "partition.musicxml"):
         (work / old).unlink(missing_ok=True)
     target = work / "partition.musicxml"
@@ -612,6 +638,7 @@ def main(src, work, layout=None, stage1=False):
         print("Double lecture d'Audiveris : autre version de l'image", file=sys.stderr)
         other = read_book(pre / "alt.pdf", pre / "clean.pdf", alt, len(pages))
         if other:
+            reread_signs(pre, pages_dir, other, len(pages))
             second = work / "lecture-alt.musicxml"
             subprocess.run(step("merge", second, *other), **QUIET)
             if second.exists():

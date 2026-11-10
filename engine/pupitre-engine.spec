@@ -14,7 +14,7 @@ datas += [(os.path.join(here, 'choeur'), 'choeur')]
 datas += [(os.path.join(here, 'tessdata'), 'tessdata')]
 binaries = collect_dynamic_libs('pypdfium2_raw') + collect_dynamic_libs('tinysoundfont') + collect_dynamic_libs('lameenc')
 
-hidden = ['omr', 'preprocess', 'merge', 'pupitres', 'arbitre', 'coherence', 'imgio', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')
+hidden = ['omr', 'preprocess', 'merge', 'pupitres', 'arbitre', 'signes', 'coherence', 'imgio', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')
 hidden += ['pillow_heif', 'tinysoundfont', 'lameenc', 'pypdfium2']
 
 # Voix chantées (requirements-chant.txt) : Piper et ses données espeak-ng, onnxruntime, Praat (parselmouth).

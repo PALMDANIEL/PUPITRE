@@ -1052,6 +1052,8 @@ def main(src, out_dir):
     (out / "flou").write_text(str(blurry), encoding="utf-8") if blurry else (out / "flou").unlink(missing_ok=True)
     # saleté de la copie : petites taches par mégapixel (médiane des pages) ; omr.py décide d'après elle (SALETE)
     (out / "salete").write_text(f"{float(np.median(specks)):.0f}", encoding="utf-8")
+    # pages numériques saines (PDF net) : Audiveris y lit juste les altérations, signes.py ne les relit pas
+    (out / "nettes").write_text(str(digital - worn if digital > worn else 0), encoding="utf-8")
     print(f"Pages préparées : {len(best)} (dont {digital} numériques{f', {worn} usées' if worn else ''})")
 
 
