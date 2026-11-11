@@ -162,6 +162,20 @@ def two_voices(m, sung, model):
     return best[1], best[2]
 
 
+STEMS = os.environ.get("PUPITRE_QUEUES", "1") == "1"
+
+
+def stem_way(v):
+    """Sens des queues d'une voix : « up » ou « down » si les deux tiers au moins vont dans ce sens, sinon None."""
+    dirs = [n.stemDirection for n in v.notes if getattr(n, "stemDirection", None) in ("up", "down")]
+    if len(dirs) < max(1, 0.5 * len(v.notes)):
+        return None
+    for way in ("up", "down"):
+        if dirs.count(way) >= 2 / 3 * len(dirs):
+            return way
+    return None
+
+
 def split_staff(part):
     """Portée à deux voix (ex. S et A) -> deux parties, mesure par mesure."""
     top, bottom = stream.Part(), stream.Part()
@@ -173,6 +187,11 @@ def split_staff(part):
         sung = [v for v in m.voices if v.notes]
         if len(sung) >= 2:
             sung.sort(key=lambda v: mean_pitch(v) or 0.0, reverse=True)  # accord sans hauteur (lecture abîmée) : en bas
+            if len(sung) == 2 and STEMS:
+                # voix croisées (basse un instant au-dessus du ténor) : le sens des queues dit qui est en haut
+                ways = [stem_way(v) for v in sung]
+                if ways == ["down", "up"]:
+                    sung.reverse()
             src_t, src_b = sung[0], sung[-1]
         else:
             src_t = src_b = sung[0] if sung else (m.voices[0] if m.voices else m)

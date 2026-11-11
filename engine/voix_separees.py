@@ -305,7 +305,10 @@ def combine(up_path, down_path, out) -> bool:
             for i, src in enumerate((x, y), 1):
                 v = stream.Voice(id=str(i))
                 for n in src.recurse().notesAndRests:
-                    v.insert(float(n.getOffsetInHierarchy(src)), copy.deepcopy(n))
+                    c = copy.deepcopy(n)
+                    if hasattr(c, "stemDirection"):
+                        c.stemDirection = "unspecified"  # queues de homr : règle de gravure, pas la voix (render.stem_way)
+                    v.insert(float(n.getOffsetInHierarchy(src)), c)
                 m.insert(0, v)
             part.insert(at, m)
             at += float(max(x.duration.quarterLength, y.duration.quarterLength))
