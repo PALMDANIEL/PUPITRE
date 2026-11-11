@@ -5,7 +5,7 @@ Usage : <python du moteur> run_bench.py <dossier_corpus> [filtre] [--reuse] [-j 
   --reuse : ne relance pas Audiveris si partition.* existe déjà (pour itérer sur la séparation des voix).
 Pour une vraie partition sans truth.json, on affiche seulement le nombre de voix et les tessitures.
 """
-import argparse, concurrent.futures as cf, json, pathlib, subprocess, sys, time
+import argparse, concurrent.futures as cf, json, os, pathlib, subprocess, sys, time
 
 ENGINE = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ENGINE))
@@ -53,7 +53,8 @@ def run_case(case: pathlib.Path, reuse: bool):
     part = next((p for p in case.glob("partition.*")), None)
     t0 = time.time()
     if not (reuse and part):
-        r = subprocess.run([sys.executable, str(ENGINE / "omr.py"), str(src), str(case)], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, str(ENGINE / "omr.py"), str(src), str(case)], capture_output=True, text=True,
+                           env={**os.environ, "PYTHONHASHSEED": "0"})  # comme l'application (server/jobs.ts)
         # journal de la lecture (chemin suivi, lecteurs, arbitrage), sans les signes de vie : pour comprendre un recul
         (case / "journal.txt").write_text("\n".join(l for l in (r.stdout + r.stderr).splitlines() if not l.startswith(("actif:", "progress:"))), encoding="utf-8")
         if r.returncode:

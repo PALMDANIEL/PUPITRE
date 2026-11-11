@@ -117,7 +117,7 @@ jobs:
           VOIR=$(printf '%s' "$MESSAGE" | sed -n 's/.*\[voir: *\([^]]*\)\].*/\1/p' | head -1)
           # lectures faites dans l'image (Audiveris, homr) ; les fichiers lourds sont retirés dans l'image (écrits par root)
           docker run --rm $ENVARGS -e VOIR="$VOIR" -v "$RUNNER_TEMP/part:/part" -v "$PWD/engine:/app/engine" -v "$RUNNER_TEMP/scripts:/app/.github/scripts" -w /app/engine/bench pupitre-moteur \
-            sh -c 'mkdir -p /tmp/home && /opt/venv/bin/python3 run_bench.py /part -j 2 && /opt/venv/bin/python3 /app/.github/scripts/diag_cas.py /part > /part/_diag.txt 2>&1; /opt/venv/bin/python3 diag.py /part --detail "$VOIR" 2>/dev/null | grep -v Warning > /part/_familles.txt; find /part \( -name omr -o -name omr-alt -o -name pages -o -name pre -o -name double -o -name "source.*" \) -prune -exec rm -rf {} +; chmod -R a+rwX /part' \
+            sh -c 'mkdir -p /tmp/home && PYTHONHASHSEED=0 /opt/venv/bin/python3 run_bench.py /part -j 2 && /opt/venv/bin/python3 /app/.github/scripts/diag_cas.py /part > /part/_diag.txt 2>&1; /opt/venv/bin/python3 diag.py /part --detail "$VOIR" 2>/dev/null | grep -v Warning > /part/_familles.txt; find /part \( -name omr -o -name omr-alt -o -name pages -o -name pre -o -name double -o -name "source.*" \) -prune -exec rm -rf {} +; chmod -R a+rwX /part' \
             | tee "$RUNNER_TEMP/sortie.txt"
           cp "$RUNNER_TEMP/sortie.txt" "$RUNNER_TEMP/part/_sortie.txt"
           # résultats lisibles sans compte GitHub (annotations publiques, coupées à 4000 caractères : en morceaux)
