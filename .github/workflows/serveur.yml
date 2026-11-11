@@ -22,7 +22,17 @@ jobs:
           node-version: '24'
           cache: npm
       - name: Image Docker
-        run: docker build -t pupitre-serveur .
+        shell: bash
+        run: |
+          # 11/11/2026 : les conteneurs de construction ne résolvaient plus les noms sur les machines GitHub (« Temporary
+          # failure resolving 'archive.ubuntu.com' ») : serveurs DNS publics donnés au service Docker
+          if [ -s /etc/docker/daemon.json ]; then
+            sudo jq '. + {"dns": ["8.8.8.8", "1.1.1.1"]}' /etc/docker/daemon.json > /tmp/daemon.json
+          else
+            echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' > /tmp/daemon.json
+          fi
+          sudo cp /tmp/daemon.json /etc/docker/daemon.json && sudo systemctl restart docker && sleep 3
+          docker build -t pupitre-serveur .
       - name: Essai réel (code d'accès d'essai, lecture d'un PDF par Audiveris)
         shell: bash
         run: |
