@@ -84,7 +84,13 @@ jobs:
           name: copies
           path: ${{ runner.temp }}/copies
       - name: Image du moteur
-        run: docker build -t pupitre-moteur .
+        shell: bash
+        run: |
+          # en cas d'échec, la fin du journal de construction en annotation (lisible sans compte GitHub)
+          if ! docker build --progress=plain -t pupitre-moteur . > "$RUNNER_TEMP/build.log" 2>&1; then
+            tail -c 3500 "$RUNNER_TEMP/build.log" | tr '\n' '|' | sed 's/^/::error title=Construction de l image::/'; echo
+            exit 1
+          fi
       - name: Lecture d'une part des copies
         shell: bash
         run: |
