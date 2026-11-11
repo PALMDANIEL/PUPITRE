@@ -88,7 +88,8 @@ PAD = os.environ.get("PUPITRE_VIDES", "1") == "1"  # mesures jetées par Audiver
 IMAGE_MAP = os.environ.get("PUPITRE_RECOUPE", "1") == "1"  # mesures d'Audiveris recoupées d'après les barres de l'image
 OCTAVE = os.environ.get("PUPITRE_OCTAVE_HOMR", "1") == "1"  # mesure de homr hors tessiture : pas reprise
 INSERT = os.environ.get("PUPITRE_INSERTION", "1") == "1"  # mesure perdue sur toutes les portées : reprise de homr
-RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"  # lectures trop différentes : homr ne remplit que ces mesures
+RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"
+SPLIT_BAR = os.environ.get("PUPITRE_MESURE_COUPEE", "1") == "1"  # mesure courte + levée d'Audiveris : durée gardée  # lectures trop différentes : homr ne remplit que ces mesures
 # à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
 # complet du 10/11, bwv153.1 ouverte nette A 98 → 100 mais bwv269 ouverte photo et sombre A 100 → 88 (homr pris à tort)
 HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
@@ -948,6 +949,13 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             common = statistics.multimode(ends)
             if len(common) == 1 and ends.count(common[0]) >= 2 and common[0] <= bar + 1e-6:
                 length = common[0]
+        ends_a = {round(end_of(e), 3) for e in ea if e}
+        if SPLIT_BAR and len(ends_a) == 1 and min(ends_a) < bar - 1e-6 and k + 1 < count:
+            # fin de phrase (point d'orgue, double barre) : mesure courte d'Audiveris que la levée suivante complète ;
+            # homr, qui ramène chaque mesure à sa durée pleine, y ajoutait une note fantôme
+            nxt = {round(end_of(events(st[k + 1])), 3) for st in sa_used if events(st[k + 1])}
+            if len(nxt) == 1 and abs(min(ends_a) + min(nxt) - bar) < 1e-6:
+                length = min(ends_a)
         unsure = False
         for s, (m, x, y) in enumerate(zip(ma, ea, eh)):
             if signature(x) == signature(y):
