@@ -26,9 +26,17 @@ STRUCTURES = os.environ.get("PUPITRE_LIGATURES", "1") == "1"  # ligatures et cro
 
 def split_pages(mxl, pages, out: pathlib.Path) -> bool:
     """Écrit out/haut/pages/page-NN.png et out/bas/pages/page-NN.png. Rend False si une page n'a pas pu être séparée
-    (moins de 80 % des notes d'Audiveris replacées sur l'image)."""
-    root, _ = signes._read(mxl)
-    notes, pw = signes.notes_of(root)
+    (moins de 80 % des notes d'Audiveris replacées sur l'image). mxl : une lecture, ou plusieurs mouvements d'une même
+    page (Audiveris coupe une copie abîmée en mouvements : leurs systèmes sont mis bout à bout)."""
+    notes, pw = [], None
+    for f in (mxl if isinstance(mxl, (list, tuple)) else [mxl]):
+        root, _ = signes._read(f)
+        more, pw_ = signes.notes_of(root)
+        base = 1 + max((n["system"] for n in notes), default=-1)
+        for n in more:
+            n["system"] += base
+        notes += more
+        pw = pw or pw_
     for side in KEEP:
         (out / side / "pages").mkdir(parents=True, exist_ok=True)
     for k, page in enumerate(pages):

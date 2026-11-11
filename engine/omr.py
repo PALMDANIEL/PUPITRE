@@ -441,7 +441,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         print("Double lecture : homr relit chaque voix isolée sur l'image", file=sys.stderr)
         readings = []
         os.environ["PUPITRE_MESURES_IMAGE"] = "1"  # assemblage : le nombre de mesures vu sur l'image fait foi
-        meter_a = audiveris_meter(raw)
+        meter_a = audiveris_meter(raw[0] if isinstance(raw, list) else raw)
         for side in ("haut", "bas"):
             prepared = prepare_voices(sub / side / "pages", sub / side, "grand")
             if prepared is None or prepared[1] is None:
@@ -736,8 +736,9 @@ def main(src, work, layout=None, stage1=False):
                 return
         elif BUDGET is None or time.monotonic() - _T0 + 150 < BUDGET:
             done = False
-            if guess == "grand" and SEPAREES and BUDGET is None and len(found) == 1:
-                target, done = split_read(pages_dir, work, found[0], target, third)
+            if guess == "grand" and SEPAREES and BUDGET is None and (len(found) == 1 or len(pages) == 1):
+                # plusieurs mouvements d'une seule page : leurs notes sont replacées ensemble sur l'image
+                target, done = split_read(pages_dir, work, found[0] if len(found) == 1 else list(found), target, third)
             if not done:
                 target = double_read(pages_dir, work, target, guess, third)
     if third is not None and not os.environ.get("PUPITRE_GARDER"):
