@@ -9,14 +9,15 @@ import render  # noqa: E402
 from music21 import converter, stream  # noqa: E402
 
 KEEP = ("Disposition", "disposition:", "Armure", "Double lecture", "Seconde lecture", "Portées", "Lecture", "lecture", "Mesures",
-        "Lectures", "Voix réunies", "exactitude", "Mouvements", "clé", "partition:", "Aucune", "PUPITRE-ERREUR", "Traceback")
+        "Lectures", "Voix réunies", "exactitude", "Mouvements", "clé", "partition:", "Aucune", "PUPITRE-ERREUR", "Traceback",
+        "Voix séparées", "recoupées", "perdues", "Altérations relues", "Error")
 
 for case in sorted(p for p in pathlib.Path(sys.argv[1]).iterdir() if p.is_dir()):
     print(f"=== {case.name}")
     journal = case / "journal.txt"
     if journal.exists():
         lines = [l.strip() for l in journal.read_text(encoding="utf-8").splitlines() if any(k in l for k in KEEP)]
-        for l in lines[-12:]:
+        for l in lines[-22:]:
             print("  |", l[:180])
     fid = case / "fiabilite.json"
     if fid.exists():
