@@ -24,6 +24,7 @@ GLYPHS = {"sharp": "", "natural": "", "flat": ""}
 ALTER = {"sharp": 1.0, "natural": 0.0, "flat": -1.0}
 BOTTOM = {("G", 2): 31, ("F", 4): 19, ("C", 3): 25, ("C", 4): 23, ("C", 1): 29, ("F", 3): 21, ("C", 2): 27}
 SCORE, MARGIN = float(os.environ.get("PUPITRE_SIGNES_SEUIL", "0.44")), 0.12
+PLACE_AGAIN = os.environ.get("PUPITRE_SIGNES_REVOTE", "1") == "1"  # portées non placées revotées à la bonne échelle
 
 
 def _read(path):
@@ -115,22 +116,45 @@ def place(notes, pw, img, page):
         n["xy"] = None
         if n["clef"] in BOTTOM:
             groups.setdefault((n["system"], n["part"], n["staff"]), []).append(n)
-    for group in groups.values():
+    def vote(group, xmap, reach):
         best, votes = None, 0
         for staff in staves:
             sp = (staff[1] - staff[0]) / 4
             v = 0
             for n in group:
-                x, y = n["x"] * W / pw, y_on(n, staff)
-                if len(B) and ((np.abs(B[:, 1] - y) <= 0.45 * sp) & (np.abs(B[:, 0] - x) <= 3 * sp)).any():
+                x, y = xmap(n["x"]), y_on(n, staff)
+                if len(B) and ((np.abs(B[:, 1] - y) <= 0.45 * sp) & (np.abs(B[:, 0] - x) <= reach * sp)).any():
                     v += 1
             if v > votes:
                 best, votes = staff, v
         if best is None or votes < max(2, 0.3 * len(group)):
-            continue
+            return False
         t, b_, _l, _r = best
         for n in group:
             n["xy"], n["sp"], n["staff_tb"] = (n["x"] * W / pw, y_on(n, best)), (b_ - t) / 4, (t, b_)
+        return True
+
+    left = [g for g in groups.values() if not vote(g, lambda x: x * W / pw, 3)]
+    if left and PLACE_AGAIN:
+        # échelle approchée (largeur de page) parfois fausse de 10 % : les portées restées sans place sont revotées
+        # avec l'échelle mesurée sur les têtes des portées placées
+        pairs = []
+        for n in mine:
+            if n["xy"] and len(B):
+                ok = (np.abs(B[:, 1] - n["xy"][1]) <= 0.45 * n["sp"]) & (np.abs(B[:, 0] - n["xy"][0]) <= 6 * n["sp"])
+                if ok.any():
+                    pairs.append((n["x"], B[np.flatnonzero(ok)[np.argmin(np.abs(B[ok, 0] - n["xy"][0]))], 0]))
+        if len(pairs) >= 8:
+            X, Y = np.array(pairs).T
+            a, c = np.polyfit(X, Y, 1)
+            for _ in range(3):  # écarts trop grands retirés (tête voisine prise pour la bonne)
+                res = np.abs(a * X + c - Y)
+                keep_ = res <= max(1.0 * sp0, np.percentile(res, 60))
+                if keep_.sum() < 6:
+                    break
+                a, c = np.polyfit(X[keep_], Y[keep_], 1)
+            for g in left:
+                vote(g, lambda x: a * x + c, 1.5)
     placed = [n for n in mine if n["xy"]]
     if len(placed) < 4:
         return []
