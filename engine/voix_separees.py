@@ -12,6 +12,7 @@ fermée 88 → 97 %), Audiveris reste meilleur sur les altérations : les deux l
 import copy
 import os
 import pathlib
+import xml.etree.ElementTree as ET
 
 import cv2
 import numpy as np
@@ -20,6 +21,12 @@ import imgio
 import signes
 
 KEEP = {"haut": "up", "bas": "down"}
+# voix séparées d'après les queues vues sur l'image (image_heads) plutôt que d'après Audiveris : sur petites portées
+# (interligne < DENSE_SP pixels, page à 2480 px), où Audiveris se trompe de voix et de barres. Banc local, lecture de homr
+# sur les pages séparées : bwv347 fermée dense 66 → 87 %, bwv86.6 74 → 78, bwv267 91 → 94 ; sur photo floue ou page
+# nette, moins bien (bwv86.6 floue 69 → 56 : têtes empâtées, queues coupées). PUPITRE_SEPARATION=image|audiveris|auto.
+SEPARATION = os.environ.get("PUPITRE_SEPARATION", "auto")
+DENSE_SP = 17.5
 ORPHANS = os.environ.get("PUPITRE_TETES_ORPHELINES", "1") == "1"
 STRUCTURES = os.environ.get("PUPITRE_LIGATURES", "1") == "1"  # ligatures et crochets de l'autre voix effacés  # têtes non lues par Audiveris rangées par leur queue
 
@@ -47,6 +54,12 @@ def split_pages(mxl, pages, out: pathlib.Path) -> bool:
         mine = signes.place(notes, pw, img, k)
         if not total or len(mine) < 0.8 * total:
             return False
+        sp_page = float(np.median([n["sp"] for n in mine]))
+        if SEPARATION == "image" or (SEPARATION == "auto" and sp_page < DENSE_SP):
+            heads_ = image_heads(img, mine)
+            if heads_:
+                mine = heads_
+                (out / "image").write_text(f"{sp_page:.1f}", encoding="utf-8")  # séparation d'après l'image
         ink = (img < 128).astype(np.uint8)
         sp0 = float(np.median([n["sp"] for n in mine]))
         lines = staff_lines(img, ink, sp0)
@@ -56,6 +69,64 @@ def split_pages(mxl, pages, out: pathlib.Path) -> bool:
             a = np.where(bars > 0, img, a).astype(np.uint8)  # barres de mesure rendues (une queue effacée les entamait)
             imgio.imwrite(str(out / side / "pages" / pathlib.Path(page).name), a)
     return True
+
+
+def image_heads(img, mine):
+    """
+    Têtes de la page vues sur l'image, rangées d'après le sens de leur queue (sans la lecture d'Audiveris, qui se
+    trompe de voix sur petites portées ou photo floue) : [{xy, sp, head, staff_tb, el (<stem>), acc, first}], comme
+    les notes placées de signes.place. Queue vers le haut au bord droit de la tête : voix du haut ; vers le bas au bord
+    gauche : voix du bas ; deux queues (unisson) ou aucune (ronde) : sans sens (la tête reste sur les deux pages).
+    Deux têtes collées (accord serré, une tache haute de deux interlignes) : coupées en deux, celle du haut prend la
+    queue montante. Rien avant la 1re note d'Audiveris de chaque portée (clé, armure : un dièse a l'air d'une tête).
+    """
+    import pupitres
+    staves = pupitres.find_staves(img)
+    if not staves:
+        return []
+    ink = (img < 128).astype(np.uint8)
+    out = []
+    for t, b, left, _r in staves:
+        sp = (b - t) / 4
+        lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(1.6 * sp)), 1)))
+        body = ink & (1 - lines)
+        body = cv2.morphologyEx(body, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, int(0.4 * sp)))))
+        y0, y1 = max(0, int(t - 4 * sp)), min(img.shape[0], int(b + 4 * sp))
+        band = body[y0:y1]
+        vert = cv2.morphologyEx(band, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, int(2.0 * sp))))
+        n, _lab, st, _ = cv2.connectedComponentsWithStats(vert, 8)
+        stems = [(x + w / 2, y0 + y, y0 + y + h) for x, y, w, h, _a in st[1:] if w <= 0.45 * sp and h >= 2.0 * sp]
+        # têtes blanches remplies, puis ouverture elliptique (queues, crochets, lignes supplémentaires ôtés)
+        inv = (1 - band).astype(np.uint8)
+        n, lab, st, _ = cv2.connectedComponentsWithStats(inv, 4)
+        H, W = band.shape
+        small = (st[:, cv2.CC_STAT_AREA] < 0.9 * sp * sp) & (st[:, 0] > 0) & (st[:, 1] > 0) & \
+                (st[:, 0] + st[:, 2] < W) & (st[:, 1] + st[:, 3] < H)
+        small[0] = False
+        filled = np.where(small[lab], 1, band).astype(np.uint8)
+        k = max(3, int(0.6 * sp)) | 1
+        blobs = cv2.morphologyEx(filled, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        n, _lab, st, _ = cv2.connectedComponentsWithStats(blobs, 8)
+        firsts = [m["xy"][0] for m in mine if m.get("staff_tb") and abs(m["staff_tb"][0] - t) < sp]
+        start = (min(firsts) - 0.6 * sp) if firsts else left + 8 * sp
+        for x, y, w, h, _a in st[1:]:
+            y += y0
+            if not (0.8 * sp <= w <= 2.0 * sp) or not (0.55 * sp <= h <= 2.7 * sp) or x + w / 2 < start:
+                continue
+            parts = [(y + h / 2, h)] if h <= 1.5 * sp else [(y + h / 4, h / 2), (y + 3 * h / 4, h / 2)]
+            for k_, (cy, hh) in enumerate(parts):
+                if not (t - 3.5 * sp <= cy <= b + 3.5 * sp):
+                    continue
+                xl, xr = float(x), float(x + w)
+                up = any(abs(sx - xr) <= 0.4 * sp and abs(yb - cy) <= 0.9 * sp and yt < cy - 1.5 * sp for sx, yt, yb in stems)
+                dn = any(abs(sx - xl) <= 0.4 * sp and abs(yt - cy) <= 0.9 * sp and yb > cy + 1.5 * sp for sx, yt, yb in stems)
+                if len(parts) == 2:  # accord serré : la tête du haut monte, celle du bas descend
+                    up, dn = (up, False) if k_ == 0 else (False, dn)
+                stem = "up" if up and not dn else "down" if dn and not up else ""
+                el = ET.Element("note")
+                ET.SubElement(el, "stem").text = stem
+                out.append(dict(xy=(xl + 0.65 * sp, cy), sp=sp, head=xl, staff_tb=(t, b), el=el, acc=None, first=False))
+    return out
 
 
 def staff_lines(img, ink, sp0):

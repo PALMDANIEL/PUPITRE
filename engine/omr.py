@@ -481,6 +481,22 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             full = fia.exists() and not json.loads(fia.read_text(encoding="utf-8")).get("secours")
         except (OSError, ValueError):
             full = False
+        if not fia.exists() and (sub / "image").exists() and os.environ.get("PUPITRE_HOMR_SEUL", "1") == "1":
+            # petites portées, voix séparées d'après l'image : Audiveris y perd des barres (9 mesures pour 13) et
+            # l'arbitrage renonce ; la lecture de homr, au nombre de mesures de l'image, est alors bien meilleure
+            # (banc local : bwv347 fermée dense 68 → 87 %, bwv86.6 73 → 78)
+            import arbitre
+            from music21 import converter, stream
+            seen = arbitre.image_measures(sub / "haut" / "voix")
+            got = {len(p_.getElementsByClass(stream.Measure)) for p_ in converter.parse(str(out)).parts}
+            if seen and got != {seen}:
+                print(f"Petites portées : mesures d'Audiveris {sorted(got)} contre {seen} sur l'image, "
+                      "lecture de homr sur les voix séparées gardée", file=sys.stderr)
+                final = work / "partition.musicxml"
+                if out != final:
+                    out.unlink(missing_ok=True)
+                shutil.copy(combined, final)
+                return final, True
         # secours seulement (lectures trop différentes) : l'ancienne double lecture peut encore combler des mesures
         return out, full
     except Exception as e:  # noqa: BLE001 : l'ancienne double lecture reste possible
