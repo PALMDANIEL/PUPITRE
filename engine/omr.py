@@ -405,6 +405,50 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
             shutil.rmtree(sub, ignore_errors=True)
 
 
+SEPAREES = os.environ.get("PUPITRE_VOIX_SEPAREES", "1") != "0"  # deux portées : homr lit chaque voix isolée
+
+
+def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, target: pathlib.Path, third=None):
+    """
+    Deux portées à deux voix : la page est séparée en voix du haut et voix du bas (voix_separees.py), homr lit chaque
+    page portée par portée, les deux lectures sont réunies puis arbitrées avec celle d'Audiveris. Rend la partition
+    arbitrée, ou None (séparation ou lecture impossible : l'ancienne double lecture prend le relais).
+    """
+    import voix_separees
+    sub = work / "separees"
+    shutil.rmtree(sub, ignore_errors=True)
+    try:
+        if not voix_separees.split_pages(raw, sorted(pages_dir.glob("page-*.png")), sub):
+            print("Voix séparées : notes d'Audiveris mal replacées sur l'image", file=sys.stderr)
+            return None
+        print("Double lecture : homr relit chaque voix isolée sur l'image", file=sys.stderr)
+        readings = []
+        os.environ["PUPITRE_MESURES_IMAGE"] = "1"  # assemblage : le nombre de mesures vu sur l'image fait foi
+        for side in ("haut", "bas"):
+            prepared = prepare_voices(sub / side / "pages", sub / side, "grand")
+            if prepared is None or prepared[1] is None:
+                return None
+            voix, key, time_sig = prepared
+            res = read_voices(sub / side, voix, "grand", key, time_sig, passes=1)
+            if res is None:
+                return None
+            readings.append(res)
+        combined = sub / "homr-voix-separees.musicxml"
+        if not voix_separees.combine(readings[0], readings[1], combined):
+            print("Voix séparées : lectures de homr incompatibles", file=sys.stderr)
+            return None
+        (work / "fiabilite.json").unlink(missing_ok=True)
+        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third)
+        return out if (work / "fiabilite.json").exists() else None  # écrit seulement si l'arbitrage a abouti
+    except Exception as e:  # noqa: BLE001 : l'ancienne double lecture reste possible
+        print(f"Voix séparées impossibles : {e}", file=sys.stderr)
+        return None
+    finally:
+        os.environ.pop("PUPITRE_MESURES_IMAGE", None)
+        if not os.environ.get("PUPITRE_GARDER"):
+            shutil.rmtree(sub, ignore_errors=True)
+
+
 def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None,
               third=None) -> pathlib.Path:
     """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target.
@@ -661,7 +705,10 @@ def main(src, work, layout=None, stage1=False):
                 print(f"etat:{state.name}", flush=True)
                 return
         elif BUDGET is None or time.monotonic() - _T0 + 150 < BUDGET:
-            target = double_read(pages_dir, work, target, guess, third)
+            split = None
+            if guess == "grand" and SEPAREES and BUDGET is None and len(found) == 1:
+                split = split_read(pages_dir, work, found[0], target, third)
+            target = split if split is not None else double_read(pages_dir, work, target, guess, third)
     if third is not None and not os.environ.get("PUPITRE_GARDER"):
         third.unlink(missing_ok=True)
     shutil.rmtree(pre, ignore_errors=True)
