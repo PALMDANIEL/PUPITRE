@@ -28,7 +28,7 @@ BOTTOM = {"G": 2 + 7 * 4, "G8": 2 + 7 * 3, "F": 4 + 7 * 2}  # ligne du bas : mi4
 ALTER = {"sharp": 1, "natural": 0, "flat": -1}
 # homr invente aussi des altérations (mi♯3 en mi majeur, rien devant la tête) : retirée quand le reconnaisseur est sûr
 # qu'il n'y a aucun signe et qu'aucune note de même nom ne la porte plus tôt dans la mesure
-REMOVE = os.environ.get("PUPITRE_SIGNES_HOMR_RETRAIT", "1") == "1"
+REMOVE = os.environ.get("PUPITRE_SIGNES_HOMR_RETRAIT", "0") == "1"  # banc : neutre (96,0 → 96,0), bwv281 ouverte floue −2,4
 NONE_SURE = 0.98
 SHARPS_ORDER, FLATS_ORDER = "FCGDAEB", "BEADGCF"
 
