@@ -461,7 +461,10 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             print("Voix séparées : lectures de homr incompatibles", file=sys.stderr)
             return target, False
         (work / "fiabilite.json").unlink(missing_ok=True)
-        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=True)
+        # copie usée (lignes en tirets) : mesures appariées par leur place sur l'image, arbitrage complet (banc : photocopies
+        # +2,6 à +5,6 points ; sur photo, Audiveris y lit mieux que homr : photos sombres −5 et −7,5 points)
+        worn = (work / "pre" / "usee").exists() or os.environ.get("PUPITRE_APPARIEMENT_IMAGE") == "toujours"
+        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn)
         fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
         try:
             import json
