@@ -79,6 +79,7 @@ jobs:
           sparse-checkout: |
             engine/bench
             .github/scripts
+            Dockerfile
       - uses: actions/download-artifact@v4
         with:
           name: copies
@@ -87,7 +88,8 @@ jobs:
         shell: bash
         run: |
           # en cas d'échec, la fin du journal de construction en annotation (lisible sans compte GitHub)
-          if ! docker build --progress=plain -t pupitre-moteur . > "$RUNNER_TEMP/build.log" 2>&1; then
+          # Dockerfile de la branche pour les deux moteurs (construction de l'image : outillage, comme les scripts du banc)
+          if ! docker build --progress=plain -f banc-outils/Dockerfile -t pupitre-moteur . > "$RUNNER_TEMP/build.log" 2>&1; then
             tail -c 3500 "$RUNNER_TEMP/build.log" | tr '\n' '|' | sed 's/^/::error title=Construction de l image::/'; echo
             exit 1
           fi

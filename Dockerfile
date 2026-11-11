@@ -14,7 +14,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libgtk-3 : Audiveris l'interroge au démarrage (réglage haute définition), même sans écran, et s'arrête sans elle.
 # Audiveris (paquet Linux) veut ajouter une icône au menu du bureau : sans bureau sur un serveur, on lui prépare
 # le dossier attendu, et s'il échoue malgré tout on ignore ce script d'icône (sans effet sur la lecture).
-RUN apt-get update \
+# dépôt Ubuntu injoignable depuis les machines de GitHub (11/11/2026 : aucune liste de paquets, « Unable to locate
+# package curl ») : nouvelles tentatives, puis miroir Azure d'Ubuntu
+RUN { apt-get update -o Acquire::Retries=5 && apt-cache show curl > /dev/null 2>&1; } \
+ || { sed -i 's#http://archive.ubuntu.com/ubuntu#http://azure.archive.ubuntu.com/ubuntu#g; s#http://security.ubuntu.com/ubuntu#http://azure.archive.ubuntu.com/ubuntu#g' /etc/apt/sources.list.d/ubuntu.sources \
+      && apt-get update -o Acquire::Retries=5; } \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg python3 python3-venv libglib2.0-0 fontconfig fonts-dejavu-core \
     libgtk-3-0t64 \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
