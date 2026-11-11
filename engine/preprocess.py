@@ -450,6 +450,20 @@ def _staves_in(profile, lo=0.2):
     return staves
 
 
+def line_coverage(plain, page):
+    """Part de la longueur des lignes de portée encore encrée sur la page brute (portées repérées sur la page nettoyée) :
+    photocopie légère 0,32 à 0,62, copie très usée 0,13 à 0,31 (banc)."""
+    import pupitres
+    ink = plain < 128
+    covs = []
+    for top, bot, l, r in pupitres.find_staves(page):
+        sp = (bot - top) / 4
+        for k in range(5):
+            y = int(round(top + k * sp))
+            covs.append(ink[max(0, y - 2):y + 3, int(l):int(r)].any(0).mean())
+    return float(np.median(covs)) if covs else 1.0
+
+
 def dashed_lines(bw):
     """
     Lignes de portée en tirets ? Sur une page saine, les traits horizontaux minces tiennent sur de longues distances ;
@@ -1042,7 +1056,7 @@ def main(src, out_dir):
         pages = load_pages(src, t)
         if not pages:
             sys.exit("Le fichier ne contient aucune page lisible.")
-        best, other, pages_out, digital, worn, blurry, specks = [], [], [], 0, 0, 0, []
+        best, other, pages_out, digital, worn, blurry, specks, cover = [], [], [], 0, 0, 0, [], []
         for i, (raw, photo) in enumerate(pages, 1):
             if photo:
                 raw = upright(crop_page(raw))
@@ -1054,9 +1068,13 @@ def main(src, out_dir):
             if photo:
                 gray = unblur(gray)
             plain = plain_page(gray)
-            worn += dashed_lines(plain)
+            dashed = dashed_lines(plain)
+            worn += dashed
+            raw_plain = plain
             page, for_audiveris = clean_page(gray, blurred)
             plain, cleaned, for_audiveris = repair_staff_lines(plain), repair_staff_lines(page), repair_staff_lines(for_audiveris)
+            if dashed:
+                cover.append(line_coverage(raw_plain, cleaned))
             if is_digital(gray):
                 digital += 1
                 pages_out.append(plain); best.append(plain); other.append(for_audiveris)
@@ -1070,6 +1088,8 @@ def main(src, out_dir):
         pil[0].save(out / name, save_all=True, append_images=pil[1:], resolution=300)
     # photocopie usée (lignes en tirets) : omr.py tente alors la lecture voix par voix
     (out / "usee").write_text(str(worn), encoding="utf-8") if worn else (out / "usee").unlink(missing_ok=True)
+    # usure : part des lignes de portée encore encrée (copie très usée sous 0,35 : omr.py y croit homr seul)
+    (out / "usure").write_text(f"{float(np.median(cover)):.2f}", encoding="utf-8") if cover else (out / "usure").unlink(missing_ok=True)
     # photo floue (seuillage par crêtes) : Audiveris y est le plus faible, omr.py laisse alors plus de place à homr
     (out / "flou").write_text(str(blurry), encoding="utf-8") if blurry else (out / "flou").unlink(missing_ok=True)
     # saleté de la copie : petites taches par mégapixel (médiane des pages) ; omr.py décide d'après elle (SALETE)

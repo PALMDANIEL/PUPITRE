@@ -283,7 +283,8 @@ def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
 
 LAST_EXACT = None  # exactitude de la dernière lecture de homr réunie (part des mesures au compte juste)
 EXACT_GEO = float(os.environ.get("PUPITRE_EXACTITUDE_IMAGE", "0.65"))
-EXACT_HOMR = float(os.environ.get("PUPITRE_EXACTITUDE_HOMR", "0.55"))  # photo : homr gardé si ses deux pages ≥
+EXACT_HOMR = float(os.environ.get("PUPITRE_EXACTITUDE_HOMR", "0.55"))
+WORN_HOMR = float(os.environ.get("PUPITRE_USURE_HOMR", "0.35"))  # copie très usée : homr seul (0 : jamais)  # photo : homr gardé si ses deux pages ≥
 
 
 def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str, min_exact: float = 0.0,
@@ -485,9 +486,16 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         # photo : seulement si homr lit sûrement les deux pages (mesures au compte juste ; banc : bwv281 fermée floue
         # 0,67/0,72 : 88 → 97 % ; reculs à 0,55 et 0,60 : bwv86.6 et bwv267 fermées sombres)
         sure = bool(exacts) and min(exacts) >= EXACT_GEO
-        if worn and os.environ.get("PUPITRE_USEE_HOMR") == "1":
-            # essai : copie usée, lecture de homr sur voix séparées prise telle quelle (pas d'arbitrage)
-            print("Copie usée : lecture de homr sur les voix séparées prise telle quelle", file=sys.stderr)
+        try:
+            wear = float((work / "pre" / "usure").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            wear = 1.0
+        if worn and wear < WORN_HOMR:
+            # copie très usée (lignes de portée encrées à moins de 35 %) : Audiveris y perd tant de notes que l'arbitrage
+            # fait moins bien que homr seul (banc : bwv153.1 fermée usée 65 → 83 %, bwv281 84 → 88, bwv267 84 → 86) ;
+            # sur photocopie légère, l'arbitrage reste meilleur (bwv86.6 copie 95 contre 89)
+            print(f"Copie très usée (lignes encrées à {wear:.0%}) : lecture de homr sur les voix séparées prise telle quelle",
+                  file=sys.stderr)
             final = work / "partition.musicxml"
             if target != final:
                 target.unlink(missing_ok=True)
