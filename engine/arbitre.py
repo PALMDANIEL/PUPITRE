@@ -96,7 +96,7 @@ HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
-TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "1") == "1"  # voix séparées : égalité de fautes → homr
+TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "0") == "1"  # voix séparées : égalité → homr (banc 96,0 → 95,9 ; Kyrie réel 95,5 → 97,3)
 
 
 def _alter(p):
