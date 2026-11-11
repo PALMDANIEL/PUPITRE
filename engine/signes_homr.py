@@ -26,6 +26,19 @@ import signes
 STEPS = "CDEFGAB"
 BOTTOM = {"G": 2 + 7 * 4, "G8": 2 + 7 * 3, "F": 4 + 7 * 2}  # ligne du bas : mi4, mi3 (sol 8), sol2
 ALTER = {"sharp": 1, "natural": 0, "flat": -1}
+# homr invente aussi des altérations (mi♯3 en mi majeur, rien devant la tête) : retirée quand le reconnaisseur est sûr
+# qu'il n'y a aucun signe et qu'aucune note de même nom ne la porte plus tôt dans la mesure
+REMOVE = os.environ.get("PUPITRE_SIGNES_HOMR_RETRAIT", "1") == "1"
+NONE_SURE = 0.98
+SHARPS_ORDER, FLATS_ORDER = "FCGDAEB", "BEADGCF"
+
+
+def _key_alter(fifths):
+    """Altération de chaque note dans l'armure (dièses > 0, bémols < 0)."""
+    out = {st: 0 for st in STEPS}
+    for st in (SHARPS_ORDER[:fifths] if fifths > 0 else FLATS_ORDER[:-fifths]):
+        out[st] = 1 if fifths > 0 else -1
+    return out
 
 
 def heads(img, T, B):
@@ -161,17 +174,37 @@ def fix_file(xml_path, spec_lines, kept, folder, clef):
         z -= z.max(1, keepdims=True)
         pr = np.exp(z)
         pr /= pr.sum(1, keepdims=True)
+        nothing = set()
         for i, q in zip(which, pr):
             k = int(np.argmax(q))
             if k and q[k] >= signes.NET_SURE:
                 decided[i] = ("sharp", "natural", "flat")[k - 1]
+            elif not k and q[0] >= NONE_SURE:
+                nothing.add(i)
+        try:
+            fifths = int(root.findtext(".//attributes/key/fifths") or 0)
+        except ValueError:
+            fifths = 0
+        in_key = _key_alter(fifths)
         # report dans la mesure : un signe vaut pour les notes suivantes de même nom et octave
-        carry, current = {}, None
+        carry, current, seen_here = {}, None, set()
         for i, (m, n) in enumerate(notes):
             if m is not current:
-                carry, current = {}, m
+                carry, current, seen_here = {}, m, set()
             here = (n.findtext("pitch/step"), n.findtext("pitch/octave"))
             alter = float(n.findtext("pitch/alter") or 0)
+            first_here = here not in seen_here
+            seen_here.add(here)
+            if REMOVE and i in nothing and i not in decided and first_here and here not in carry \
+                    and alter != in_key[here[0]]:
+                # altération de homr sans signe devant la tête, la première de la mesure : armure rétablie
+                _set(n, in_key[here[0]], None)
+                acc = n.find("accidental")
+                if acc is not None:
+                    n.remove(acc)
+                changed += 1
+                carry[here] = in_key[here[0]]  # les notes suivantes de même nom suivent
+                continue
             if i in decided:
                 sign = decided[i]
                 if alter != ALTER[sign] or n.findtext("accidental") != sign:
