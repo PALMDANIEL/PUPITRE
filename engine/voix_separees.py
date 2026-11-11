@@ -20,7 +20,8 @@ import imgio
 import signes
 
 KEEP = {"haut": "up", "bas": "down"}
-ORPHANS = os.environ.get("PUPITRE_TETES_ORPHELINES", "1") == "1"  # têtes non lues par Audiveris rangées par leur queue
+ORPHANS = os.environ.get("PUPITRE_TETES_ORPHELINES", "1") == "1"
+STRUCTURES = os.environ.get("PUPITRE_LIGATURES", "1") == "1"  # ligatures et crochets de l'autre voix effacés  # têtes non lues par Audiveris rangées par leur queue
 
 
 def split_pages(mxl, pages, out: pathlib.Path) -> bool:
@@ -40,13 +41,27 @@ def split_pages(mxl, pages, out: pathlib.Path) -> bool:
             return False
         ink = (img < 128).astype(np.uint8)
         sp0 = float(np.median([n["sp"] for n in mine]))
-        lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (int(2 * sp0), 1)))
+        lines = staff_lines(img, ink, sp0)
         bars = bar_mask(img)
         for side, keep in KEEP.items():
             a = erase_other(img, mine, keep, lines)
             a = np.where(bars > 0, img, a).astype(np.uint8)  # barres de mesure rendues (une queue effacée les entamait)
             imgio.imwrite(str(out / side / "pages" / pathlib.Path(page).name), a)
     return True
+
+
+def staff_lines(img, ink, sp0):
+    """Lignes des portées seulement (traits horizontaux longs sur les cinq lignes de chaque portée) : une ligature est
+    aussi un long trait, elle ne doit pas être protégée comme une ligne."""
+    import pupitres
+    long_ = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (int(2 * sp0), 1)))
+    rows = np.zeros(img.shape, np.uint8)
+    for t, b, _l, _r in pupitres.find_staves(img):
+        sp = (b - t) / 4
+        for k in range(5):
+            y = t + k * sp
+            rows[max(0, int(y - 0.3 * sp)):int(y + 0.3 * sp) + 1, :] = 1
+    return long_ & rows
 
 
 def bar_mask(img):
@@ -58,6 +73,25 @@ def bar_mask(img):
         for x0, x1 in pupitres._bar_runs(img, (t, b, _l, _r), sp):
             mask[int(round(t)) - 1:int(round(b)) + 2, max(0, x0 - 1):x1 + 2] = 1
     return mask
+
+
+def mend_lines(a, lines, n, xa, xb):
+    """Lignes de portée redessinées sous une tête effacée (photo : retrouvées de part et d'autre de la tête, à leur
+    hauteur et leur épaisseur locales ; sinon les lignes restaient trouées et homr lisait mal la page)."""
+    t, b = n["staff_tb"]
+    sp = (b - t) / 4
+    H, W = a.shape
+    w = max(4, int(2 * sp))
+    for k in range(5):
+        yk = t + k * sp
+        lo, hi = max(0, int(yk - 0.35 * sp)), min(H, int(yk + 0.35 * sp) + 1)
+        left = lines[lo:hi, max(0, xa - w):max(0, xa)]
+        right = lines[lo:hi, min(W, xb):min(W, xb + w)]
+        rows = (left.sum(1) if left.size else 0) + (right.sum(1) if right.size else 0)
+        if np.ndim(rows) == 0 or rows.max() < 0.3 * w:
+            continue
+        on = np.flatnonzero(rows >= 0.5 * rows.max())
+        a[lo + on[0]:lo + on[-1] + 1, max(0, xa):min(W, xb)] = 0
 
 
 def erase_other(img, mine, keep, lines):
@@ -77,6 +111,7 @@ def erase_other(img, mine, keep, lines):
         twin = any(abs(m["xy"][0] - x) < 0.6 * sp and abs(m["xy"][1] - y) < 0.3 * sp for m in kept)
         if not twin:
             cv2.ellipse(a, (int((x0 + x1) / 2), int(y)), (int(0.78 * sp), int(0.62 * sp)), -20, 0, 360, 255, -1)
+            mend_lines(a, lines, n, x0 - int(0.3 * sp), x1 + int(0.3 * sp))
             if n["acc"]:
                 near = any(abs(m["xy"][0] - (hx - 1.2 * sp)) < 1.4 * sp and abs(m["xy"][1] - y) < 1.5 * sp for m in kept)
                 if not near:
@@ -88,7 +123,51 @@ def erase_other(img, mine, keep, lines):
             a[max(0, int(y - 4.3 * sp)):max(0, int(y - 0.3 * sp)), max(0, x1 - int(0.35 * sp)):min(W, x1 + 3)] = 255
     if ORPHANS:
         a = erase_orphans(img, a, mine, keep, lines)
+    if STRUCTURES:
+        a = erase_structures(img, a, mine, kept, keep, lines)
     return np.where(lines > 0, 0, a).astype(np.uint8)  # lignes de portée rendues
+
+
+def erase_structures(img, a, mine, kept, keep, lines):
+    """Queues, ligatures et crochets de l'autre voix effacés d'un seul tenant : l'encre (lignes ôtées) qui touche la
+    queue d'une tête effacée et ne touche aucune tête gardée (une ligature restée seule passait pour un rythme)."""
+    H, W = a.shape
+    ink = ((a < 128) & (lines == 0)).astype(np.uint8)
+    n_c, lab, st, _c = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    if n_c <= 1:
+        return a
+    sp0 = float(np.median([n["sp"] for n in mine]))
+    w_, h_ = st[:, cv2.CC_STAT_WIDTH], st[:, cv2.CC_STAT_HEIGHT]
+    # forme d'une queue (haute et mince), d'une ligature ou d'un crochet (long et plat) ; pas d'une lettre des paroles
+    shaped = ((h_ >= 2.0 * sp0) & (w_ <= 1.0 * sp0)) | ((w_ >= 1.3 * sp0) & (h_ <= 1.6 * sp0)) | \
+             ((w_ >= 1.3 * sp0) & (h_ >= 2.0 * sp0))
+    hit, safe = np.zeros(n_c, bool), np.zeros(n_c, bool)
+    for n in mine:
+        stem = n["el"].findtext("stem") or ""
+        if stem not in ("up", "down"):
+            continue
+        x, y = n["xy"]
+        sp = n["sp"]
+        hx = n.get("head") if n.get("head") is not None else x - 0.65 * sp
+        x0, x1 = int(hx - 0.1 * sp), int(hx + 1.45 * sp)
+        if stem == keep:  # tête gardée et sa queue : leur encre est à garder
+            zone = lab[max(0, int(y - 0.6 * sp)):min(H, int(y + 0.6 * sp)), max(0, x0):min(W, x1)]
+            safe[np.unique(zone)] = True
+            continue
+        # bout de la queue effacée (au-delà de la zone déjà blanchie) : la ligature ou le crochet s'y accroche
+        if stem == "down":
+            zone = lab[min(H - 1, int(y + 2.3 * sp)):min(H, int(y + 4.6 * sp)),
+                       max(0, x0 - int(0.6 * sp)):min(W, x0 + int(0.8 * sp))]
+        else:
+            zone = lab[max(0, int(y - 4.6 * sp)):max(1, int(y - 2.3 * sp)),
+                       max(0, x1 - int(0.8 * sp)):min(W, x1 + int(0.6 * sp))]
+        hit[np.unique(zone)] = True
+    hit[0] = safe[0] = False
+    drop = hit & ~safe & shaped
+    if drop.any():
+        a = a.copy()
+        a[drop[lab]] = 255
+    return a
 
 
 def erase_orphans(img, a, mine, keep, lines):
