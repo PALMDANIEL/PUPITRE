@@ -281,6 +281,10 @@ def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
     return voix, (0 if key is None else key), (time_sig or "4/4")
 
 
+LAST_EXACT = None  # exactitude de la dernière lecture de homr réunie (part des mesures au compte juste)
+EXACT_GEO = float(os.environ.get("PUPITRE_EXACTITUDE_IMAGE", "0.65"))
+
+
 def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str, min_exact: float = 0.0,
                 passes: int | None = None):
     """
@@ -320,6 +324,8 @@ def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, t
             chrono("voix réunies")
             m = re.search(r"^exactitude:([0-9.]+)", r.stdout, re.M)
             exact = float(m.group(1)) if m else 1.0
+            global LAST_EXACT
+            LAST_EXACT = exact
             if r.returncode == 0 and target.exists():
                 if min_exact and exact < min_exact:
                     print(f"Lecture par portées peu fiable ({exact:.0%} des mesures justes) : écartée", file=sys.stderr)
@@ -449,7 +455,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             print("Voix séparées : notes d'Audiveris mal replacées sur l'image", file=sys.stderr)
             return target, False
         print("Double lecture : homr relit chaque voix isolée sur l'image", file=sys.stderr)
-        readings = []
+        readings, exacts = [], []
         os.environ["PUPITRE_MESURES_IMAGE"] = "1"  # assemblage : le nombre de mesures vu sur l'image fait foi
         meter_a = audiveris_meter(raw[0] if isinstance(raw, list) else raw)
         for side in ("haut", "bas"):
@@ -466,6 +472,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             if res is None:
                 return target, False
             readings.append(res)
+            exacts.append(LAST_EXACT if LAST_EXACT is not None else 0.0)
         combined = sub / "homr-voix-separees.musicxml"
         if not voix_separees.combine(readings[0], readings[1], combined):
             print("Voix séparées : lectures de homr incompatibles", file=sys.stderr)
@@ -474,7 +481,10 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         # copie usée (lignes en tirets) : mesures appariées par leur place sur l'image, arbitrage complet (banc : photocopies
         # +2,6 à +5,6 points ; sur photo, Audiveris y lit mieux que homr : photos sombres −5 et −7,5 points)
         worn = (work / "pre" / "usee").exists() or os.environ.get("PUPITRE_APPARIEMENT_IMAGE") == "toujours"
-        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn)
+        # photo : seulement si homr lit sûrement les deux pages (mesures au compte juste ; banc : bwv281 fermée floue
+        # 0,67/0,72 : 88 → 97 % ; reculs à 0,55 et 0,60 : bwv86.6 et bwv267 fermées sombres)
+        sure = bool(exacts) and min(exacts) >= EXACT_GEO
+        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure)
         fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
         try:
             import json
