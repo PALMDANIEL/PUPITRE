@@ -26,6 +26,7 @@ def main(srcs, out):
         Gs.append(d["G"].astype(np.int64) + base)
         base = int(Gs[-1].max()) + 1
     X, Y, G = np.concatenate(Xs), np.concatenate(Ys), np.concatenate(Gs)
+    shape = list(np.load(srcs[0])["X"].shape[1:])
     groups = np.unique(G)
     rng = np.random.default_rng(1)
     test_groups = set(rng.choice(groups, max(1, len(groups) // 5), replace=False).tolist())
@@ -33,7 +34,7 @@ def main(srcs, out):
     Xtr, Ytr, Xte, Yte = X[~te], Y[~te], X[te], Y[te]
     mu, sd = Xtr.mean(0), Xtr.std(0) + 0.05
     Xtr, Xte = (Xtr - mu) / sd, (Xte - mu) / sd
-    n_in, n_h, n_out = X.shape[1], 96, 4
+    n_in, n_h, n_out = X.shape[1], 96, int(Y.max()) + 1  # 4 pour les signes (rien ♯ ♮ ♭), 2 pour les liaisons
     W = {"W1": rng.normal(0, np.sqrt(2 / n_in), (n_in, n_h)).astype(np.float32), "b1": np.zeros(n_h, np.float32),
          "W2": rng.normal(0, np.sqrt(2 / n_h), (n_h, n_out)).astype(np.float32), "b2": np.zeros(n_out, np.float32)}
     counts = np.bincount(Ytr, minlength=n_out)
@@ -76,7 +77,7 @@ def main(srcs, out):
         found = (said & (best == Yte) & (Yte > 0)).sum() / max(1, (Yte > 0).sum())
         wrong = (said & (best != Yte) & (Yte > 0)).sum()
         print(f"seuil {tau} : signes trouvés {found:.3f}, faux signes {false:.4f}, signe confondu {wrong}")
-    np.savez_compressed(out, mu=mu, sd=sd, **W, shape=np.array([26, 16]))
+    np.savez_compressed(out, mu=mu, sd=sd, **W, shape=np.array(shape))
     print("écrit", out)
 
 

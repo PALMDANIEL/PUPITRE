@@ -26,7 +26,8 @@ BOTTOM = {("G", 2): 31, ("F", 4): 19, ("C", 3): 25, ("C", 4): 23, ("C", 1): 29, 
 SCORE, MARGIN = float(os.environ.get("PUPITRE_SIGNES_SEUIL", "0.44")), 0.12
 PLACE_AGAIN = os.environ.get("PUPITRE_SIGNES_REVOTE", "1") == "1"
 # reconnaisseur appris (bench/make_signes.py, bench/train_signes.py) : chorals gravés par Verovio et dégradés comme des photos
-MODEL = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent)) / "modeles" / "signes.npz"
+MODEL = pathlib.Path(os.environ.get("PUPITRE_SIGNES_MODELE") or
+                     pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent)) / "modeles" / "signes.npz")
 NET = os.environ.get("PUPITRE_SIGNES_RESEAU", "1") == "1"
 NET_SURE = float(os.environ.get("PUPITRE_SIGNES_RESEAU_SEUIL", "0.8"))
 _WEIGHTS = None

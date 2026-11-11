@@ -298,6 +298,16 @@ def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, t
             pupitres.staff_spec(voix, layout, "lignes", passes=passes or PASSES)
         ok = homr_staves(voix)
         chrono("toutes les portées lues par homr")
+        if ok and os.environ.get("PUPITRE_SIGNES_HOMR", "1") == "1":
+            # homr perd des ♯ ♮ ♭ sur une copie abîmée : têtes repérées sur chaque ligne, appariées à ses notes,
+            # reconnaisseur appris à gauche de chacune (signes_homr.py)
+            try:
+                import signes_homr
+                k = signes_homr.fix(voix, layout)
+                if k:
+                    print(f"Altérations relues sur l'image (lecture de homr) : {k} notes", file=sys.stderr)
+            except Exception as e:  # noqa: BLE001 : la lecture de homr reste valable
+                print(f"Altérations de homr non relues : {e}", file=sys.stderr)
         notes = [voix / "sortie" / f"v{v + 1}.musicxml" for v in range(n)]
         if ok and all(f.exists() for f in notes):
             print("Portées lues une à une par homr, paroles lues sur l'image", file=sys.stderr)
@@ -692,16 +702,12 @@ def main(src, work, layout=None, stage1=False):
         # tachée) ; depuis que les pages gardent la ligne du système, cette disposition est reconnue bien plus souvent
         # (banc : photos penchée et sombre 92 → 60 et 42 % quand homr prenait le relais sans condition). Sauf photo floue,
         # où Audiveris est le plus faible (banc : bwv347 fermée floue, Audiveris 10 %, homr 61 %).
-        if os.environ.get("PUPITRE_MAL_REGROUPEES") == "audiveris" and found:
-            # essai : lecture d'Audiveris gardée, portées remises dans leurs systèmes (merge.stack), puis double lecture
-            print("Portées mal regroupées : lecture d'Audiveris gardée, portées remises en place", file=sys.stderr)
-        else:
-            print("Portées mal regroupées : lecture voix par voix", file=sys.stderr)
-            if guess == "grand" and not (pre / "flou").exists():
-                min_exact = max(min_exact, 0.7)
-            if by_voice(guess):
-                shutil.rmtree(omr, ignore_errors=True)
-                return
+        print("Portées mal regroupées : lecture voix par voix", file=sys.stderr)
+        if guess == "grand" and not (pre / "flou").exists():
+            min_exact = max(min_exact, 0.7)
+        if by_voice(guess):
+            shutil.rmtree(omr, ignore_errors=True)
+            return
     if not found:
         sys.exit("Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.")
 

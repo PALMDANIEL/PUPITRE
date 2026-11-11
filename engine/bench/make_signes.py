@@ -5,9 +5,13 @@ music21 (jamais ceux du banc d'essai), gravés par Verovio (positions exactes de
 taches), noircis comme les pages du moteur, puis découpés exactement comme signes.read_signs : de 2,8 interlignes à gauche
 du bord gauche de la tête jusqu'à elle, 2,2 interlignes au-dessus et au-dessous.
 
-Usage : bench-venv/bin/python make_signes.py <sortie.npz> [nombre_de_chorals]
+Usage : bench-venv/bin/python make_signes.py <sortie.npz> [nombre_de_chorals] [--usees] [--moteur]
+--moteur : pages abîmées en gris (photo nette, WhatsApp, sombre, floue, photocopie, copie usée), puis passées par le
+nettoyage du moteur lui-même (preprocess : renforcement du flou, seuillage par crêtes, lignes recousues, taches ôtées),
+comme les pages que lit signes.py : le reconnaisseur apprend sur les mêmes images qu'en usage réel (un dièse empâté
+seuillé par crêtes ne ressemble pas à un dièse seuillé simplement). Sans déformation de la page (positions exactes).
 """
-import copy, pathlib, re, sys, tempfile
+import copy, os, pathlib, re, sys, tempfile
 import xml.etree.ElementTree as ET
 
 import cairosvg, cv2, numpy as np, verovio
@@ -15,10 +19,13 @@ from music21 import corpus
 
 import make_corpus as mc
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))  # moteur (preprocess, pour --moteur)
+
 BENCH = {"bwv269", "bwv347", "bwv153.1", "bwv86.6", "bwv267", "bwv281", "bwv40.6", "bwv244.3", "bwv66.6", "bwv145.5"}
 LABELS = {"E262": 1, "E261": 2, "E260": 3}  # dièse, bécarre, bémol ; 0 : rien
 PATCH_W, PATCH_H = 16, 26
 WORN = "--usees" in sys.argv  # seulement des copies usées (complément du jeu d'exemples)
+ENGINE = "--moteur" in sys.argv  # pages passées par le nettoyage du moteur
 SVG = "{http://www.w3.org/2000/svg}"
 XLINK = "{http://www.w3.org/1999/xlink}href"
 
@@ -116,6 +123,65 @@ def degrade(img, rng, worn=False):
     return bw
 
 
+def _light(img, rng, lo, hi, shadow=0.0):
+    h, w = img.shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    a = rng.uniform(0, 2 * np.pi)
+    t = ((xx / w - 0.5) * np.cos(a) + (yy / h - 0.5) * np.sin(a)) + 0.5
+    light = lo + (hi - lo) * np.clip(t, 0, 1)
+    if shadow:
+        cx, cy, r = rng.uniform(0.2, 0.8) * w, rng.uniform(0.3, 0.9) * h, rng.uniform(0.25, 0.4) * w
+        light *= 1 - shadow * np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * r * r)))
+    return img.astype(np.float32) * light
+
+
+def _shoot(page, rng, noise, long_side, quality):
+    """Bruit du capteur, taille d'envoi, JPEG, puis remise à 2480 px de large (comme preprocess.to_gray)."""
+    h, w = page.shape
+    out = np.clip(page + rng.normal(0, noise, page.shape), 0, 255).astype(np.uint8)
+    k = long_side / max(out.shape)
+    if k < 1:
+        out = cv2.resize(out, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+    out = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+    return cv2.resize(out, (w, h), interpolation=cv2.INTER_CUBIC)
+
+
+def engine_page(img, rng):
+    """Une page abîmée (au hasard parmi les sortes de copies reçues), nettoyée par le moteur ; positions inchangées."""
+    import preprocess
+    preprocess.deskew = lambda bw: bw  # page droite : pas de rotation (positions des têtes exactes)
+    kind = rng.choice(["nette", "whatsapp", "sombre", "floue", "floue", "copie", "usee"])
+    u = rng.uniform
+    if kind == "nette":
+        g = _shoot(cv2.GaussianBlur(_light(img, rng, 0.8, 0.97) - 8, (0, 0), u(0.6, 1.4)), rng, u(3, 8), u(1900, 2600), u(70, 90))
+    elif kind == "whatsapp":
+        g = _shoot(cv2.GaussianBlur(_light(img, rng, 0.78, 0.97) - 8, (0, 0), u(0.8, 1.4)), rng, u(3, 7), u(1100, 1450), u(40, 65))
+    elif kind == "sombre":
+        g = _light(img, rng, u(0.28, 0.45), u(0.78, 0.9), shadow=u(0.3, 0.5)) * 0.85 + 18
+        g = _shoot(cv2.GaussianBlur(g, (0, 0), u(1.0, 1.6)), rng, u(7, 14), u(1700, 2300), u(60, 80))
+    elif kind == "floue":
+        g = cv2.GaussianBlur(_light(img, rng, 0.78, 0.97) - 8, (0, 0), u(1.8, 3.8))
+        n = int(rng.integers(3, 6)) * 2 + 1
+        k = np.zeros((n, n), np.float32)
+        k[n // 2, :] = 1 / n  # bougé
+        k = cv2.warpAffine(k, cv2.getRotationMatrix2D((n // 2, n // 2), u(0, 180), 1.0), (n, n))
+        g = _shoot(cv2.filter2D(g, -1, k / max(k.sum(), 1e-6)), rng, u(3, 8), u(1700, 2300), u(65, 85))
+    else:
+        import make_usees
+        cfg = dict(make_usees.LEVELS[kind])
+        cfg.update({k_: v * u(0.7, 1.3) for k_, v in cfg.items() if k_ in ("dash", "holes", "breaks", "specks")}, rot=0.0)
+        make_usees.LEVELS["_x"] = cfg
+        g = make_usees.as_photocopy(img, int(rng.integers(1 << 30)), "_x")
+    photo = kind not in ("copie", "usee")
+    gray = preprocess.to_gray(g)
+    blurred = photo and preprocess.edge_width(gray) > preprocess.BLUR
+    if photo:
+        gray = preprocess.unblur(gray)
+    page, _aud = preprocess.clean_page(gray, blurred)
+    return preprocess.repair_staff_lines(page), kind
+
+
 def main(out, count):
     rng = np.random.default_rng(7)
     works = [w for w in corpus.chorales.Iterator(returnType="filename")][:400]
@@ -124,9 +190,15 @@ def main(out, count):
     if WORN:  # d'autres chorals que le premier jeu
         works = works[200:] + works[:200]
         rng = np.random.default_rng(11)
+    if ENGINE:  # encore d'autres
+        works = works[100:] + works[:100]
+        rng = np.random.default_rng(13)
     X, Y, G = [], [], []  # G : numéro du choral (pour séparer apprentissage et contrôle)
     done = 0
+    shard = os.environ.get("SHARD")  # « i/n » : seulement les chorals i, i+n, i+2n… (plusieurs processus à la fois)
     for wi, w in enumerate(works):
+        if shard and wi % int(shard.split("/")[1]) != int(shard.split("/")[0]):
+            continue
         if done >= count:
             break
         try:
@@ -135,6 +207,8 @@ def main(out, count):
             continue
         if not parts:
             continue
+        if ENGINE:
+            add_signs(parts, rng)
         for layout in ("ouverte", "fermee"):
             sc = mc.open_score(parts) if layout == "ouverte" else mc.closed_score(parts)
             with tempfile.TemporaryDirectory() as t:
@@ -143,10 +217,11 @@ def main(out, count):
                     sc.write("musicxml", fp=str(xml))
                 except Exception:  # noqa: BLE001
                     continue
-                for scale in (36, 45, 54):
+                for scale in ((30, 40, 50) if ENGINE else (36, 45, 54)):
                     tk = verovio.toolkit()
-                    tk.setOptions({"pageWidth": 2100, "pageHeight": 2970, "scale": scale, "adjustPageHeight": False,
-                                   "footer": "none", "header": "auto", "breaks": "auto"})
+                    grow = 45 / scale if ENGINE else 1.0  # --moteur : petites portées comme un recueil serré
+                    tk.setOptions({"pageWidth": int(2100 * grow), "pageHeight": int(2970 * grow), "scale": scale,
+                                   "adjustPageHeight": False, "footer": "none", "header": "auto", "breaks": "auto"})
                     if not tk.loadFile(str(xml)):
                         continue
                     svg = tk.renderToSVG(1)
@@ -155,8 +230,11 @@ def main(out, count):
                     notes, k = notes_of(svg, 2480)
                     sp = 180 * k  # interligne : 180 unités de Verovio
                     starts = staff_starts(img, sp)
-                    for rep in range(3):
-                        page = degrade(img, rng, WORN) if rep or WORN else np.where(img < 128, 0, 255).astype(np.uint8)
+                    for rep in range(2 if ENGINE else 3):
+                        if ENGINE:
+                            page, _kind = engine_page(img, rng)
+                        else:
+                            page = degrade(img, rng, WORN) if rep or WORN else np.where(img < 128, 0, 255).astype(np.uint8)
                         for x, y, label in notes:
                             if any(abs(y - ys) < 4 * sp and x - xs < 9 * sp for ys, xs in starts):
                                 continue  # tête de ligne : l'armure est à gauche (le moteur ne lit pas de signe ici)
@@ -169,6 +247,20 @@ def main(out, count):
         done += 1
         print(f"{done}/{count} {pathlib.Path(str(w)).name} : {len(X)} exemples, signes {sum(1 for v in Y if v)}", flush=True)
     np.savez_compressed(out, X=np.array(X, np.float32), Y=np.array(Y, np.int8), G=np.array(G, np.int16))
+
+
+def add_signs(parts, rng, p=0.16):
+    """Plus de signes à apprendre (les chorals en ont peu) : une note sur six environ reçoit une altération écrite
+    (♯, ♮ ou ♭, la hauteur changée en conséquence). Le reconnaisseur ne regarde que la zone à gauche de la tête."""
+    from music21 import pitch as m21pitch
+    for part in parts:
+        for n in part.recurse().notes:
+            if not hasattr(n, "pitch") or rng.random() > p or (n.tie is not None and n.tie.type != "start"):
+                continue
+            kind = rng.choice(["sharp", "natural", "flat"])
+            n.pitch.accidental = m21pitch.Accidental(kind)
+            n.pitch.accidental.displayStatus = True
+            n.pitch.accidental.displayType = "always"
 
 
 def staff_starts(img, sp):
@@ -188,5 +280,5 @@ def staff_starts(img, sp):
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if a != "--usees"]
+    args = [a for a in sys.argv[1:] if a not in ("--usees", "--moteur")]
     main(args[0], int(args[1]) if len(args) > 1 else 60)

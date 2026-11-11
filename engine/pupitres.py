@@ -560,11 +560,16 @@ def _moved(p, read, target, read_key, keysig):
     """
     from music21 import pitch
     written = read_key.accidentalByStep(p.step) if read_key else None
-    explicit = p.accidental is not None and p.accidental.alter != (written.alter if written else 0)
+    w = written.alter if written else 0
+    if NATURALS and read_key is not None and keysig is not None and read_key.sharps == keysig.sharps:
+        # même armure : l'altération de la note est celle que le lecteur a lue (ré♮ en mi majeur : pas de signe écrit)
+        explicit = (p.accidental.alter if p.accidental is not None else 0) != w
+    else:
+        explicit = p.accidental is not None and p.accidental.alter != w
     q = pitch.Pitch()
     q.diatonicNoteNum = p.diatonicNoteNum - read.lowestLine + target.lowestLine
     if explicit:
-        q.accidental = pitch.Accidental(p.accidental.name)
+        q.accidental = pitch.Accidental(p.accidental.name if p.accidental is not None else "natural")
     else:
         a = keysig.accidentalByStep(q.step)
         if a is not None:
@@ -579,7 +584,14 @@ def _plausible_accidental(step, alter, sharps):
     à l'armure, la♯, mi♯…) sont presque toujours une tache de la copie prise pour une altération.
     """
     if alter > 0:
-        return step in "FGCD" or sharps < 0
+        if sharps < 0:
+            return True
+        if not NATURALS:
+            return step in "FGCD"
+        # degrés 1, 2, 4 et 5 de la tonalité majeure de l'armure haussés (sensibles des tons voisins) : en do fa, sol,
+        # do, ré ; en mi majeur la♯ et mi♯ (bwv86.6 : retirés comme « invraisemblables »)
+        i = "CDEFGAB".index("CGDAEBFC"[min(sharps, 7)])
+        return step in {"CDEFGAB"[(i + d) % 7] for d in (0, 1, 3, 4)}
     if alter < 0:
         return sharps < 0
     return True
@@ -1366,6 +1378,9 @@ _FLAT_AT = [2.0, 0.5, 2.5, 1.0, 3.0, 1.5, 3.5]
 
 
 KEY_AFTER_CLEF = os.environ.get("PUPITRE_ARMURE_APRES_CLE", "1") == "1"
+# hauteur lue par homr gardée telle quelle quand il a lu la même armure que la partition (bécarres compris : il ne les
+# écrit pas en signe, l'armure les effaçait) ; dièses vraisemblables comptés depuis la tonique de l'armure
+NATURALS = os.environ.get("PUPITRE_BECARRES", "1") == "1"
 
 
 def _clef_end(ink, T, B, sp, left):
