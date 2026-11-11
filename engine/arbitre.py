@@ -93,6 +93,9 @@ SPLIT_BAR = os.environ.get("PUPITRE_MESURE_COUPEE", "1") == "1"  # mesure courte
 # à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
 # complet du 10/11, bwv153.1 ouverte nette A 98 → 100 mais bwv269 ouverte photo et sombre A 100 → 88 (homr pris à tort)
 HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
+# voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
+# une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
+GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
 
 
 def _alter(p):
@@ -828,7 +831,7 @@ def adopt_key(a, h, voix=None, layout=None):
     return target
 
 
-def arbitrate(a_path, h_path, out, layout, voix=None, third=None):
+def arbitrate(a_path, h_path, out, layout, voix=None, third=None, split=False):
     a, h = converter.parse(a_path), converter.parse(h_path)
     before = sorted(set(_keys(a)))
     adopted = adopt_key(a, h, voix, layout)
@@ -836,7 +839,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None, third=None):
         print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
     keyed = copy.deepcopy(a) if adopted is not None else None  # _arbitrate réunit des parties avant de renoncer
     try:
-        _arbitrate(a, h, out, layout, third, voix)
+        _arbitrate(a, h, out, layout, third, voix, split)
     except SystemExit as e:
         if keyed is None:
             raise
@@ -844,7 +847,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None, third=None):
         print(f"{e} ; lecture d'Audiveris gardée, avec l'armure de homr", file=sys.stderr)
 
 
-def _arbitrate(a, h, out, layout, third=None, voix=None):
+def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
     sh = staves(h)
     voices = 2 if layout == "grand" else 1
     # mêmes portées des deux côtés ; seule exception : la portée d'instrument au-dessus du chœur (disposition « grand »),
@@ -889,6 +892,15 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
     if any(len(x) != count for x in sa_used) or any(len(x) != len(sh[0]) for x in sh):
         raise SystemExit("Nombres de mesures différents d'une portée à l'autre : pas d'arbitrage")
     pairs = pair_measures(sa_used, sh)
+    # voix séparées : chaque mesure d'Audiveris tombe sur une seule mesure de l'image, homr en a autant que l'image ;
+    # elles se correspondent par leur place, même quand leurs notes diffèrent trop pour être appariées (copie usée :
+    # Audiveris y perd des notes, 6 mesures sur 11 appariées par les notes, aucun arbitrage)
+    geo = split and GEO and mapping is not None and not restructured and len(mapping) == count and \
+        all(len(c) == 1 for c in mapping) and len(sh[0]) == image_measures(voix)
+    if geo:
+        if len(pairs) < count:
+            print(f"Mesures appariées par leur place sur l'image : {count} (par les notes : {len(pairs)})", file=sys.stderr)
+        pairs = [(i, c[0]) for i, c in enumerate(mapping)]
     if len(pairs) < 0.6 * count:
         raise SystemExit(f"Mesures impossibles à apparier ({len(pairs)}/{count}) : pas d'arbitrage")
     # mesures replacées sur l'image : les mesures vraiment perdues y ont déjà été reprises (restructure) ; sinon, d'après
@@ -912,7 +924,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
                     per[v].extend(e[1] for e in line)
         medians.append([statistics.median(p) if p else None for p in per])
     same = sum(signature(events(st_a[i])) == signature(events(st_h[j])) for st_a, st_h in zip(sa_used, sh) for i, j in pairs)
-    rescue = same < 0.4 * len(pairs) * len(sh)
+    rescue = same < 0.4 * len(pairs) * len(sh) and not geo
     if rescue and not RESCUE:
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
@@ -1043,7 +1055,11 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             doubtful[str(k + 1)] = 0.5
     if rescue and not changed and not inserted and not restructured:
         raise SystemExit("Aucune mesure vide à reprendre : pas d'arbitrage")
-    a.write("musicxml", fp=out)
+    try:
+        a.write("musicxml", fp=out)
+    except Exception as e:  # noqa: BLE001 : ligatures refaites par music21 sur une mesure trop pleine (MeterException)
+        print(f"Écriture sans ligatures refaites ({type(e).__name__})", file=sys.stderr)
+        a.write("musicxml", fp=out, makeNotation=False)
     mean = 1 - 0.5 * len(doubtful) / max(1, count)
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
@@ -1059,6 +1075,8 @@ if __name__ == "__main__":
         k = args.index("--troisieme")
         third = args[k + 1]
         del args[k:k + 2]
+    split = "--voix-separees" in args  # lecture de homr sur les pages des voix séparées (voix_separees.py)
+    args = [x for x in args if x != "--voix-separees"]
     if len(args) not in (4, 5):  # 5e : dossier des lignes découpées (sens de l'armure lu sur l'image)
         sys.exit(__doc__)
-    arbitrate(*args, third=third)
+    arbitrate(*args, third=third, split=split)

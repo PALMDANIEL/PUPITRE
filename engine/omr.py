@@ -461,7 +461,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             print("Voix séparées : lectures de homr incompatibles", file=sys.stderr)
             return target, False
         (work / "fiabilite.json").unlink(missing_ok=True)
-        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third)
+        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=True)
         fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
         try:
             import json
@@ -480,11 +480,12 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
 
 
 def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None,
-              third=None) -> pathlib.Path:
+              third=None, split=False) -> pathlib.Path:
     """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target.
     voix : lignes découpées (le sens de l'armure de homr y est vérifié sur l'image)."""
     out = work / "partition-arbitree.musicxml"
-    extra = [*([voix] if voix else []), *(["--troisieme", third] if third and pathlib.Path(third).exists() else [])]
+    extra = [*([voix] if voix else []), *(["--troisieme", third] if third and pathlib.Path(third).exists() else []),
+             *(["--voix-separees"] if split else [])]
     r = subprocess.run(step("arbitre", target, other, out, layout, *extra), capture_output=True, text=True,
                        encoding="utf-8", errors="replace", **QUIET)
     sys.stderr.write(r.stderr[-2000:])

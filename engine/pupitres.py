@@ -1365,6 +1365,20 @@ _SHARP_AT = [0.0, 1.5, -0.5, 1.0, 2.5, 0.5, 2.0]
 _FLAT_AT = [2.0, 0.5, 2.5, 1.0, 3.0, 1.5, 3.5]
 
 
+KEY_AFTER_CLEF = os.environ.get("PUPITRE_ARMURE_APRES_CLE", "1") == "1"
+
+
+def _clef_end(ink, T, B, sp, left):
+    """Bord droit de la clé (lignes de portée ôtées) : 1re forme haute d'au moins 2,5 interlignes et large d'au moins
+    un interligne, à moins de 8 interlignes du début des lignes (l'accolade, mince, n'en est pas une). None si aucune."""
+    y0, y1 = max(0, int(T - 2.5 * sp)), min(ink.shape[0], int(B + 2.5 * sp))
+    x0, x1 = max(0, left - int(1.5 * sp)), min(ink.shape[1], left + int(8 * sp))
+    n, _lab, st, _c = cv2.connectedComponentsWithStats(np.ascontiguousarray(ink[y0:y1, x0:x1]), 8)
+    found = [x0 + int(st[i, 0] + st[i, 2]) for i in range(1, n)
+             if st[i, 3] >= 2.5 * sp and st[i, 2] >= 1.0 * sp and st[i, 1] + st[i, 3] > T - y0 and st[i, 1] < B - y0]
+    return min(found) if found else None
+
+
 def _key_sign_line(c, T, B, count):
     """
     Dièses ou bémols, d'après la place des signes de l'armure (pas leur forme, effacée sur une photo floue) : les
@@ -1386,6 +1400,10 @@ def _key_sign_line(c, T, B, count):
         band = slice(max(0, y - 2), y + 3)
         ink[band] &= (1 - strokes[band]).astype(np.uint8)
     y0, y1 = max(0, int(T - 2.5 * sp)), min(c.shape[0], int(B + 1.5 * sp))
+    clef = _clef_end(ink, T, B, sp, left) if KEY_AFTER_CLEF else None
+    if clef is not None:
+        # lignes retracées qui dépassent l'accolade (copie usée), nom de la voix : les signes commencent après la clé
+        left = max(left, clef - int(1.9 * sp))
     xs = np.arange(left, min(c.shape[1], int(left + (count + 6) * sp)))
     weight = ink[y0:y1, xs].sum(0).astype(np.float64)
     centre = np.where(weight > 0, (ink[y0:y1, xs] * np.arange(y0, y1)[:, None]).sum(0) / np.maximum(weight, 1), np.nan)
@@ -1434,6 +1452,8 @@ def key_sign_from_image(out_dir, layout, count):
         if c is not None:
             votes.append(_key_sign_line(c, T, B, count))
     plus, minus = votes.count(1), votes.count(-1)
+    if KEY_AFTER_CLEF and len(votes) >= 2 and max(plus, minus) < 2:
+        return 0  # une seule ligne a tranché : pas assez sûr pour retourner l'armure (tout serait faux)
     return 1 if plus > minus else -1 if minus > plus else 0
 
 
