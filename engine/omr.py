@@ -393,6 +393,12 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
         if prepared is None or prepared[1] is None:
             return target
         voix, key, time_sig = prepared
+        meter_a = audiveris_meter(target) if layout == "grand" else None
+        if meter_a:  # deux portées : la mesure lue par Audiveris (homr la lit parfois mal sur la tête de ligne)
+            import json
+            info = json.loads((voix / "disposition.json").read_text(encoding="utf-8"))
+            info["mesure"] = meter_a
+            (voix / "disposition.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
         other = read_voices(sub, voix, layout, key, time_sig, passes=1)
         if other is None:
             return target
