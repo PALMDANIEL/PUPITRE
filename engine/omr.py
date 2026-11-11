@@ -689,12 +689,16 @@ def main(src, work, layout=None, stage1=False):
         # tachée) ; depuis que les pages gardent la ligne du système, cette disposition est reconnue bien plus souvent
         # (banc : photos penchée et sombre 92 → 60 et 42 % quand homr prenait le relais sans condition). Sauf photo floue,
         # où Audiveris est le plus faible (banc : bwv347 fermée floue, Audiveris 10 %, homr 61 %).
-        print("Portées mal regroupées : lecture voix par voix", file=sys.stderr)
-        if guess == "grand" and not (pre / "flou").exists():
-            min_exact = max(min_exact, 0.7)
-        if by_voice(guess):
-            shutil.rmtree(omr, ignore_errors=True)
-            return
+        if os.environ.get("PUPITRE_MAL_REGROUPEES") == "audiveris" and found:
+            # essai : lecture d'Audiveris gardée, portées remises dans leurs systèmes (merge.stack), puis double lecture
+            print("Portées mal regroupées : lecture d'Audiveris gardée, portées remises en place", file=sys.stderr)
+        else:
+            print("Portées mal regroupées : lecture voix par voix", file=sys.stderr)
+            if guess == "grand" and not (pre / "flou").exists():
+                min_exact = max(min_exact, 0.7)
+            if by_voice(guess):
+                shutil.rmtree(omr, ignore_errors=True)
+                return
     if not found:
         sys.exit("Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.")
 
