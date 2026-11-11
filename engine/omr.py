@@ -283,6 +283,7 @@ def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
 
 LAST_EXACT = None  # exactitude de la dernière lecture de homr réunie (part des mesures au compte juste)
 EXACT_GEO = float(os.environ.get("PUPITRE_EXACTITUDE_IMAGE", "0.65"))
+EXACT_HOMR = float(os.environ.get("PUPITRE_EXACTITUDE_HOMR", "0.55"))  # photo : homr gardé si ses deux pages ≥
 
 
 def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str, min_exact: float = 0.0,
@@ -500,9 +501,11 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         except (OSError, ValueError):
             full = False
         blurry = (work / "pre" / "flou").exists()  # photo floue : homr y lit mal même une voix seule
-        if not fia.exists() and ((sub / "image").exists() or worn or not blurry) and os.environ.get("PUPITRE_HOMR_SEUL", "1") == "1":
-            # (photo aussi : bwv347 fermée penchée, Audiveris 15 mesures pour 12, 54 % ; homr sur voix séparées 88 % ;
-            # bwv269 fermée penchée 94 → 97)
+        photo_ok = not blurry and bool(exacts) and min(exacts) >= EXACT_HOMR
+        if not fia.exists() and ((sub / "image").exists() or worn or photo_ok) and os.environ.get("PUPITRE_HOMR_SEUL", "1") == "1":
+            # (photo nette aussi, si homr lit sûrement les deux pages : bwv153.1 fermée sombre 90 → 98 %, bwv267
+            # penchée 93 → 96 ; exactitude 0,33-0,38 : barres de l'image fausses (9 mesures pour 13), bwv347 sombre
+            # 92 → 65 sans cette garde)
             # (copie usée aussi : barres perdues par Audiveris, 10 ou 11 mesures pour 12 ; homr sur voix séparées
             # 86 % contre 71 à 73 % sur bwv86.6 et bwv269 fermées usées)
             # petites portées, voix séparées d'après l'image : Audiveris y perd des barres (9 mesures pour 13) et
