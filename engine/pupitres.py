@@ -814,8 +814,8 @@ def _system(row, bar, seen=0, silent=None, stats=None):
     count = max([x for x in sums if sums.count(x) == top], default=0)  # la majorité des voix (à égalité : la plus longue)
     if seen > count and seen in guesses:
         count = seen  # l'image en compte plus, et une voix le confirme : on ne coupe pas de notes
-    elif seen and seen != count and seen in guesses and os.environ.get("PUPITRE_MESURES_IMAGE") == "1":
-        count = seen  # voix séparées (voix_separees.py) : les barres vues sur l'image font foi
+    elif seen and seen != count and os.environ.get("PUPITRE_MESURES_IMAGE") == "1":
+        count = seen  # voix séparées (voix_separees.py) : les barres vues sur l'image font foi (homr en voit en trop)
     sizes_of = {v: (sp if sum(sp) == count else [1] * len(ms))
                 for v, (ms, sp) in enumerate(zip(row, spans)) if count and (sum(sp) == count or len(ms) == count)}
     _borrow_rhythms(row, sizes_of, bar, stats)
