@@ -300,6 +300,13 @@ def blur_threshold(gray, plain, hi=0.45, lo=0.12, mid=0.30):
     return np.where(music, np.where(ink, 0, 255), plain).astype(np.uint8)
 
 
+def staff_like(mask):
+    """Au moins trois rangées d'encre sur une bonne part de la largeur, séparées par du blanc : des lignes de portée (sur
+    une photo, le seuillage les coupe : 30 à 40 % de la largeur)."""
+    rows = mask.mean(1) > 0.25
+    return int(np.count_nonzero(np.diff(rows.astype(np.int8)) == 1) + rows[0]) >= 3
+
+
 def clean_page(gray, blurred=False):
     """
     Page nettoyée, en deux versions qui ne diffèrent que dans la bande de 3 % du bord : (page, pour Audiveris).
@@ -325,6 +332,14 @@ def clean_page(gray, blurred=False):
     long_thin = ((ch > h * 0.5) & (cw < w * 0.06)) | ((cw > w * 0.5) & (ch < h * 0.03))
     erase = near_edge & long_thin
     erase[0] = False  # fond
+    if os.environ.get("PUPITRE_BORDS") != "ancien":
+        # une portée qui commence à la marge sans toucher l'accolade (dernier système court, petites portées) est aussi
+        # longue et mince : effacée en entier avec ses notes (banc : soprano d'un système perdue, disposition non
+        # reconnue). Un trait de bord n'a pas trois lignes parallèles.
+        inside = (x > 0) & (y > 0) & (x + cw < w) & (y + ch < h)  # le bord de la page touche celui de l'image
+        for i in np.flatnonzero(erase & inside & (cw > ch)):
+            if staff_like(lab[y[i]:y[i] + ch[i], x[i]:x[i] + cw[i]] == i):
+                erase[i] = False
     bw[erase[lab]] = 255
     m = int(min(h, w) * 0.03)
     band = np.zeros((h, w), bool)
