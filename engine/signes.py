@@ -28,7 +28,7 @@ PLACE_AGAIN = os.environ.get("PUPITRE_SIGNES_REVOTE", "1") == "1"
 # reconnaisseur appris (bench/make_signes.py, bench/train_signes.py) : chorals gravés par Verovio et dégradés comme des photos
 MODEL = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent)) / "modeles" / "signes.npz"
 NET = os.environ.get("PUPITRE_SIGNES_RESEAU", "1") == "1"
-NET_SURE = float(os.environ.get("PUPITRE_SIGNES_RESEAU_SEUIL", "0.9"))
+NET_SURE = float(os.environ.get("PUPITRE_SIGNES_RESEAU_SEUIL", "0.8"))
 _WEIGHTS = None
 PATCH_W, PATCH_H = 16, 26  # comme bench/make_signes.py  # portées non placées revotées à la bonne échelle
 
