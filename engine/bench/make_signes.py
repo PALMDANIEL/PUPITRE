@@ -18,6 +18,7 @@ import make_corpus as mc
 BENCH = {"bwv269", "bwv347", "bwv153.1", "bwv86.6", "bwv267", "bwv281", "bwv40.6", "bwv244.3", "bwv66.6", "bwv145.5"}
 LABELS = {"E262": 1, "E261": 2, "E260": 3}  # dièse, bécarre, bémol ; 0 : rien
 PATCH_W, PATCH_H = 16, 26
+WORN = "--usees" in sys.argv  # seulement des copies usées (complément du jeu d'exemples)
 SVG = "{http://www.w3.org/2000/svg}"
 XLINK = "{http://www.w3.org/1999/xlink}href"
 
@@ -59,8 +60,34 @@ def notes_of(svg_text, width_px):
     return out, k
 
 
-def degrade(img, rng):
+def wear(img, rng):
+    """Vieille photocopie : lignes de portée en pointillés (60 % effacés), traits rongés, taches."""
+    bw = np.where(img < 128, 0, 255).astype(np.uint8)
+    ink = (bw < 128).astype(np.uint8)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1)))
+    ys, xs = np.nonzero(lines)
+    gaps = np.zeros_like(lines)
+    for _ in range(int(rng.integers(1500, 4000))):
+        if not len(ys):
+            break
+        i = int(rng.integers(0, len(ys)))
+        gaps[max(0, ys[i] - 2):ys[i] + 3, xs[i]:xs[i] + int(rng.integers(6, 30))] = 1
+    bw[(gaps > 0) & (lines > 0)] = 255
+    if rng.random() < 0.6:  # traits rongés
+        noise = rng.random(bw.shape) < float(rng.uniform(0.02, 0.08))
+        bw[noise & (bw == 0)] = 255
+    n = int(rng.integers(800, 3000))  # taches
+    for y, x in zip(rng.integers(0, bw.shape[0], n), rng.integers(0, bw.shape[1], n)):
+        cv2.circle(bw, (int(x), int(y)), int(rng.integers(1, 3)), 0, -1)
+    if rng.random() < 0.4:
+        bw = cv2.erode(bw, np.ones((2, 2), np.uint8))  # photocopie plus noire
+    return bw
+
+
+def degrade(img, rng, worn=False):
     """Une version dégradée de la page (puis noircie comme les pages du moteur)."""
+    if worn:
+        return wear(img, rng)
     a = img.astype(np.float32)
     kind = rng.integers(0, 6)
     if kind >= 1:
@@ -94,6 +121,9 @@ def main(out, count):
     works = [w for w in corpus.chorales.Iterator(returnType="filename")][:400]
     works = [w for w in works if not any(b in str(w) for b in BENCH)]
     rng.shuffle(works)
+    if WORN:  # d'autres chorals que le premier jeu
+        works = works[200:] + works[:200]
+        rng = np.random.default_rng(11)
     X, Y, G = [], [], []  # G : numéro du choral (pour séparer apprentissage et contrôle)
     done = 0
     for wi, w in enumerate(works):
@@ -126,7 +156,7 @@ def main(out, count):
                     sp = 180 * k  # interligne : 180 unités de Verovio
                     starts = staff_starts(img, sp)
                     for rep in range(3):
-                        page = degrade(img, rng) if rep else np.where(img < 128, 0, 255).astype(np.uint8)
+                        page = degrade(img, rng, WORN) if rep or WORN else np.where(img < 128, 0, 255).astype(np.uint8)
                         for x, y, label in notes:
                             if any(abs(y - ys) < 4 * sp and x - xs < 9 * sp for ys, xs in starts):
                                 continue  # tête de ligne : l'armure est à gauche (le moteur ne lit pas de signe ici)
@@ -158,4 +188,5 @@ def staff_starts(img, sp):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 60)
+    args = [a for a in sys.argv[1:] if a != "--usees"]
+    main(args[0], int(args[1]) if len(args) > 1 else 60)

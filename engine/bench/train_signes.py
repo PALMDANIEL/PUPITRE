@@ -2,7 +2,7 @@
 Apprentissage du reconnaisseur d'altérations (signes.py) sur les exemples de make_signes.py : petit réseau (une couche
 cachée), en numpy seul (rien de plus à livrer avec le moteur). Contrôle sur des chorals jamais vus à l'apprentissage.
 
-Usage : python train_signes.py <exemples.npz> <sortie: engine/modeles/signes.npz>
+Usage : python train_signes.py <exemples.npz> [autres.npz …] <sortie: engine/modeles/signes.npz>
 """
 import sys
 
@@ -17,11 +17,15 @@ def forward(W, X):
     return h, p / p.sum(1, keepdims=True)
 
 
-def main(src, out):
-    d = np.load(src)
-    X = d["X"].reshape(len(d["X"]), -1).astype(np.float32)
-    Y = d["Y"].astype(np.int64)
-    G = d["G"]
+def main(srcs, out):
+    Xs, Ys, Gs, base = [], [], [], 0
+    for src in srcs:  # plusieurs jeux d'exemples : numéros de chorals décalés (contrôle sur des chorals jamais vus)
+        d = np.load(src)
+        Xs.append(d["X"].reshape(len(d["X"]), -1).astype(np.float32))
+        Ys.append(d["Y"].astype(np.int64))
+        Gs.append(d["G"].astype(np.int64) + base)
+        base = int(Gs[-1].max()) + 1
+    X, Y, G = np.concatenate(Xs), np.concatenate(Ys), np.concatenate(Gs)
     groups = np.unique(G)
     rng = np.random.default_rng(1)
     test_groups = set(rng.choice(groups, max(1, len(groups) // 5), replace=False).tolist())
@@ -77,4 +81,4 @@ def main(src, out):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1:-1], sys.argv[-1])
