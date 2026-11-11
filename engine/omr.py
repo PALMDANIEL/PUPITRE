@@ -484,6 +484,14 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         # photo : seulement si homr lit sûrement les deux pages (mesures au compte juste ; banc : bwv281 fermée floue
         # 0,67/0,72 : 88 → 97 % ; reculs à 0,55 et 0,60 : bwv86.6 et bwv267 fermées sombres)
         sure = bool(exacts) and min(exacts) >= EXACT_GEO
+        if worn and os.environ.get("PUPITRE_USEE_HOMR") == "1":
+            # essai : copie usée, lecture de homr sur voix séparées prise telle quelle (pas d'arbitrage)
+            print("Copie usée : lecture de homr sur les voix séparées prise telle quelle", file=sys.stderr)
+            final = work / "partition.musicxml"
+            if target != final:
+                target.unlink(missing_ok=True)
+            shutil.copy(combined, final)
+            return final, True
         out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure)
         fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
         try:
