@@ -24,7 +24,8 @@ import numpy as np
 import imgio
 
 PAR_SYSTEMES = os.environ.get("PUPITRE_SYSTEMES", "1") == "1"  # systèmes vus par les barres avant de compléter
-BARRES_TETES = os.environ.get("PUPITRE_BARRES", "") != "ancienne"  # queues de notes écartées des barres de mesure
+BARRES_TETES = os.environ.get("PUPITRE_BARRES", "") != "ancienne"
+LINK_PLAIN = os.environ.get("PUPITRE_LIAISON_TROUEE", "usee") == "usee"  # « partout » : l'ancien  # queues de notes écartées des barres de mesure
 
 # (nom, clé) de chaque portée d'un système, de haut en bas
 LAYOUTS = {
@@ -1079,7 +1080,7 @@ def assemble(out, disposition, sources, notes_by_voice=None, variants=None):
 
 
 
-def link(bw, upper, lower):
+def link(bw, upper, lower, dashed=True):
     """
     Les deux portées appartiennent-elles au même système ? Les barres de mesure et l'accolade de gauche
     traversent l'espace entre elles, même en pointillés sur une photocopie ; entre deux systèmes, rien ne le
@@ -1095,7 +1096,7 @@ def link(bw, upper, lower):
     ink = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 15)))
     ink = cv2.dilate(ink, np.ones((1, 3), np.uint8))  # trait un peu penché
     score = float(ink.mean(0).max()) if ink.size else 0.0
-    if score < 0.9:
+    if score < 0.9 and dashed:
         # copie usée : la ligne qui ouvre le système est trouée par endroits (plus de 15 pixels). Un trait vertical
         # mince, cassures d'une interligne comblées, qui va de la 1re portée à la 2e de bout en bout les relie.
         sp = max(6, int((upper[1] - upper[0]) / 4))
@@ -1110,20 +1111,20 @@ def link(bw, upper, lower):
     return score
 
 
-def system_indexes(bw, staves, joined=0.75):
+def system_indexes(bw, staves, joined=0.75, dashed=True):
     """Portées d'une page regroupées en systèmes d'après leurs liaisons : [[indice, …], …]."""
     groups = []
     for k in range(len(staves)):
-        if k and link(bw, staves[k - 1], staves[k]) >= joined:
+        if k and link(bw, staves[k - 1], staves[k], dashed) >= joined:
             groups[-1].append(k)
         else:
             groups.append([k])
     return groups
 
 
-def systems_on(bw, staves, joined=0.75):
+def systems_on(bw, staves, joined=0.75, dashed=True):
     """Portées d'une page regroupées en systèmes d'après leurs liaisons : [[portée, …], …]."""
-    return [[staves[k] for k in g] for g in system_indexes(bw, staves, joined)]
+    return [[staves[k] for k in g] for g in system_indexes(bw, staves, joined, dashed)]
 
 
 def detect(page_files, worn=False):
@@ -1136,7 +1137,9 @@ def detect(page_files, worn=False):
     sizes = []
     for pf in page_files:
         bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
-        page = [len(g) for g in systems_on(bw, find_staves(bw))]
+        # ligne du système trouée (copie usée) cherchée seulement sur copie usée : sur une photo sombre, le grain comblé
+        # reliait deux systèmes à deux portées en un de quatre (disposition non reconnue, bwv347 fermée sombre)
+        page = [len(g) for g in systems_on(bw, find_staves(bw), dashed=worn or not LINK_PLAIN)]
         # dernière ligne courte (une mesure) dont les portées ne sont pas reliées sur une photo floue : les portées seules
         # de la fin de la page qui font ensemble un système comme les autres en sont un
         full = max(page, default=0)
