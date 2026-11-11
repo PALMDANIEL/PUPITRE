@@ -96,6 +96,7 @@ HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
+TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "1") == "1"  # voix séparées : égalité de fautes → homr
 
 
 def _alter(p):
@@ -991,6 +992,11 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
+            if split and TIE_HOMR and fa == fh and x and y and not only_accidentals(x, y):
+                # voix séparées (photo lue sûrement par homr, copie usée) : à égalité, homr, qui lit une voix seule ;
+                # Audiveris y confond des degrés (Kyrie réel : ténor mi4 pour ré4, homr juste). Altérations seules :
+                # Audiveris et la relecture des signes, comme avant
+                take_h = True
             usual = medians[s][0] if voices == 1 else None
             if usual is None and voices == 1 and layout == "satb" and len(sh) == 4:
                 usual = (69, 64, 57, 50)[s]  # aucune mesure commune : tessiture de la voix à sa place
