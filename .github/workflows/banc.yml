@@ -87,9 +87,17 @@ jobs:
       - name: Image du moteur
         shell: bash
         run: |
+          # 11/11/2026 : les conteneurs de construction ne résolvent plus les noms (« Temporary failure resolving
+          # 'archive.ubuntu.com' », même avec le réseau de l'hôte) : serveurs DNS publics donnés au service Docker
+          if [ -s /etc/docker/daemon.json ]; then
+            sudo jq '. + {"dns": ["8.8.8.8", "1.1.1.1"]}' /etc/docker/daemon.json > /tmp/daemon.json
+          else
+            echo '{"dns": ["8.8.8.8", "1.1.1.1"]}' > /tmp/daemon.json
+          fi
+          sudo cp /tmp/daemon.json /etc/docker/daemon.json && sudo systemctl restart docker && sleep 3
           # en cas d'échec, la fin du journal de construction en annotation (lisible sans compte GitHub)
           # Dockerfile de la branche pour les deux moteurs (construction de l'image : outillage, comme les scripts du banc)
-          if ! docker build --network=host --progress=plain -f banc-outils/Dockerfile -t pupitre-moteur . > "$RUNNER_TEMP/build.log" 2>&1; then
+          if ! docker build --progress=plain -f banc-outils/Dockerfile -t pupitre-moteur . > "$RUNNER_TEMP/build.log" 2>&1; then
             grep -E "(Err:|W: |E: |Ign:|Hit:|Get:|not valid|NO_PUBKEY|Temporary failure|Could not)" "$RUNNER_TEMP/build.log" | head -40 | cut -c1-200 | tr '\n' '|' | sed 's/^/::error title=Messages apt::/'; echo
             tail -c 1500 "$RUNNER_TEMP/build.log" | tr '\n' '|' | sed 's/^/::error title=Construction de l image::/'; echo
             exit 1
