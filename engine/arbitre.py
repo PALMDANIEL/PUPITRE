@@ -1037,7 +1037,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
     mean = 1 - 0.5 * len(doubtful) / max(1, count)
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
-         "arbitrees": changed, "a_verifier": doubtful}, ensure_ascii=False), encoding="utf-8")
+         "arbitrees": changed, "a_verifier": doubtful, "secours": rescue}, ensure_ascii=False), encoding="utf-8")
     print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image, {by_range} par la tessiture), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 

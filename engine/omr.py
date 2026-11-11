@@ -440,7 +440,14 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             return target, False
         (work / "fiabilite.json").unlink(missing_ok=True)
         out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third)
-        return out, (work / "fiabilite.json").exists()  # écrit seulement si l'arbitrage a abouti
+        fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
+        try:
+            import json
+            full = fia.exists() and not json.loads(fia.read_text(encoding="utf-8")).get("secours")
+        except (OSError, ValueError):
+            full = False
+        # secours seulement (lectures trop différentes) : l'ancienne double lecture peut encore combler des mesures
+        return out, full
     except Exception as e:  # noqa: BLE001 : l'ancienne double lecture reste possible
         print(f"Voix séparées impossibles : {e}", file=sys.stderr)
         return (target if target.exists() else work / "partition.musicxml"), False
