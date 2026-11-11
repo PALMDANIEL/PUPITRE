@@ -408,6 +408,16 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
 SEPAREES = os.environ.get("PUPITRE_VOIX_SEPAREES", "1") != "0"  # deux portées : homr lit chaque voix isolée
 
 
+def audiveris_meter(raw) -> str | None:
+    """Mesure la plus fréquente de la lecture d'Audiveris (« 4/4 », « 3/4 »…), ou None."""
+    try:
+        from music21 import converter, meter
+        ts = [t.ratioString for t in converter.parse(str(raw)).recurse().getElementsByClass(meter.TimeSignature)]
+        return max(set(ts), key=ts.count) if ts else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, target: pathlib.Path, third=None):
     """
     Deux portées à deux voix : la page est séparée en voix du haut et voix du bas (voix_separees.py), homr lit chaque
@@ -425,11 +435,17 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         print("Double lecture : homr relit chaque voix isolée sur l'image", file=sys.stderr)
         readings = []
         os.environ["PUPITRE_MESURES_IMAGE"] = "1"  # assemblage : le nombre de mesures vu sur l'image fait foi
+        meter_a = audiveris_meter(raw)
         for side in ("haut", "bas"):
             prepared = prepare_voices(sub / side / "pages", sub / side, "grand")
             if prepared is None or prepared[1] is None:
                 return target, False
             voix, key, time_sig = prepared
+            if meter_a:  # mesure lue par Audiveris (homr lit parfois 3/4 pour le « C » d'une page séparée)
+                import json
+                info = json.loads((voix / "disposition.json").read_text(encoding="utf-8"))
+                info["mesure"] = meter_a
+                (voix / "disposition.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
             res = read_voices(sub / side, voix, "grand", key, time_sig, passes=1)
             if res is None:
                 return target, False
