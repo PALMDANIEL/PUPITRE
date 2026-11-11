@@ -24,7 +24,13 @@ GLYPHS = {"sharp": "", "natural": "", "flat": ""}
 ALTER = {"sharp": 1.0, "natural": 0.0, "flat": -1.0}
 BOTTOM = {("G", 2): 31, ("F", 4): 19, ("C", 3): 25, ("C", 4): 23, ("C", 1): 29, ("F", 3): 21, ("C", 2): 27}
 SCORE, MARGIN = float(os.environ.get("PUPITRE_SIGNES_SEUIL", "0.44")), 0.12
-PLACE_AGAIN = os.environ.get("PUPITRE_SIGNES_REVOTE", "1") == "1"  # portées non placées revotées à la bonne échelle
+PLACE_AGAIN = os.environ.get("PUPITRE_SIGNES_REVOTE", "1") == "1"
+# reconnaisseur appris (bench/make_signes.py, bench/train_signes.py) : chorals gravés par Verovio et dégradés comme des photos
+MODEL = pathlib.Path(getattr(sys, "_MEIPASS", pathlib.Path(__file__).resolve().parent)) / "modeles" / "signes.npz"
+NET = os.environ.get("PUPITRE_SIGNES_RESEAU", "1") == "1"
+NET_SURE = float(os.environ.get("PUPITRE_SIGNES_RESEAU_SEUIL", "0.9"))
+_WEIGHTS = None
+PATCH_W, PATCH_H = 16, 26  # comme bench/make_signes.py  # portées non placées revotées à la bonne échelle
 
 
 def _read(path):
@@ -81,7 +87,8 @@ def notes_of(root):
                                 tied={t.get("type") for t in n.findall("tie")},
                                 x=lm + sysleft + x0 + float(n.get("default-x")), step=n.findtext("pitch/step"),
                                 octave=int(n.findtext("pitch/octave")), alter=float(n.findtext("pitch/alter") or 0),
-                                acc=n.findtext("accidental"), clef=clefs.get(st), oc=octs.get(st, 0)))
+                                # clé non reconnue (photo) : Audiveris écrit alors les hauteurs comme en clé de sol
+                                acc=n.findtext("accidental"), clef=clefs.get(st) or ("G", 2), oc=octs.get(st, 0)))
             x0 += float(m.get("width") or 0)
     return out, pw
 
@@ -274,7 +281,63 @@ def _blur_score(sym, t, k, x0, x1, y0, y1, xl, y, sp):
 SHARP_BLUR, SHARP_BLUR_MARGIN = 0.40, 0.05  # photo floue : vrais dièses 0,43–0,53, faux 0,32 au plus (bwv153.1)
 
 
+def _weights():
+    global _WEIGHTS
+    if _WEIGHTS is None:
+        try:
+            _WEIGHTS = dict(np.load(MODEL)) if NET and MODEL.exists() else {}
+        except Exception:  # noqa: BLE001
+            _WEIGHTS = {}
+    return _WEIGHTS
+
+
+def net_patch(img, x_left, y, sp):
+    """Encre à gauche de la tête, comme bench/make_signes.patch (mêmes bornes, même taille)."""
+    x0, x1 = int(round(x_left - 2.8 * sp)), int(round(x_left - 0.05 * sp))
+    y0, y1 = int(round(y - 2.2 * sp)), int(round(y + 2.2 * sp))
+    H, W = img.shape
+    if x0 < 0 or y0 < 0 or x1 > W or y1 > H or x1 - x0 < 4:
+        return None
+    reg = (img[y0:y1, x0:x1] < 128).astype(np.float32)
+    return cv2.resize(reg, (PATCH_W, PATCH_H), interpolation=cv2.INTER_AREA)
+
+
+def net_read(notes, img):
+    """Probabilités (rien, ♯, ♮, ♭) du reconnaisseur appris pour chaque note placée."""
+    W = _weights()
+    if not W:
+        return
+    rows, which = [], []
+    for n in notes:
+        x, y = n["xy"]
+        sp = n["sp"]
+        xl = n["head"] if n.get("head") is not None else x - 0.65 * sp
+        p = net_patch(img, xl, y, sp)
+        if p is not None:
+            rows.append(p.reshape(-1))
+            which.append(n)
+    if not rows:
+        return
+    X = (np.array(rows, np.float32) - W["mu"]) / W["sd"]
+    h = np.maximum(0, X @ W["W1"] + W["b1"])
+    z = h @ W["W2"] + W["b2"]
+    z -= z.max(1, keepdims=True)
+    pr = np.exp(z)
+    pr /= pr.sum(1, keepdims=True)
+    for n, q in zip(which, pr):
+        n["net"] = q
+
+
 def decide(n, blurry=False):
+    q = n.get("net")
+    if q is not None:
+        k = int(np.argmax(q))
+        if q[k] >= NET_SURE:
+            return (None, "sharp", "natural", "flat")[k]  # le reconnaisseur appris est sûr de lui
+    return decide_templates(n, blurry)
+
+
+def decide_templates(n, blurry=False):
     """Signe nettement reconnu à gauche de la note (ou None). Photo floue : seulement un dièse, nettement devant le
     bécarre (sur l'encre empâtée, bécarres et bémols ne se distinguent pas des têtes et des queues)."""
     s = n.get("scores") or {}
@@ -455,6 +518,7 @@ def fix(mxl, pages, signs=True, ties=True, blurry=False, both=False):
             continue
         if signs:
             seen += read_signs(mine, img, blurry, both)
+            net_read(mine, img)
         if ties:
             links += read_ties(mine, img)
     changed = apply(seen, blurry) if signs else 0

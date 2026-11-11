@@ -12,6 +12,8 @@ datas += collect_data_files('pypdfium2_raw') + collect_data_files('pypdfium2')
 datas += [(os.path.join(here, 'choeur'), 'choeur')]
 # Lecture du texte des partitions (paroles, noms des voix) : langue française de Tesseract (Apache 2.0), 14 Mo
 datas += [(os.path.join(here, 'tessdata'), 'tessdata')]
+# Reconnaisseur d'altérations appris (bench/make_signes.py, bench/train_signes.py) : quelques centaines de Ko
+datas += [(os.path.join(here, 'modeles'), 'modeles')]
 binaries = collect_dynamic_libs('pypdfium2_raw') + collect_dynamic_libs('tinysoundfont') + collect_dynamic_libs('lameenc')
 
 hidden = ['omr', 'preprocess', 'merge', 'pupitres', 'arbitre', 'signes', 'voix_separees', 'coherence', 'imgio', 'render', 'chant', 'mixage', 'choeur'] + collect_submodules('music21')
