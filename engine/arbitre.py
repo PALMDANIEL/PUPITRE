@@ -956,6 +956,8 @@ def _arbitrate(a, h, out, layout, third=None, voix=None):
             nxt = {round(end_of(events(st[k + 1])), 3) for st in sa_used if events(st[k + 1])}
             if len(nxt) == 1 and abs(min(ends_a) + min(nxt) - bar) < 1e-6:
                 length = min(ends_a)
+        if SPLIT_BAR and k == 0 and len(ends_a) == 1 and min(ends_a) < bar - 1e-6:
+            length = min(ends_a)  # levée : toutes les portées d'Audiveris s'accordent sur sa durée
         unsure = False
         for s, (m, x, y) in enumerate(zip(ma, ea, eh)):
             if signature(x) == signature(y):
