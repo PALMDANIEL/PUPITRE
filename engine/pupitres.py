@@ -26,6 +26,15 @@ import imgio
 PAR_SYSTEMES = os.environ.get("PUPITRE_SYSTEMES", "1") == "1"  # systèmes vus par les barres avant de compléter
 BARRES_TETES = os.environ.get("PUPITRE_BARRES", "") != "ancienne"
 LINK_PLAIN = os.environ.get("PUPITRE_LIAISON_TROUEE", "usee") == "usee"  # « partout » : l'ancien  # queues de notes écartées des barres de mesure
+# copie usée (posé par omr.main) : le découpage des voix relie les portées comme detect, ligne du système trouée admise
+# seulement sur copie usée (photo sombre : le grain reliait les deux premiers systèmes à deux portées en un de quatre,
+# dont seules les deux dernières portées étaient gardées : 1er système perdu, bwv347 fermée sombre). None : l'ancien.
+WORN = None
+LINK_VOICES = os.environ.get("PUPITRE_LIAISON_VOIX", "1") == "1"
+
+
+def _dashed():
+    return True if WORN is None or not LINK_VOICES else (WORN or not LINK_PLAIN)
 
 # (nom, clé) de chaque portée d'un système, de haut en bas
 LAYOUTS = {
@@ -224,7 +233,7 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
         bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
         if layout == "satb":
             found = find_staves(bw)
-            linked = systems_on(bw, found) if PAR_SYSTEMES else []
+            linked = systems_on(bw, found, dashed=_dashed()) if PAR_SYSTEMES else []
             if linked and all(len(g) == n for g in linked) and sum(map(len, linked)) == len(found):
                 # systèmes complets, vus par leurs barres : rien à compléter (plusieurs couplets sous la soprano du
                 # 1er système creusent l'écart S → A : une portée « absente » y était inventée, les voix décalées)
@@ -234,7 +243,7 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
             groups = [list(range(k, k + n)) for k in range(0, len(staves) - len(staves) % n, n)]
         else:  # écriture serrée : les deux dernières portées de chaque système (une portée instrumentale peut les précéder)
             staves = [(*s, "vue") for s in find_staves(bw)]
-            groups = [g[-n:] for g in system_indexes(bw, staves) if len(g) >= n]
+            groups = [g[-n:] for g in system_indexes(bw, staves, dashed=_dashed()) if len(g) >= n]
         faint = [s for s in staves if s[4] == "pâle"]
         for s in faint:  # retracées : sur la copie nettoyée et pour la lecture
             redraw(bw, s)

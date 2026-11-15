@@ -750,6 +750,11 @@ def main(src, work, layout=None, stage1=False):
         shutil.copy(p, pages_dir / p.name)
     print(f"pages:{len(pages)}", flush=True)
     chrono("pages nettoyées")
+    try:
+        import pupitres
+        pupitres.WORN = (pre / "usee").exists()  # découpage des voix : mêmes liaisons de portées que detect
+    except Exception:  # noqa: BLE001
+        pass
 
     for old in ("partition.mxl", "partition.musicxml", "fiabilite.json"):
         (work / old).unlink(missing_ok=True)
