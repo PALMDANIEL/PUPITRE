@@ -97,6 +97,7 @@ HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
 # penchées, petites portées +0,1 à +0,3) ; pas sur copie usée (bwv347 fermée usée −2,8 : omr.arbitrate ne donne pas
 # les pages). PUPITRE_JUGE_IMAGE=0 : jamais.
 JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "1") == "1"
+JUDGE_GAP = float(os.environ.get("PUPITRE_JUGE_ECART", "0"))  # (essai) écart de fautes jusqu'auquel le juge tranche
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
@@ -1151,12 +1152,14 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                         print(f"tessiture : portée {s} mesure {k + 1} habituelle {usual} audiveris {mx} homr {my}", file=sys.stderr)
             same_place = (mapping[k] == [j] if (mapping is not None and not restructured and k < len(mapping))
                           else (k == j and count == len(sh[0])))
-            if judge is not None and same_place and fa == fh and x and y and signature(x) != signature(y) \
+            near_tie = fa == fh or (JUDGE_GAP and abs(fa - fh) <= JUDGE_GAP)
+            if judge is not None and same_place and near_tie and x and y and signature(x) != signature(y) \
                     and not only_accidentals(x, y):
                 # (seulement si les deux mesures tombent sur la même mesure de l'image : une paire décalée d'une mesure
                 # aurait l'image de l'une pour juge — bwv269 ouverte photo, alto m. 11 contre m. 10 de homr)
                 ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
-                if ca is not None and ch is not None and ca != ch:
+                need = 1 if fa == fh else 2  # quasi-égalité : l'image doit trancher nettement
+                if ca is not None and ch is not None and abs(ca - ch) >= need:
                     if (ch < ca) != take_h:
                         by_image += 1
                     take_h = ch < ca
