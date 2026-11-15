@@ -560,7 +560,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                 target.unlink(missing_ok=True)
             shutil.copy(combined, final)
             return final, True
-        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure)
+        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure, judge=not worn)
         fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
         try:
             import json
@@ -603,14 +603,15 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
 
 
 def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None,
-              third=None, split=False) -> pathlib.Path:
+              third=None, split=False, judge=True) -> pathlib.Path:
     """Lecture d'Audiveris (target) et lecture de homr (other) arbitrées : rend work/partition.musicxml, sinon target.
     voix : lignes découpées (le sens de l'armure de homr y est vérifié sur l'image)."""
     out = work / "partition-arbitree.musicxml"
     extra = [*([voix] if voix else []), *(["--troisieme", third] if third and pathlib.Path(third).exists() else []),
              *(["--voix-separees"] if split else [])]
     r = subprocess.run(step("arbitre", target, other, out, layout, *extra), capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", env={**os.environ, "PUPITRE_PAGES": str(work / "pages")}, **QUIET)
+                       encoding="utf-8", errors="replace",
+                       env={**os.environ, "PUPITRE_PAGES": str(work / "pages") if judge else ""}, **QUIET)
     sys.stderr.write(r.stderr[-2000:])
     chrono("lectures comparées")
     if r.returncode or not out.exists():

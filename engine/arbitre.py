@@ -93,7 +93,10 @@ SPLIT_BAR = os.environ.get("PUPITRE_MESURE_COUPEE", "1") == "1"  # mesure courte
 # à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
 # complet du 10/11, bwv153.1 ouverte nette A 98 → 100 mais bwv269 ouverte photo et sombre A 100 → 88 (homr pris à tort)
 HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
-JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "0") == "1"  # égalité de fautes : la lecture qui colle à l'image (essai)
+# égalité de fautes : la lecture qui colle à l'image (PlaceJudge). Banc complet 96,3 → 96,4 % (photos, floues,
+# penchées, petites portées +0,1 à +0,3) ; pas sur copie usée (bwv347 fermée usée −2,8 : omr.arbitrate ne donne pas
+# les pages). PUPITRE_JUGE_IMAGE=0 : jamais.
+JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "1") == "1"
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
