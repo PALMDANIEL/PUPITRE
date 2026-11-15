@@ -97,6 +97,7 @@ JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "0") == "1"  # égalité de fautes 
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
+PLACE_PAIRS = os.environ.get("PUPITRE_APPARIEMENT_PLACE", "0") == "1"  # toutes copies (essai)
 TIE_MORE = os.environ.get("PUPITRE_EGALITE_PLUS", "0") == "1"  # égalité, homr a plus de notes → homr (essai)
 TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "0") == "1"  # voix séparées : égalité → homr (banc 96,0 → 95,9 ; Kyrie réel 95,5 → 97,3)
 
@@ -1000,12 +1001,20 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
     # voix séparées : chaque mesure d'Audiveris tombe sur une seule mesure de l'image, homr en a autant que l'image ;
     # elles se correspondent par leur place, même quand leurs notes diffèrent trop pour être appariées (copie usée :
     # Audiveris y perd des notes, 6 mesures sur 11 appariées par les notes, aucun arbitrage)
-    geo = split and GEO and mapping is not None and not restructured and len(mapping) == count and \
+    place_ok = mapping is not None and not restructured and len(mapping) == count and \
         all(len(c) == 1 for c in mapping) and len(sh[0]) == image_measures(voix)
+    geo = split and GEO and place_ok
     if geo:
         if len(pairs) < count:
             print(f"Mesures appariées par leur place sur l'image : {count} (par les notes : {len(pairs)})", file=sys.stderr)
         pairs = [(i, c[0]) for i, c in enumerate(mapping)]
+    elif PLACE_PAIRS and place_ok:
+        # (essai) toutes copies : quand les mesures d'Audiveris tombent une à une sur celles de l'image, la place fait foi
+        # (l'appariement par les notes se décale d'une mesure sur des motifs répétés : alto m. 11 contre m. 10)
+        placed = [(i, c[0]) for i, c in enumerate(mapping)]
+        if placed != pairs:
+            print(f"Mesures appariées par leur place sur l'image plutôt que par leurs notes", file=sys.stderr)
+            pairs = placed
     if len(pairs) < 0.6 * count:
         raise SystemExit(f"Mesures impossibles à apparier ({len(pairs)}/{count}) : pas d'arbitrage")
     # mesures replacées sur l'image : les mesures vraiment perdues y ont déjà été reprises (restructure) ; sinon, d'après
