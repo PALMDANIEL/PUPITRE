@@ -1228,6 +1228,32 @@ def _opening(bw, s, sp, x):
     return count < 3
 
 
+# barre de fin du système pâle (copie usée : couverte à 0,6-0,87 seulement, sous le seuil d'une barre nette) : prise
+# si chaque portée l'esquisse au bout de ses lignes ; trait d'ouverture du système pris pour une barre quand les lignes
+# dépassent un peu à sa gauche (copie usée retracée) : écarté s'il est à moins de 2,5 interlignes du début des lignes
+END_BAR = os.environ.get("PUPITRE_BARRE_FINALE", "1") == "1"
+OPEN_BAR = os.environ.get("PUPITRE_OUVERTURE", "1") == "1"
+
+
+def _line_start(bw, s, sp):
+    """Bout gauche réel des lignes d'une portée."""
+    lo, hi = max(0, int(s[0] - sp / 2)), min(bw.shape[0], int(s[1] + sp / 2))
+    ink = (bw[lo:hi] < 128).astype(np.uint8)
+    lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(1.5 * sp)), 1)))
+    cols = np.flatnonzero(lines.sum(0) >= 3)
+    return int(cols[0]) if cols.size else int(s[2])
+
+
+def _end_cover(bw, s, sp, x):
+    """Part de la hauteur de la portée couverte par un trait vertical au bout de ses lignes (x)."""
+    top, bottom = int(round(s[0])), int(round(s[1]))
+    ink = (bw[top:bottom + 1, max(0, int(x - 0.6 * sp)):int(x + 0.3 * sp) + 1] < 128).astype(np.uint8)
+    if not ink.size:
+        return 0.0
+    closed = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 7)))
+    return float(closed.mean(0).max())
+
+
 def _line_end(bw, s, sp):
     """Bout droit réel des lignes d'une portée (find_staves ne le donne qu'à une bande près)."""
     lo, hi = max(0, int(s[0] - sp / 2)), min(bw.shape[0], int(s[1] + sp / 2))
@@ -1276,6 +1302,15 @@ def bar_lines(bw, group):
     bars = [x for x in bars if x > left + 2 * sp]
     if BARRES_TETES and bars and _opening(bw, staves[0], sp, bars[0]):
         bars = bars[1:]  # find_staves ne donne le bord gauche des lignes qu'à une bande près
+    if BARRES_TETES and OPEN_BAR and bars and bars[0] - min(_line_start(bw, s_, sp) for s_ in staves) < 2.5 * sp:
+        bars = bars[1:]  # clé, armure et chiffre de mesure tiennent plus de 2,5 interlignes : c'est l'ouverture
+    if BARRES_TETES and END_BAR:
+        ends = [_line_end(bw, s_, sp) for s_ in staves]
+        x_end = int(np.median(ends))
+        if max(ends) - min(ends) <= sp and (not bars or bars[-1] < x_end - 2 * sp):
+            covers = [_end_cover(bw, s_, sp, e) for s_, e in zip(staves, ends)]
+            if min(covers) >= 0.5 and max(covers) >= 0.8:
+                bars.append(x_end)
     return bars
 
 
