@@ -97,7 +97,8 @@ HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
 # penchées, petites portées +0,1 à +0,3) ; pas sur copie usée (bwv347 fermée usée −2,8 : omr.arbitrate ne donne pas
 # les pages). PUPITRE_JUGE_IMAGE=0 : jamais.
 JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "1") == "1"
-JUDGE_GAP = float(os.environ.get("PUPITRE_JUGE_ECART", "0"))  # (essai) écart de fautes jusqu'auquel le juge tranche
+JUDGE_GAP = float(os.environ.get("PUPITRE_JUGE_ECART", "0"))
+JUDGE_RESCUE = os.environ.get("PUPITRE_JUGE_SECOURS", "0") == "1"  # (essai) le juge aussi en secours  # (essai) écart de fautes jusqu'auquel le juge tranche
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
@@ -1101,6 +1102,18 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                     rebuild(m, y, voices, length)
                     changed += 1
                     unsure = True
+                elif JUDGE_RESCUE and judge is not None and x and y and not only_accidentals(x, y) and \
+                        (mapping[k] == [j] if (mapping is not None and not restructured and k < len(mapping))
+                         else (k == j and count == len(sh[0]))):
+                    # (essai) secours : homr pris aussi quand l'image lui donne nettement raison (deux têtes au moins)
+                    # et qu'il n'a pas plus de fautes
+                    ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
+                    if ca is not None and ch is not None and ch + 2 <= ca and \
+                            faults(y, x, length, voices) <= faults(x, y, length, voices):
+                        rebuild(m, y, voices, length)
+                        changed += 1
+                        by_image += 1
+                        unsure = True
                 continue
             if st_t is not None and signature(events(st_t[s][k])) == signature(y):
                 # vote : homr et l'autre lecture d'Audiveris s'accordent contre la première (deux sur trois)
