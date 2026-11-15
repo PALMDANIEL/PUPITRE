@@ -120,19 +120,25 @@ def read(page, folder, timeout=1800):
     out = folder / "oemer.musicxml"
     if out.exists():
         return out
+    import sys
     if not pathlib.Path(PYTHON).exists():
+        print(f"Lecture d'oemer impossible : {PYTHON} absent", file=sys.stderr)
         return None
     try:
-        subprocess.run([PYTHON, "-c", LAUNCHER, str(img), "-o", str(folder) + "/", "--save-cache"], cwd=folder,
-                       capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run([PYTHON, "-c", LAUNCHER, str(img), "-o", str(folder) + "/", "--save-cache"], cwd=folder,
+                           capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
+        print("Lecture d'oemer impossible : trop longue", file=sys.stderr)
         return None
     raw = folder / "page.musicxml"
     if not raw.exists():
+        last = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and "Context leak" not in l][-2:]
+        print(f"Lecture d'oemer impossible : {' | '.join(last)[:300]}", file=sys.stderr)
         return None
     try:
         convert(str(raw), str(out))
-    except Exception:  # noqa: BLE001 : sans troisième avis
+    except Exception as e:  # noqa: BLE001 : sans troisième avis
+        print(f"Lecture d'oemer illisible : {e}", file=sys.stderr)
         return None
     return out
 
