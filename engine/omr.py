@@ -560,7 +560,8 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                 target.unlink(missing_ok=True)
             shutil.copy(combined, final)
             return final, True
-        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure, judge=not worn)
+        out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure,
+                        judge=not worn or os.environ.get("PUPITRE_JUGE_USEES") == "1")
         fia = work / "fiabilite.json"  # écrit seulement si l'arbitrage a abouti
         try:
             import json
