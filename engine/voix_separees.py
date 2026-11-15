@@ -65,8 +65,18 @@ def split_pages(mxl, pages, out: pathlib.Path) -> bool:
             # un degré à côté par Audiveris : la tête de l'alto restait sur la page du haut). Lecture de homr sur ces
             # pages, banc local (8 copies ordinaires) : jamais moins bien que les notes d'Audiveris seules ; bwv269
             # fermée nette 94 → 98 %, usées +1 à +3, floue +1 (PUPITRE_SEPARATION=audiveris : l'ancien)
-            extra = [h for h in image_heads(img, mine) if (h["el"].findtext("stem") or "") and not any(
-                abs(m["xy"][0] - h["xy"][0]) < 0.8 * h["sp"] and abs(m["xy"][1] - h["xy"][1]) < 0.35 * h["sp"] for m in mine)]
+            def _stem(n):
+                return n["el"].findtext("stem") or ""
+
+            def _misplaced(h):
+                """Tête vue un ou deux degrés à côté d'une note d'Audiveris de même sens de queue, sans note d'Audiveris
+                à sa place : la même note, placée de travers par Audiveris (une tête isolée reste à erase_orphans)."""
+                near = [m for m in mine if abs(m["xy"][0] - h["xy"][0]) < 0.8 * h["sp"]]
+                if any(abs(m["xy"][1] - h["xy"][1]) < 0.35 * h["sp"] for m in near):
+                    return False
+                return any(_stem(m) == _stem(h) and 0.35 * h["sp"] <= abs(m["xy"][1] - h["xy"][1]) <= 1.2 * h["sp"] for m in near)
+
+            extra = [h for h in image_heads(img, mine) if _stem(h) and (SEPARATION == "union" or _misplaced(h))]
             mine = mine + extra
         ink = (img < 128).astype(np.uint8)
         sp0 = float(np.median([n["sp"] for n in mine]))
