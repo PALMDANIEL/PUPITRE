@@ -19,6 +19,9 @@ from music21 import clef, converter, key, layout, meter, note, pitch, stream
 
 
 FANTOMES = os.environ.get("PUPITRE_FANTOMES", "1") == "1"  # parties fantômes d'un système coupé : ignorées
+# système coupé en deux par Audiveris dont une moitié a perdu une barre (4 mesures sur la portée de sol, 5 sur celle de
+# fa) : superposé quand même, la mesure trop longue coupée à la barre vue sur l'autre portée (place des notes)
+BARRES_SOEURS = os.environ.get("PUPITRE_BARRES_SOEURS", "1") == "1"
 
 
 def rest_measure(model: stream.Measure) -> stream.Measure:
@@ -63,15 +66,78 @@ def _real(staves):
     return [st for st in staves if st and all(m.layoutWidth is not None for m in st)]
 
 
+def _tol(x):
+    return max(4.0, 0.02 * x)
+
+
+def _ends(staff):
+    out, at = [], 0.0
+    for m in staff:
+        at += float(m.layoutWidth)
+        out.append(at)
+    return out
+
+
+def _within(coarse, fine):
+    """Toutes les barres de la portée aux mesures les moins nombreuses se retrouvent sur l'autre."""
+    return all(any(abs(x - y) <= _tol(x) for y in fine) for x in coarse) and abs(coarse[-1] - fine[-1]) <= _tol(fine[-1])
+
+
 def same_system(a, b):
-    """Mêmes barres de mesure : même nombre de mesures (au moins 2) et mêmes largeurs, à 2 % près."""
+    """Mêmes barres de mesure : même nombre de mesures (au moins 2) et mêmes largeurs, à 2 % près ; ou (BARRES_SOEURS)
+    une ou deux barres vues d'un seul côté, toutes les autres au même endroit."""
     ra, rb = _real(a[1]), _real(b[1])
     if not ra or not rb:
         return False
     wa, wb = _widths(ra[0]), _widths(rb[0])
-    if b[0] or len(wa) < 2 or len(wa) != len(wb) or None in wa or None in wb:
+    if b[0] or min(len(wa), len(wb)) < 2 or None in wa or None in wb:
         return False
-    return all(abs(x - y) <= max(4.0, 0.02 * x) for x, y in zip(wa, wb))
+    if len(wa) != len(wb):
+        if not BARRES_SOEURS or abs(len(wa) - len(wb)) > 2 or any(None in _widths(st) for st in ra + rb):
+            return False
+        ea, eb = _ends(ra[0]), _ends(rb[0])
+        return _within(ea, eb) if len(ea) < len(eb) else _within(eb, ea)
+    return all(abs(x - y) <= _tol(x) for x, y in zip(wa, wb))
+
+
+def _cut(m, cuts):
+    """Mesure coupée aux abscisses cuts (dixièmes depuis son début) : notes rangées d'après leur place, rythme refait
+    colonne par colonne (arbitre.cut_measure). None si une note n'a pas de place."""
+    import arbitre
+    voices = 2 if len(m.voices) >= 2 else 1
+    pieces = arbitre.cut_measure(m, cuts, voices)
+    if pieces is None:
+        return None
+    bar = float(m.barDuration.quarterLength) if (m.timeSignature or m.getContextByClass(meter.TimeSignature)) else 4.0
+    bounds = [0.0, *cuts, float(m.layoutWidth)]
+    out = []
+    for k, (evs, lyr) in enumerate(pieces):
+        new = stream.Measure()
+        if k == 0:
+            for el in m.getElementsByClass((layout.SystemLayout, layout.PageLayout, layout.StaffLayout, clef.Clef,
+                                            key.KeySignature, meter.TimeSignature)):
+                new.insert(0, copy.deepcopy(el))
+        for off, ls in lyr.items():
+            holder = note.Note(quarterLength=0.25)
+            holder.lyrics = ls
+            new.insert(arbitre._q(off), holder)
+        arbitre.rebuild(new, evs, voices, bar)
+        new.layoutWidth = bounds[k + 1] - bounds[k]
+        for n in new.recurse().notesAndRests:  # place gardée (relative à la nouvelle mesure)
+            n.style.absoluteX = None
+        out.append(new)
+    return out
+
+
+def refine(staff, fine_ends):
+    """Mesures d'une portée coupées aux barres de sa portée sœur (même système) qu'elle n'a pas vues."""
+    out, start = [], 0.0
+    for m, end in zip(staff, _ends(staff)):
+        inner = [e - start for e in fine_ends if start + _tol(e) < e < end - _tol(end)]
+        pieces = _cut(m, inner) if inner else None
+        out.extend(pieces if pieces else [m])
+        start = end
+    return out
 
 
 def stack(systems):
@@ -84,9 +150,20 @@ def stack(systems):
             out.append([sysm])
     # système coupé en deux par Audiveris (portée de sol, puis portée de fa, chacune avec une partie fantôme vide) :
     # seules les portées lues sont superposées
-    return [(group[0][0], [staff for _page, staves in group for staff in (staves if len(group) == 1 else
-                                                                          _real(staves) or staves)])
-            for group in out]
+    result = []
+    for group in out:
+        staves = [staff for _page, staves in group for staff in (staves if len(group) == 1 else _real(staves) or staves)]
+        counts = {len(st) for st in staves}
+        if len(group) > 1 and len(counts) > 1:
+            fine = max(staves, key=len)
+            ends = _ends(fine)
+            refined = [st if len(st) == len(fine) else refine(st, ends) for st in staves]
+            if all(len(st) == len(fine) for st in refined):
+                staves = refined
+                print(f"Système coupé en deux, barres vues d'un seul côté : mesures recoupées ({len(fine)})",
+                      file=sys.stderr)
+        result.append((group[0][0], staves))
+    return result
 
 
 _SHEET = r"\[[^\]#]+(?:#(\d+))?\]"
