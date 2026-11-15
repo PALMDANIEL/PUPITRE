@@ -60,11 +60,12 @@ def split_pages(mxl, pages, out: pathlib.Path) -> bool:
             if heads_:
                 mine = heads_
                 (out / "image").write_text(f"{sp_page:.1f}", encoding="utf-8")  # séparation d'après l'image
-        elif SEPARATION in ("union", "auto"):
+        elif SEPARATION in ("union", "proches"):
             # notes d'Audiveris + têtes vues sur l'image loin de toute note d'Audiveris (accords serrés, têtes placées
-            # un degré à côté par Audiveris : la tête de l'alto restait sur la page du haut). Lecture de homr sur ces
-            # pages, banc local (8 copies ordinaires) : jamais moins bien que les notes d'Audiveris seules ; bwv269
-            # fermée nette 94 → 98 %, usées +1 à +3, floue +1 (PUPITRE_SEPARATION=audiveris : l'ancien)
+            # un degré à côté par Audiveris : la tête de l'alto restait sur la page du haut). Essais, pas par défaut :
+            # « union » (toutes les têtes de l'image loin des notes d'Audiveris) : banc deux portées 93,8 → 94,1 %,
+            # 5 copies en progrès mais bwv269 penchée −6,8 et bwv347 photocopie −3,9 ; « proches » (seulement les têtes
+            # à 1–2 degrés d'une note d'Audiveris de même queue) : neutre sur le banc (93,9 → 93,8)
             def _stem(n):
                 return n["el"].findtext("stem") or ""
 
