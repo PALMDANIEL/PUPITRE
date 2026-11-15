@@ -107,9 +107,11 @@ JUDGE_STRONG = float(os.environ.get("PUPITRE_JUGE_FORT", "0"))  # (essai) écart
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
 PLACE_PAIRS = os.environ.get("PUPITRE_APPARIEMENT_PLACE", "0") == "1"  # toutes copies (essai)
 TIE_MORE = os.environ.get("PUPITRE_EGALITE_PLUS", "0") == "1"  # égalité, homr a plus de notes → homr (essai)
-# mesure d'Audiveris qui en couvre plusieurs sur l'image (barres manquées, photo floue) et que homr ne remplace pas :
-# coupée aux barres de l'image d'après la place de ses notes, puis arbitrée mesure par mesure comme les autres
-CUT = os.environ.get("PUPITRE_COUPE_BARRES", "1") == "1"
+# (essai) mesure d'Audiveris qui en couvre plusieurs sur l'image (barres manquées, photo floue) et que homr ne remplace
+# pas : coupée aux barres de l'image d'après la place de ses notes, puis arbitrée mesure par mesure comme les autres.
+# Désactivé (banc des copies fermées : seules bwv86.6 fermée petites portées 93 → 86 et floue 75 → 72 touchées : le
+# rythme d'Audiveris y est brouillé, l'arbitrage aboutit en secours et empêche le repli sur homr)
+CUT = os.environ.get("PUPITRE_COUPE_BARRES", "0") == "1"
 COLUMN = 9.0  # dixièmes d'interligne : têtes d'une même colonne (même instant)
 TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "0") == "1"  # voix séparées : égalité → homr (banc 96,0 → 95,9 ; Kyrie réel 95,5 → 97,3)
 
