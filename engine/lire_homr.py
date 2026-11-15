@@ -24,7 +24,7 @@ import sys
 
 
 # préparations de l'image d'une portée, une par passe : (flou gaussien, facteur de largeur de la portée)
-VARIANTS = [(0.7, 1.0), (0.0, 1.0), (1.2, 0.97)]
+VARIANTS = [(0.7, 1.0), (0.0, 1.0), (1.2, 0.97), (0.4, 1.04), (0.9, 0.93)]  # 4e et 5e : seulement si passes ≥ 4
 
 
 def read_staves(folder: pathlib.Path) -> None:

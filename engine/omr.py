@@ -18,11 +18,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 SALETE = int(os.environ.get("PUPITRE_SALETE", 120))
 # Passes de lecture de chaque portée par homr (1 à 3) : avec plusieurs, les lectures votent mesure par mesure (précision
 # et indice de confiance). Trois sur ordinateur ; un seul sur l'hébergement limité à 5 minutes par requête (Vercel).
-PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES", 3))))
+PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES", 3))))
 # voix séparées : passes de homr (lecture adoucie et rétrécie en plus, vote mesure par mesure) ; banc deux portées
 # 93,5 → 93,8 % (bwv267 fermée usée +3,6, bwv86.6 fermée WhatsApp +2,7), 0 recul. Comme PUPITRE_PASSES par défaut.
-SPLIT_PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES_SEPAREES", PASSES))))
-DOUBLE_PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES_DOUBLE", 1))))  # double lecture : passes de homr
+SPLIT_PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES_SEPAREES", PASSES))))
+DOUBLE_PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES_DOUBLE", 1))))  # double lecture : passes de homr
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
     (p for p in ("/Applications/Audiveris.app/Contents/MacOS/Audiveris", "/opt/audiveris/bin/Audiveris") if os.path.exists(p)),
     "audiveris")
