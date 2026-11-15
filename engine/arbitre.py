@@ -117,6 +117,32 @@ COLUMN = 9.0  # dixièmes d'interligne : têtes d'une même colonne (même insta
 TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "0") == "1"  # voix séparées : égalité → homr (banc 96,0 → 95,9 ; Kyrie réel 95,5 → 97,3)
 
 
+# photo floue : les altérations de homr (et du reconnaisseur relu sur ses lignes) y sont peu sûres (dièses inventés,
+# bécarres lus comme dièses : bwv153.1 et bwv347 ouvertes floues) ; une mesure reprise de homr garde, pour chaque note
+# qu'Audiveris lit au même instant sur le même degré, l'altération d'Audiveris (relue par signes.py).
+# Désactivé (essai local sur 4 photos floues : 23 → 27 erreurs ; Audiveris y perd aussi des dièses que homr voit)
+BLUR_SIGNS = os.environ.get("PUPITRE_PHOTO_FLOUE") == "1" and os.environ.get("PUPITRE_FLOU_ALTERATIONS", "0") == "1"
+
+
+def keep_signs(x, y):
+    """Lecture y (homr) dont les notes qu'Audiveris (x) lit au même instant et sur le même degré prennent son
+    altération. Rend (lecture, nombre de notes changées)."""
+    if not BLUR_SIGNS:
+        return y, 0
+    by = {}
+    for e in x:
+        by.setdefault((round(e[0], 3), e[3].step, e[3].octave), e)
+    out, n = [], 0
+    for e in y:
+        a = by.get((round(e[0], 3), e[3].step, e[3].octave))
+        if a is not None and _alter(a[3]) != _alter(e[3]):
+            out.append((e[0], a[1], e[2], a[3]))
+            n += 1
+        else:
+            out.append(e)
+    return out, n
+
+
 def _alter(p):
     return float(p.accidental.alter) if p.accidental is not None else 0.0
 
@@ -1155,6 +1181,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
             st_t = None
     for k in sorted(set(range(count)) - {i for i, _j in pairs}):
         doubtful[str(k + 1)] = 0.5  # une barre vue par un seul lecteur : mesure à vérifier
+    pair_set = set(pairs)
     for k, j in pairs:
         ma = [st[k] for st in sa_used]
         mh = [st[j] for st in sh]
@@ -1178,12 +1205,18 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                 length = min(ends_a)
         if SPLIT_BAR and k == 0 and len(ends_a) == 1 and min(ends_a) < bar - 1e-6:
             length = min(ends_a)  # levée : toutes les portées d'Audiveris s'accordent sur sa durée
-        if SPLIT_BAR and SPLIT_PREV and len(ends_a) == 1 and min(ends_a) < bar - 1e-6 and k > 0:
+        if SPLIT_BAR and SPLIT_PREV and len(ends_a) == 1 and min(ends_a) < bar - 1e-6 and k > 0 and \
+                (k - 1, j - 1) in pair_set and all(e for e in ea) and \
+                all(events(st[k - 1]) and not getattr(st[k - 1], "pupitre_vide", False) for st in sa_used):
+            # (toutes les portées d'Audiveris lues dans les deux mesures : une portée jetée, laissée vide, et une
+            # durée lue sur l'autre seule faisaient écarter la mesure entière de homr, bwv267 fermée petites portées)
             # levée après une double barre : elle complète la mesure courte d'avant (3 temps + 1) ; homr, qui ramène
             # chaque mesure à sa durée pleine, y inventait des notes tenues (bwv267 fermée photocopie, m. 11)
             prv = {round(end_of(events(st[k - 1])), 3) for st in sa_used if events(st[k - 1])}
             if len(prv) == 1 and abs(min(ends_a) + min(prv) - bar) < 1e-6:
                 length = min(ends_a)
+                if os.environ.get("PUPITRE_DEBUG_LEVEE"):
+                    print(f"levée : mesure {k + 1} (homr {j + 1}) durée {length}", file=sys.stderr)
         unsure = False
         for s, (m, x, y) in enumerate(zip(ma, ea, eh)):
             if signature(x) == signature(y):
@@ -1208,7 +1241,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                     ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
                     if ca is not None and ch is not None and ch + 2 <= ca and \
                             faults(y, x, length, voices) <= faults(x, y, length, voices):
-                        rebuild(m, y, voices, length)
+                        rebuild(m, keep_signs(x, y)[0], voices, length)
                         changed += 1
                         by_image += 1
                         unsure = True
@@ -1279,7 +1312,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                 if seen is not None and abs(filled(y) - seen) < abs(filled(x) - seen):
                     take_h = True  # homr a autant de têtes pleines que l'image, Audiveris non
                     by_heads += 1
-            if REDONDANT and fa == fh and only_accidentals(x, y):
+            if REDONDANT and fa == fh and only_accidentals(x, y) and not BLUR_SIGNS:
                 mixed_acc, taken = mix_accidentals(x, y, _key_at(m))
                 if taken:
                     rebuild(m, mixed_acc, voices, length)
@@ -1296,13 +1329,16 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
             if voices > 1 and min(fa, fh) > 0:
                 comp, split = composite(x, y, voices, length, medians[s])
                 if signature(comp) not in (signature(x), signature(y)) and faults(comp, [], length, voices) < min(fa, fh):
+                    if BLUR_SIGNS:
+                        split = [keep_signs(x, line)[0] for line in split]
+                        comp = keep_signs(x, comp)[0]
                     rebuild(m, comp, voices, length, split)
                     changed += 1
                     mixed += 1
                     unsure = True
                     continue
             if take_h:
-                rebuild(m, y, voices, length)
+                rebuild(m, keep_signs(x, y)[0], voices, length)
                 changed += 1
             if min(fa, fh) > 0 or fa == fh:
                 unsure = True

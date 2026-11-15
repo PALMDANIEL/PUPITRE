@@ -637,7 +637,8 @@ def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, lay
              *(["--voix-separees"] if split else [])]
     r = subprocess.run(step("arbitre", target, other, out, layout, *extra), capture_output=True, text=True,
                        encoding="utf-8", errors="replace",
-                       env={**os.environ, "PUPITRE_PAGES": str(work / "pages") if judge else ""}, **QUIET)
+                       env={**os.environ, "PUPITRE_PAGES": str(work / "pages") if judge else "",
+                            "PUPITRE_PHOTO_FLOUE": "1" if (work / "pre" / "flou").exists() else "0"}, **QUIET)
     sys.stderr.write(r.stderr[-2000:])
     chrono("lectures comparées")
     if r.returncode or not out.exists():
