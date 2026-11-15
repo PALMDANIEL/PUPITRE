@@ -62,6 +62,9 @@ def convert(path, out):
     staves = {"G": [], "F": []}
     for sign, ms in segments:
         staves["F" if sign == "F" else "G"].extend(ms)
+    import sys
+    print(f"oemer : clés {''.join(s for s, _m in segments)}, mesures {[len(m) for _s, m in segments]}, "
+          f"notes {sum(len(e) for _s, ms in segments for e in ms)}", file=sys.stderr)
     n = max(len(staves["G"]), len(staves["F"]))
     score = stream.Score()
     for sign in ("G", "F"):
