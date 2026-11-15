@@ -307,7 +307,9 @@ def erase_orphans(img, a, mine, keep, lines):
 # écartée même quand l'image lui donnait raison). À un tel instant, la portée garde sa note la plus haute pour la voix du
 # haut et la plus basse pour la voix du bas, prises de préférence sur la page de leur voix (la tête restée peut être
 # sur l'une ou l'autre page).
-ONE_VOICE = os.environ.get("PUPITRE_ACCORDS_SEPARES", "1") == "1"
+# Désactivé (banc des copies fermées : effets mêlés, ±2 points d'une copie à l'autre, et copies très usées en net recul,
+# bwv281 fermée usée 91 → 77, les têtes ajoutées d'après l'image y faisant des accords voulus)
+ONE_VOICE = os.environ.get("PUPITRE_ACCORDS_SEPARES", "0") == "1"
 
 
 def _items(src):
