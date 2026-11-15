@@ -30,6 +30,9 @@ LINK_PLAIN = os.environ.get("PUPITRE_LIAISON_TROUEE", "usee") == "usee"  # « pa
 # seulement sur copie usée (photo sombre : le grain reliait les deux premiers systèmes à deux portées en un de quatre,
 # dont seules les deux dernières portées étaient gardées : 1er système perdu, bwv347 fermée sombre). None : l'ancien.
 WORN = None
+# barres imposées aux pages séparées d'une lecture voix par voix : celles de la page d'origine (page_bars), posées par
+# omr.split_read ; [(hauts des portées, [x…])] par système, ou None
+FORCED_BARS = None
 LINK_VOICES = os.environ.get("PUPITRE_LIAISON_VOIX", "1") == "1"
 
 
@@ -251,6 +254,10 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
         for idx in groups:
             group = [staves[i] for i in idx]
             bars = bar_lines(bw, group)
+            if FORCED_BARS is not None and len(systems) < len(FORCED_BARS):
+                tops, forced = FORCED_BARS[len(systems)]
+                if len(tops) == len(group) and all(abs(s[0] - y) <= 12 for s, y in zip(group, tops)):
+                    bars = forced
             lyrics = []
             for j, i in enumerate(idx):
                 s = staves[i]
@@ -283,6 +290,25 @@ def voice_pages(page_files, layout, out_dir, pdf=True):
     if pdf:
         make_pdfs(out_dir, layout)
     return len(systems)
+
+
+def page_bars(page_files, layout="grand"):
+    """
+    Barres de chaque système sur les pages d'origine, regroupées comme dans voice_pages : [(hauts des portées, [x…])].
+    Les deux pages séparées d'une lecture voix par voix (voix du haut, voix du bas) n'en voient pas toujours autant
+    (barre pâle d'une copie usée, en partie effacée avec les queues de l'autre voix : 11 mesures d'un côté, 12 de
+    l'autre, lectures de homr impossibles à réunir) : la page d'origine fait foi pour les deux.
+    """
+    n = len(LAYOUTS[layout])
+    out = []
+    for pf in page_files:
+        bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
+        staves = [(*s, "vue") for s in find_staves(bw)]
+        for g in system_indexes(bw, staves, dashed=_dashed()):
+            if len(g) >= n:
+                group = [staves[i] for i in g[-n:]]
+                out.append(([round(s[0]) for s in group], [int(x) for x in bar_lines(bw, group)]))
+    return out
 
 
 def make_pdfs(out_dir, layout):

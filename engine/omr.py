@@ -527,6 +527,14 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                     sub2 = None
             finally:
                 voix_separees.SEPARATION = saved
+        if os.environ.get("PUPITRE_BARRES_PAGE", "1") == "1":
+            # barres comptées une fois, sur la page d'origine, pour les deux pages séparées (une barre pâle à moitié
+            # effacée avec les queues de l'autre voix : 11 mesures d'un côté, 12 de l'autre, lectures impossibles à réunir)
+            try:
+                import pupitres
+                pupitres.FORCED_BARS = pupitres.page_bars(sorted(pages_dir.glob("page-*.png")))
+            except Exception as e:  # noqa: BLE001 : chaque page séparée garde ses barres
+                print(f"Barres de la page d'origine : {e}", file=sys.stderr)
         for side in ("haut", "bas"):
             prepared = prepare_voices(sub / side / "pages", sub / side, "grand")
             if prepared is None or prepared[1] is None:
@@ -609,6 +617,11 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         return (target if target.exists() else work / "partition.musicxml"), False
     finally:
         voix_separees.SEPARATION = saved_sep
+        try:
+            import pupitres
+            pupitres.FORCED_BARS = None
+        except Exception:  # noqa: BLE001
+            pass
         os.environ.pop("PUPITRE_MESURES_IMAGE", None)
         if not os.environ.get("PUPITRE_GARDER"):
             shutil.rmtree(sub, ignore_errors=True)
