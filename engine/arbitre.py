@@ -198,7 +198,9 @@ def vote_notes(base, other, z):
             out[k_] = same
             added.add(k_)
     for k_ in list(out):
-        if k_ in kb and k_ not in ko and k_ not in kz and any(a[0] == k_[0] for a in added):
+        # retirée seulement si une note ajoutée au même instant la remplace (un ou deux demi-tons : degré ou altération
+        # mal lus) ; sur une portée à deux voix, une note ajoutée à la basse ne dit rien du ténor
+        if k_ in kb and k_ not in ko and k_ not in kz and any(a[0] == k_[0] and 0 < abs(a[1] - k_[1]) <= 2 for a in added):
             del out[k_]
     return sorted(out.values(), key=lambda e: (e[0], -e[1]))
 
@@ -1458,8 +1460,47 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
+def homr_vote(h_path, a_path, o_path, out):
+    """
+    Copie très usée (lecture de homr prise telle quelle) : chaque portée-mesure de homr reçoit les notes qu'Audiveris
+    et oemer voient tous deux, et perd celles qu'aucun ne voit quand tous deux s'accordent sur une autre (vote_notes),
+    si elle n'en devient pas moins cohérente. Écrit out ; rend le nombre de portées-mesures corrigées.
+    """
+    h, a, o = converter.parse(h_path), converter.parse(a_path), converter.parse(o_path)
+    sh, sa, so = staves(h), staves(a), staves(o)
+    sa, so = sa[len(sa) - len(sh):], so[len(so) - len(sh):]
+    if len(sa) != len(sh) or len(so) != len(sh) or len({len(x) for x in sa}) != 1 or len({len(x) for x in so}) != 1:
+        raise SystemExit("Portées différentes : pas de vote")
+    pa = {jh: ia for ia, jh in pair_measures(sa, sh)}
+    po = {jh: io for io, jh in pair_measures(so, sh)}
+    voices, changed = 2, 0
+    for j in range(len(sh[0])):
+        if j not in pa or j not in po:
+            continue
+        for s in range(len(sh)):
+            m = sh[s][j]
+            y, x, z = events(m), events(sa[s][pa[j]]), events(so[s][po[j]])
+            if not (x and y and z):
+                continue
+            length = float(m.duration.quarterLength) or 4.0
+            voted = vote_notes(y, x, z)
+            if signature(voted) != signature(y) and faults(voted, x, length, voices) <= faults(y, x, length, voices):
+                rebuild(m, voted, voices, length)
+                changed += 1
+    try:
+        h.write("musicxml", fp=out)
+    except Exception:  # noqa: BLE001
+        h.write("musicxml", fp=out, makeNotation=False)
+    print(f"Copie très usée : {changed} portées-mesures corrigées où Audiveris et oemer s'accordent "
+          f"({len(pa)} et {len(po)} mesures appariées sur {len(sh[0])})", file=sys.stderr)
+    return changed
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
+    if args and args[0] == "--homr-base":  # copie très usée : homr corrigé par Audiveris et oemer d'accord
+        homr_vote(*args[1:5])
+        sys.exit(0)
     third = None
     if "--troisieme" in args:  # troisième lecture (Audiveris, autre version de l'image) : vote à trois
         k = args.index("--troisieme")

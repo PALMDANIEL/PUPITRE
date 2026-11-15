@@ -145,6 +145,7 @@ def read_book(pdf: pathlib.Path, alt_pdf: pathlib.Path, out: pathlib.Path, pages
 # (Essayé et écarté : 0,08, pour une dernière ligne de deux mesures sur petites portées, 13 % de la largeur : un amas
 # court parasite faisait alors perdre deux portées d'un système entier ailleurs.)
 OEMER = os.environ.get("PUPITRE_OEMER", "0") == "1"  # (essai) troisième lecteur, voir oemer_lecture.py
+OEMER_WORN = os.environ.get("PUPITRE_OEMER_USEES", "0") == "1"  # (essai) aussi sur copie très usée : local bwv153.1 usée 87,8 → 85,7
 
 STAFF_OPTIONS = [
     "-option", "org.audiveris.omr.sheet.grid.ClustersRetriever.minClusterLengthRatio=0.15",
@@ -577,9 +578,23 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
             print(f"Copie très usée (lignes encrées à {wear:.0%}) : lecture de homr sur les voix séparées prise telle quelle",
                   file=sys.stderr)
             final = work / "partition.musicxml"
+            voted = None
+            pages = sorted((work / "pages").glob("page-*.png"))
+            if OEMER and OEMER_WORN and len(pages) == 1:
+                # (essai) homr corrigé là où Audiveris et oemer s'accordent contre lui
+                import oemer_lecture
+                reading = oemer_lecture.read(pages[0], work / "oemer")
+                chrono("lecture d'oemer")
+                if reading is not None:
+                    voted = sub / "homr-vote.musicxml"
+                    r = subprocess.run(step("arbitre", "--homr-base", combined, target, reading, voted),
+                                       capture_output=True, text=True, encoding="utf-8", errors="replace", **QUIET)
+                    sys.stderr.write(r.stderr[-600:])
+                    if r.returncode or not voted.exists():
+                        voted = None
             if target != final:
                 target.unlink(missing_ok=True)
-            shutil.copy(combined, final)
+            shutil.copy(voted or combined, final)
             return final, True
         out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure,
                         judge=not worn or os.environ.get("PUPITRE_JUGE_USEES") == "1")
