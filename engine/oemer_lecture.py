@@ -132,8 +132,8 @@ def read(page, folder, timeout=1800):
         return None
     raw = folder / "page.musicxml"
     if not raw.exists():
-        last = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and "Context leak" not in l][-2:]
-        print(f"Lecture d'oemer impossible : {' | '.join(last)[:300]}", file=sys.stderr)
+        last = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and "Context leak" not in l][-5:]
+        print(f"Lecture d'oemer impossible : {' | '.join(last)[:900]}", file=sys.stderr)
         return None
     try:
         convert(str(raw), str(out))
