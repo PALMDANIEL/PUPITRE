@@ -144,6 +144,8 @@ def read_book(pdf: pathlib.Path, alt_pdf: pathlib.Path, out: pathlib.Path, pages
 # disparaissait, même sur un PDF net (banc : bwv153.1, 11 mesures lues sur 12). Ces trois réglages la gardent.
 # (Essayé et écarté : 0,08, pour une dernière ligne de deux mesures sur petites portées, 13 % de la largeur : un amas
 # court parasite faisait alors perdre deux portées d'un système entier ailleurs.)
+OEMER = os.environ.get("PUPITRE_OEMER", "0") == "1"  # (essai) troisième lecteur, voir oemer_lecture.py
+
 STAFF_OPTIONS = [
     "-option", "org.audiveris.omr.sheet.grid.ClustersRetriever.minClusterLengthRatio=0.15",
     "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.maxRightIndentation=200",
@@ -635,6 +637,15 @@ def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, lay
     out = work / "partition-arbitree.musicxml"
     extra = [*([voix] if voix else []), *(["--troisieme", third] if third and pathlib.Path(third).exists() else []),
              *(["--voix-separees"] if split else [])]
+    if OEMER and layout == "grand":
+        # (essai) troisième avis : oemer sur la page nettoyée (une page seulement), lu une fois par copie (work/oemer)
+        pages = sorted((work / "pages").glob("page-*.png"))
+        if len(pages) == 1:
+            import oemer_lecture
+            reading = oemer_lecture.read(pages[0], work / "oemer")
+            chrono("lecture d'oemer")
+            if reading is not None:
+                extra += ["--oemer", str(reading)]
     r = subprocess.run(step("arbitre", target, other, out, layout, *extra), capture_output=True, text=True,
                        encoding="utf-8", errors="replace",
                        env={**os.environ, "PUPITRE_PAGES": str(work / "pages") if judge else "",

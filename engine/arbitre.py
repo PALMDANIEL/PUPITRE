@@ -147,6 +147,62 @@ def keep_signs(x, y):
     return out, n
 
 
+# troisième lecteur (oemer, MIT : lecture de la page entière, autre réseau que homr) : quand Audiveris et homr diffèrent
+# sur une portée-mesure, la lecture dont oemer confirme le plus de notes (même suite de hauteurs) l'emporte si l'écart
+# est net (OEMER_GAP notes) et qu'elle n'a pas plus de fautes de cohérence
+OEMER_GAP = float(os.environ.get("PUPITRE_OEMER_ECART", "2"))
+OEMER_NOTES = os.environ.get("PUPITRE_OEMER_NOTES", "1") == "1"  # vote note par note (deux contre un)
+
+
+def _lcs(a, b):
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    for u in a:
+        cur = [0]
+        for j, v in enumerate(b):
+            cur.append(prev[j] + 1 if u == v else max(prev[j + 1], cur[j]))
+        prev = cur
+    return prev[-1]
+
+
+def confirmed(z, x):
+    """Notes de la lecture x que confirme la lecture z (suite des hauteurs, rythme mis à part), moins la moitié de celles
+    qu'elle ne confirme pas."""
+    sx, sz = [int(round(e[1])) for e in x], [int(round(e[1])) for e in z]
+    common = _lcs(sz, sx)
+    return common - 0.5 * (len(sx) - common)
+
+
+def vote_notes(base, other, z):
+    """
+    Vote note par note, deux contre un : la lecture retenue (base) reçoit les notes que l'autre lecteur et oemer (z)
+    voient tous deux au même instant et à la même hauteur (durée : celle sur laquelle ils s'accordent, sinon celle de
+    l'autre lecteur), et perd celles qu'aucun des deux ne voit quand tous deux lisent à cet instant une même autre note
+    qu'elle n'a pas. Les têtes en double (même instant, même hauteur, deux durées) n'en font qu'une.
+    """
+    def key_(e):
+        return round(e[0], 3), int(round(e[1]))
+    kb, ko, kz = {}, {}, {}
+    durs_o = {}
+    for d, ev in ((kb, base), (ko, other), (kz, z)):
+        for e in ev:
+            d.setdefault(key_(e), e)
+    for e in other:
+        durs_o.setdefault(key_(e), []).append(e)
+    out = dict(kb)
+    added = set()
+    for k_, e in ko.items():
+        if k_ in kz and k_ not in out:
+            same = next((v for v in durs_o[k_] if abs(v[2] - kz[k_][2]) < 1e-6), e)
+            out[k_] = same
+            added.add(k_)
+    for k_ in list(out):
+        if k_ in kb and k_ not in ko and k_ not in kz and any(a[0] == k_[0] for a in added):
+            del out[k_]
+    return sorted(out.values(), key=lambda e: (e[0], -e[1]))
+
+
 def _alter(p):
     return float(p.accidental.alter) if p.accidental is not None else 0.0
 
@@ -1051,7 +1107,7 @@ def adopt_key(a, h, voix=None, layout=None):
     return target
 
 
-def arbitrate(a_path, h_path, out, layout, voix=None, third=None, split=False):
+def arbitrate(a_path, h_path, out, layout, voix=None, third=None, split=False, oemer=None):
     a, h = converter.parse(a_path), converter.parse(h_path)
     before = sorted(set(_keys(a)))
     adopted = adopt_key(a, h, voix, layout)
@@ -1059,7 +1115,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None, third=None, split=False):
         print(f"Armure lue par homr adoptée : {adopted:+d} (Audiveris : {before or 'aucune'})", file=sys.stderr)
     keyed = copy.deepcopy(a) if adopted is not None else None  # _arbitrate réunit des parties avant de renoncer
     try:
-        _arbitrate(a, h, out, layout, third, voix, split)
+        _arbitrate(a, h, out, layout, third, voix, split, oemer)
     except SystemExit as e:
         if keyed is None:
             raise
@@ -1067,7 +1123,7 @@ def arbitrate(a_path, h_path, out, layout, voix=None, third=None, split=False):
         print(f"{e} ; lecture d'Audiveris gardée, avec l'armure de homr", file=sys.stderr)
 
 
-def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
+def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None):
     sh = staves(h)
     voices = 2 if layout == "grand" else 1
     # mêmes portées des deux côtés ; seule exception : la portée d'instrument au-dessus du chœur (disposition « grand »),
@@ -1192,6 +1248,17 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                 st_t = tt[len(tt) - len(sh):]
         except Exception:  # noqa: BLE001 : sans troisième lecture, l'arbitrage à deux
             st_t = None
+    st_o, o_of, by_oemer = None, {}, 0
+    if oemer:
+        try:
+            oo = staves(converter.parse(oemer))
+            if len(oo) >= len(sh) and len({len(x_) for x_ in oo[len(oo) - len(sh):]}) == 1:
+                st_o = oo[len(oo) - len(sh):]
+                # mesures d'oemer appariées à celles de homr d'après leurs notes (ses barres ne sont pas les mêmes)
+                o_of = {jh: io for io, jh in pair_measures(st_o, sh)}
+                print(f"Lecture d'oemer : {len(o_of)}/{len(sh[0])} mesures appariées", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 : sans troisième lecteur, l'arbitrage à deux
+            print(f"Lecture d'oemer illisible : {e}", file=sys.stderr)
     for k in sorted(set(range(count)) - {i for i, _j in pairs}):
         doubtful[str(k + 1)] = 0.5  # une barre vue par un seul lecteur : mesure à vérifier
     pair_set = set(pairs)
@@ -1236,9 +1303,17 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                 agreed += 1
                 continue
             if rescue:
+                z = events(st_o[s][o_of[j]]) if st_o is not None and j in o_of else None
                 if (getattr(m, "pupitre_vide", False) or not x) and y and faults(y, [], length, voices) == 0:
                     rebuild(m, y, voices, length)
                     changed += 1
+                    unsure = True
+                elif z and x and y and confirmed(z, y) - confirmed(z, x) >= OEMER_GAP + 1 and \
+                        faults(y, x, length, voices) <= faults(x, y, length, voices):
+                    # secours : homr pris quand oemer lui donne nettement raison
+                    rebuild(m, y, voices, length)
+                    changed += 1
+                    by_oemer += 1
                     unsure = True
                 elif CUT and getattr(m, "pupitre_coupee", False) and y and \
                         faults(y, x, length, voices) < faults(x, y, length, voices):
@@ -1350,6 +1425,17 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                     mixed += 1
                     unsure = True
                     continue
+            if st_o is not None and x and y and j in o_of and OEMER_NOTES:
+                z = events(st_o[s][o_of[j]])
+                base, other = (y, x) if take_h else (x, y)
+                voted = vote_notes(base, other, z) if z else base
+                if signature(voted) != signature(base) and \
+                        faults(voted, other, length, voices) <= faults(base, other, length, voices):
+                    rebuild(m, voted, voices, length)
+                    changed += 1
+                    by_oemer += 1
+                    unsure = True
+                    continue
             if take_h:
                 rebuild(m, keep_signs(x, y)[0], voices, length)
                 changed += 1
@@ -1368,7 +1454,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful, "secours": rescue}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image, {by_range} par la tessiture, {by_image} par le juge d'après l'image), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image, {by_range} par la tessiture, {by_image} par le juge d'après l'image, {by_oemer} par oemer), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
@@ -1379,8 +1465,13 @@ if __name__ == "__main__":
         k = args.index("--troisieme")
         third = args[k + 1]
         del args[k:k + 2]
+    oemer = None
+    if "--oemer" in args:  # lecture d'oemer convertie (deux portées) : troisième avis
+        k = args.index("--oemer")
+        oemer = args[k + 1]
+        del args[k:k + 2]
     split = "--voix-separees" in args  # lecture de homr sur les pages des voix séparées (voix_separees.py)
     args = [x for x in args if x != "--voix-separees"]
     if len(args) not in (4, 5):  # 5e : dossier des lignes découpées (sens de l'armure lu sur l'image)
         sys.exit(__doc__)
-    arbitrate(*args, third=third, split=split)
+    arbitrate(*args, third=third, split=split, oemer=oemer)
