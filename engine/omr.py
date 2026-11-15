@@ -653,9 +653,15 @@ def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, lay
     extra = [*([voix] if voix else []), *(["--troisieme", third] if third and pathlib.Path(third).exists() else []),
              *(["--voix-separees"] if split else [])]
     if OEMER and layout == "grand":
-        # (essai) troisième avis : oemer sur la page nettoyée (une page seulement), lu une fois par copie (work/oemer)
+        # (essai) troisième avis : oemer sur la page nettoyée (une page seulement), lu une fois par copie (work/oemer) ;
+        # pas sur une page nette (PDF numérique : Audiveris et homr y ont déjà raison, oemer n'y ajoute que du bruit :
+        # banc, bwv347 fermée nette 99,4 → 96,7, bwv267 99,0 → 96,9)
         pages = sorted((work / "pages").glob("page-*.png"))
-        if len(pages) == 1:
+        try:
+            nettes = int((work / "pre" / "nettes").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            nettes = 0
+        if len(pages) == 1 and nettes < len(pages):
             import oemer_lecture
             reading = oemer_lecture.read(pages[0], work / "oemer")
             chrono("lecture d'oemer")

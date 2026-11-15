@@ -69,7 +69,9 @@ def convert(path, out):
     score = stream.Score()
     for sign in ("G", "F"):
         p = stream.Part()
-        for k in range(n):
+        # chaque portée garde ses propres mesures (oemer ne coupe pas toujours les deux portées d'un système pareil :
+        # l'arbitrage les apparie portée par portée)
+        for k in range(len(staves[sign]) or n):
             m = stream.Measure(number=k + 1)
             if k == 0:
                 m.insert(0, clef.TrebleClef() if sign == "G" else clef.BassClef())

@@ -1254,11 +1254,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
     if oemer:
         try:
             oo = staves(converter.parse(oemer))
-            if len(oo) >= len(sh) and len({len(x_) for x_ in oo[len(oo) - len(sh):]}) == 1:
+            if len(oo) >= len(sh):
                 st_o = oo[len(oo) - len(sh):]
-                # mesures d'oemer appariées à celles de homr d'après leurs notes (ses barres ne sont pas les mêmes)
-                o_of = {jh: io for io, jh in pair_measures(st_o, sh)}
-                print(f"Lecture d'oemer : {len(o_of)}/{len(sh[0])} mesures appariées", file=sys.stderr)
+                # mesures d'oemer appariées à celles de homr d'après leurs notes, portée par portée (ses barres ne sont
+                # pas les mêmes, ni toujours les mêmes d'une portée à l'autre d'un système)
+                o_of = [{jh: io for io, jh in pair_measures([so_], [sh_])} for so_, sh_ in zip(st_o, sh)]
+                print(f"Lecture d'oemer : {[len(d) for d in o_of]}/{len(sh[0])} mesures appariées", file=sys.stderr)
         except Exception as e:  # noqa: BLE001 : sans troisième lecteur, l'arbitrage à deux
             print(f"Lecture d'oemer illisible : {e}", file=sys.stderr)
     for k in sorted(set(range(count)) - {i for i, _j in pairs}):
@@ -1305,7 +1306,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
                 agreed += 1
                 continue
             if rescue:
-                z = events(st_o[s][o_of[j]]) if st_o is not None and j in o_of else None
+                z = events(st_o[s][o_of[s][j]]) if st_o is not None and j in o_of[s] else None
                 if (getattr(m, "pupitre_vide", False) or not x) and y and faults(y, [], length, voices) == 0:
                     rebuild(m, y, voices, length)
                     changed += 1
@@ -1427,8 +1428,8 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
                     mixed += 1
                     unsure = True
                     continue
-            if st_o is not None and x and y and j in o_of and OEMER_NOTES:
-                z = events(st_o[s][o_of[j]])
+            if st_o is not None and x and y and j in o_of[s] and OEMER_NOTES:
+                z = events(st_o[s][o_of[s][j]])
                 base, other = (y, x) if take_h else (x, y)
                 voted = vote_notes(base, other, z) if z else base
                 if signature(voted) != signature(base) and \
@@ -1469,17 +1470,20 @@ def homr_vote(h_path, a_path, o_path, out):
     h, a, o = converter.parse(h_path), converter.parse(a_path), converter.parse(o_path)
     sh, sa, so = staves(h), staves(a), staves(o)
     sa, so = sa[len(sa) - len(sh):], so[len(so) - len(sh):]
-    if len(sa) != len(sh) or len(so) != len(sh) or len({len(x) for x in sa}) != 1 or len({len(x) for x in so}) != 1:
+    if len(sa) != len(sh) or len(so) != len(sh) or len({len(x) for x in sa}) != 1:
         raise SystemExit("Portées différentes : pas de vote")
     pa = {jh: ia for ia, jh in pair_measures(sa, sh)}
-    po = {jh: io for io, jh in pair_measures(so, sh)}
+    pos = [{jh: io for io, jh in pair_measures([so_], [sh_])} for so_, sh_ in zip(so, sh)]
+    po = pos[0]
     voices, changed = 2, 0
     for j in range(len(sh[0])):
-        if j not in pa or j not in po:
+        if j not in pa:
             continue
         for s in range(len(sh)):
+            if j not in pos[s]:
+                continue
             m = sh[s][j]
-            y, x, z = events(m), events(sa[s][pa[j]]), events(so[s][po[j]])
+            y, x, z = events(m), events(sa[s][pa[j]]), events(so[s][pos[s][j]])
             if not (x and y and z):
                 continue
             length = float(m.duration.quarterLength) or 4.0
