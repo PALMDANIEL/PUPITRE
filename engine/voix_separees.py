@@ -317,7 +317,7 @@ def _items(src):
     from music21 import note
     out = []
     for n in src.recurse().notesAndRests:
-        off = round(float(n.getOffsetInHierarchy(src)), 4)
+        off = n.getOffsetInHierarchy(src)  # exact (triolets : un arrondi rend la durée impossible à écrire)
         if ONE_VOICE and n.isChord and len(n.pitches) > 1:
             for k, p in enumerate(sorted(n.pitches, key=lambda q: -q.ps)):
                 single = note.Note(copy.deepcopy(p), quarterLength=n.quarterLength)
@@ -336,18 +336,21 @@ def _two_voices(up, down):
     portée pour la voix du haut, la plus basse pour la voix du bas."""
     if not ONE_VOICE:
         return up, down
-    offs = {}
+    offs, exact = {}, {}
     for side, items in ((0, up), (1, down)):
         for off, c in items:
             if not c.isRest:
-                offs.setdefault(off, [[], []])[side].append(c)
-    redo = {off for off, (a, b) in offs.items() if len(a) > 1 or len(b) > 1}
+                key_ = round(float(off), 4)
+                exact.setdefault(key_, off)
+                offs.setdefault(key_, [[], []])[side].append(c)
+    redo = {k for k, (a, b) in offs.items() if len(a) > 1 or len(b) > 1}
     if not redo:
         return up, down
-    new_up = [(o, c) for o, c in up if o not in redo or c.isRest]
-    new_down = [(o, c) for o, c in down if o not in redo or c.isRest]
-    for off in sorted(redo):
-        a, b = offs[off]
+    new_up = [(o, c) for o, c in up if round(float(o), 4) not in redo or c.isRest]
+    new_down = [(o, c) for o, c in down if round(float(o), 4) not in redo or c.isRest]
+    for key_ in sorted(redo):
+        a, b = offs[key_]
+        off = exact[key_]
         allp = a + b
         hi = max(c.pitches[0].ps for c in allp)
         lo = min(c.pitches[0].ps for c in allp)
@@ -355,7 +358,7 @@ def _two_voices(up, down):
         bot = next((c for c in b if c.pitches[0].ps == lo), None) or next(c for c in a if c.pitches[0].ps == lo)
         new_up.append((off, copy.deepcopy(top)))
         new_down.append((off, copy.deepcopy(bot)))
-    return sorted(new_up, key=lambda t: t[0]), sorted(new_down, key=lambda t: t[0])
+    return sorted(new_up, key=lambda t: float(t[0])), sorted(new_down, key=lambda t: float(t[0]))
 
 
 def combine(up_path, down_path, out) -> bool:
