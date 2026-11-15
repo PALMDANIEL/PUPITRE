@@ -89,6 +89,7 @@ IMAGE_MAP = os.environ.get("PUPITRE_RECOUPE", "1") == "1"  # mesures d'Audiveris
 OCTAVE = os.environ.get("PUPITRE_OCTAVE_HOMR", "1") == "1"  # mesure de homr hors tessiture : pas reprise
 INSERT = os.environ.get("PUPITRE_INSERTION", "1") == "1"  # mesure perdue sur toutes les portées : reprise de homr
 RESCUE = os.environ.get("PUPITRE_SECOURS", "1") == "1"
+SPLIT_PREV = os.environ.get("PUPITRE_LEVEE_APRES", "1") == "1"  # levée qui complète la mesure courte d'avant
 SPLIT_BAR = os.environ.get("PUPITRE_MESURE_COUPEE", "1") == "1"  # mesure courte + levée d'Audiveris : durée gardée  # lectures trop différentes : homr ne remplit que ces mesures
 # à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
 # complet du 10/11, bwv153.1 ouverte nette A 98 → 100 mais bwv269 ouverte photo et sombre A 100 → 88 (homr pris à tort)
@@ -1177,6 +1178,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                 length = min(ends_a)
         if SPLIT_BAR and k == 0 and len(ends_a) == 1 and min(ends_a) < bar - 1e-6:
             length = min(ends_a)  # levée : toutes les portées d'Audiveris s'accordent sur sa durée
+        if SPLIT_BAR and SPLIT_PREV and len(ends_a) == 1 and min(ends_a) < bar - 1e-6 and k > 0:
+            # levée après une double barre : elle complète la mesure courte d'avant (3 temps + 1) ; homr, qui ramène
+            # chaque mesure à sa durée pleine, y inventait des notes tenues (bwv267 fermée photocopie, m. 11)
+            prv = {round(end_of(events(st[k - 1])), 3) for st in sa_used if events(st[k - 1])}
+            if len(prv) == 1 and abs(min(ends_a) + min(prv) - bar) < 1e-6:
+                length = min(ends_a)
         unsure = False
         for s, (m, x, y) in enumerate(zip(ma, ea, eh)):
             if signature(x) == signature(y):
