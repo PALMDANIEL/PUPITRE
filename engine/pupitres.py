@@ -1174,7 +1174,7 @@ def bar_count(bw, group):
     return len(bar_lines(bw, group))
 
 
-def _bar_runs(bw, s, sp, weak=None):
+def _bar_runs(bw, s, sp, weak=None, strong=0.9):
     """
     Traits qui traversent toute la hauteur d'une portée, sans tête de note accolée : [(x0, x1)]. Sur une portée à deux
     voix (S/A, T/B), la colonne au bord des têtes d'un accord (queue de la voix du haut, tête du haut, tête du bas)
@@ -1190,7 +1190,7 @@ def _bar_runs(bw, s, sp, weak=None):
         xs = np.flatnonzero(cover >= weak)
         return [(int(g[0]), int(g[-1])) for g in np.split(xs, np.flatnonzero(np.diff(xs) > 1) + 1)
                 if xs.size and g[-1] - g[0] + 1 <= 0.9 * sp]
-    xs = np.flatnonzero(cover >= 0.9)  # toute la hauteur : une queue de note ou un chiffre de mesure, non
+    xs = np.flatnonzero(cover >= strong)  # toute la hauteur : une queue de note ou un chiffre de mesure, non
     if not xs.size:
         return []
     # lignes de portée ôtées (traits horizontaux longs : une photo penche, des rangées fixes ne suffisent pas)
@@ -1232,6 +1232,12 @@ def _opening(bw, s, sp, x):
 # si chaque portée l'esquisse au bout de ses lignes ; trait d'ouverture du système pris pour une barre quand les lignes
 # dépassent un peu à sa gauche (copie usée retracée) : écarté s'il est à moins de 2,5 interlignes du début des lignes
 END_BAR = os.environ.get("PUPITRE_BARRE_FINALE", "1") == "1"
+# deux barres à moins de 2,5 interlignes : aucune mesure n'est si étroite (une note et son espace) ; queue ou trait
+# flou contre la barre (photo floue : 49 px avant la barre de fin, une mesure de trop) : une seule barre, la seconde
+CLOSE_BARS = os.environ.get("PUPITRE_BARRES_PROCHES", "1") == "1"
+# mesure deux fois plus large que les autres du système (barre pâle sur copie usée, couverte à 0,8) : barre cherchée vers
+# son milieu avec un seuil plus bas (0,75 au lieu de 0,9, têtes accolées toujours écartées), vue sur toutes les portées
+WIDE_BARS = os.environ.get("PUPITRE_MESURES_LARGES", "1") == "1"
 OPEN_BAR = os.environ.get("PUPITRE_OUVERTURE", "1") == "1"
 
 
@@ -1302,8 +1308,35 @@ def bar_lines(bw, group):
     bars = [x for x in bars if x > left + 2 * sp]
     if BARRES_TETES and bars and _opening(bw, staves[0], sp, bars[0]):
         bars = bars[1:]  # find_staves ne donne le bord gauche des lignes qu'à une bande près
+    if BARRES_TETES and CLOSE_BARS:
+        kept = []
+        for x in bars:
+            if kept and x - kept[-1] < 2.5 * sp:
+                kept[-1] = x
+            else:
+                kept.append(x)
+        bars = kept
     if BARRES_TETES and OPEN_BAR and bars and bars[0] - min(_line_start(bw, s_, sp) for s_ in staves) < 2.5 * sp:
         bars = bars[1:]  # clé, armure et chiffre de mesure tiennent plus de 2,5 interlignes : c'est l'ouverture
+    if BARRES_TETES and WIDE_BARS and len(bars) >= 3:
+        gaps = [b - a for a, b in zip(bars, bars[1:])]
+        typical = statistics.median(gaps)
+        found = []
+        for a, b in zip(bars, bars[1:]):
+            if b - a < 1.6 * typical:
+                continue
+            marks = []
+            for s_ in staves:
+                mark = np.zeros(bw.shape[1], np.uint8)
+                for x0, x1 in _bar_runs(bw, s_, sp, strong=0.75):
+                    if a + 0.3 * (b - a) <= x0 <= a + 0.7 * (b - a):
+                        mark[x0:x1 + 1] = 1
+                marks.append(cv2.dilate(mark[None, :], np.ones((1, int(1.2 * sp)), np.uint8))[0])
+            both = np.flatnonzero(np.min(marks, axis=0) > 0)
+            if both.size and both[-1] - both[0] <= 2 * sp:
+                found.append(int(both.mean()))
+        if found:
+            bars = sorted(bars + found)
     if BARRES_TETES and END_BAR:
         ends = [_line_end(bw, s_, sp) for s_ in staves]
         x_end = int(np.median(ends))
