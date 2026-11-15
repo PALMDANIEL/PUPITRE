@@ -290,8 +290,9 @@ def prepare_voices(pages_dir: pathlib.Path, work: pathlib.Path, layout: str):
 
 LAST_EXACT = None  # exactitude de la dernière lecture de homr réunie (part des mesures au compte juste)
 EXACT_GEO = float(os.environ.get("PUPITRE_EXACTITUDE_IMAGE", "0.65"))
-EXACT_HOMR = float(os.environ.get("PUPITRE_EXACTITUDE_HOMR", "0.55"))
-WORN_HOMR = float(os.environ.get("PUPITRE_USURE_HOMR", "0.35"))  # copie très usée : homr seul (0 : jamais)  # photo : homr gardé si ses deux pages ≥
+EXACT_HOMR = float(os.environ.get("PUPITRE_EXACTITUDE_HOMR", "0.55"))  # photo : homr gardé si ses deux pages ≥
+WORN_HOMR = float(os.environ.get("PUPITRE_USURE_HOMR", "0.35"))  # copie très usée : homr seul (0 : jamais)
+WORN_UNION = os.environ.get("PUPITRE_USEE_UNION", "1") == "1"  # copie très usée : séparation « union »
 
 
 def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, time_sig: str, min_exact: float = 0.0,
@@ -497,6 +498,16 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
     sub = work / "separees"
     shutil.rmtree(sub, ignore_errors=True)
     try:
+        wear0 = float((work / "pre" / "usure").read_text(encoding="utf-8")) if (work / "pre" / "usure").exists() else 1.0
+    except (OSError, ValueError):
+        wear0 = 1.0
+    saved_sep = voix_separees.SEPARATION
+    if wear0 < WORN_HOMR and WORN_UNION and voix_separees.SEPARATION == "auto":
+        # copie très usée (homr pris tel quel) : têtes de l'image ajoutées à celles d'Audiveris pour séparer les voix
+        # (banc 394bb9b : bwv269 fermée usée +4,2, bwv86.6 +2,2, bwv153.1 +2,0 ; reculs seulement sur photo et
+        # photocopie légère)
+        voix_separees.SEPARATION = "union"
+    try:
         if not voix_separees.split_pages(raw, sorted(pages_dir.glob("page-*.png")), sub):
             print("Voix séparées : notes d'Audiveris mal replacées sur l'image", file=sys.stderr)
             return target, False
@@ -597,6 +608,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         print(f"Voix séparées impossibles : {e}", file=sys.stderr)
         return (target if target.exists() else work / "partition.musicxml"), False
     finally:
+        voix_separees.SEPARATION = saved_sep
         os.environ.pop("PUPITRE_MESURES_IMAGE", None)
         if not os.environ.get("PUPITRE_GARDER"):
             shutil.rmtree(sub, ignore_errors=True)
