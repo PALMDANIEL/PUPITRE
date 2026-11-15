@@ -107,6 +107,10 @@ JUDGE_STRONG = float(os.environ.get("PUPITRE_JUGE_FORT", "0"))  # (essai) écart
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
 PLACE_PAIRS = os.environ.get("PUPITRE_APPARIEMENT_PLACE", "0") == "1"  # toutes copies (essai)
 TIE_MORE = os.environ.get("PUPITRE_EGALITE_PLUS", "0") == "1"  # égalité, homr a plus de notes → homr (essai)
+# mesure d'Audiveris qui en couvre plusieurs sur l'image (barres manquées, photo floue) et que homr ne remplace pas :
+# coupée aux barres de l'image d'après la place de ses notes, puis arbitrée mesure par mesure comme les autres
+CUT = os.environ.get("PUPITRE_COUPE_BARRES", "1") == "1"
+COLUMN = 9.0  # dixièmes d'interligne : têtes d'une même colonne (même instant)
 TIE_HOMR = os.environ.get("PUPITRE_EGALITE_HOMR", "0") == "1"  # voix séparées : égalité → homr (banc 96,0 → 95,9 ; Kyrie réel 95,5 → 97,3)
 
 
@@ -582,7 +586,7 @@ def _audiveris_systems(part):
     return systems, where
 
 
-def image_map(score, voix):
+def image_map(score, voix, cuts=None):
     """
     Mesures d'Audiveris replacées sur l'image : largeurs et marges (dixièmes d'interligne) mises à l'échelle de la page,
     comparées aux barres vues sur l'image (disposition de la lecture par homr). Rend, pour chaque mesure d'Audiveris,
@@ -619,13 +623,62 @@ def image_map(score, voix):
             if a0 - 0.5 * sp < (lo + hi) / 2 < a1 + 0.5 * sp and hi > a0 + sp:
                 covered.append(starts[si] + q)
         out.append(covered)
+        if cuts is not None:
+            # barres de l'image à l'intérieur de la mesure, en dixièmes depuis son début (comme la place des notes)
+            base = left + (ends[mi - 1] if mi else 0.0)
+            cuts.append([bars[q - starts[si]] / scale - base for q in covered[:-1]])
     flat = [q for c in out for q in c]
     if flat != sorted(set(flat)) or sum(len(c) == 1 for c in out) < 0.7 * len(out):
         return None  # image couverte deux fois, dans le désordre : découpages incompatibles
     return out
 
 
-def restructure(a, sh, voices, mapping, total):
+def cut_measure(m, cuts, voices):
+    """
+    Mesure d'Audiveris coupée aux barres de l'image (cuts : abscisses en dixièmes depuis le début de la mesure) : chaque
+    note va à la mesure où tombe sa tête ; dans chaque morceau, débuts recalculés colonne par colonne (la plus courte
+    des durées d'une colonne mène à la suivante : Audiveris, quand il manque une barre, embrouille ses voix). Rend
+    [(notes, durée)] par morceau, ou None si une note n'a pas de place.
+    """
+    import bisect
+    items = []
+    for n in m.recurse().notesAndRests:
+        if n.duration.isGrace or not n.quarterLength:
+            continue
+        x = getattr(n.style, "absoluteX", None)
+        if x is None and n.isChord:  # accord : place de ses têtes
+            xs = [getattr(c.style, "absoluteX", None) for c in n.notes]
+            x = min(xs) if xs and None not in xs else None
+        if x is None:
+            return None
+        items.append((float(x), n))
+    pieces = [[] for _ in range(len(cuts) + 1)]
+    for x, n in items:
+        pieces[bisect.bisect(cuts, x)].append((x, n))
+    out = []
+    for piece in pieces:
+        piece.sort(key=lambda t: t[0])
+        cols = []
+        for x, n in piece:
+            if cols and x - cols[-1][0] <= COLUMN:
+                cols[-1][1].append(n)
+            else:
+                cols.append([x, [n]])
+        at, evs, lyr = 0.0, [], {}
+        for _x, ns in cols:
+            for n in ns:
+                if n.isRest:
+                    continue
+                if n.lyrics and at not in lyr:
+                    lyr[at] = [copy.deepcopy(l) for l in n.lyrics]
+                for p in n.pitches:
+                    evs.append((round(at, 4), p.ps, round(float(n.quarterLength), 4), p))
+            at += min(float(n.quarterLength) for n in ns)
+        out.append((sorted(evs, key=lambda e: (e[0], -e[1])), lyr))
+    return out
+
+
+def restructure(a, sh, voices, mapping, total, cuts=None):
     """
     Mesures d'Audiveris qui en couvrent plusieurs sur l'image (barres manquées : notes perdues, durées fausses) et
     mesures de l'image qu'aucune ne couvre (perdues) : remplacées par celles de homr, découpées comme l'image. Rend
@@ -663,14 +716,18 @@ def restructure(a, sh, voices, mapping, total):
             taken.add(q)
         if len(cov) > 1 and (lost(i, cov) or sound(cov)):
             plan.extend(("h", q) for q in cov)
+        elif len(cov) > 1 and CUT and cuts is not None and i < len(cuts) and len(cuts[i]) == len(cov) - 1 and \
+                all(cut_measure(st[i], cuts[i], voices) is not None for st in sa):
+            plan.extend(("c", (i, k)) for k in range(len(cov)))
         else:
             plan.append(("a", i))
         taken.update(cov)
     for q in range(max(taken, default=-1) + 1, total):
         plan.append(("h", q))
-    redone = sum(1 for kind, _ in plan if kind == "h")
+    redone = sum(1 for kind, _ in plan if kind != "a")
     if not redone:
         return 0
+    cut_cache = {}
     parts = list(a.parts)
     offset_parts = len(parts) - len(sh)
     for pi, part in enumerate(parts):
@@ -679,6 +736,22 @@ def restructure(a, sh, voices, mapping, total):
         for kind, idx in plan:
             if kind == "a":
                 out.append(ms[idx])
+                continue
+            if kind == "c":
+                i, k = idx
+                if (pi, i) not in cut_cache:
+                    cut_cache[(pi, i)] = cut_measure(ms[i], cuts[i], voices)
+                evs, lyr = cut_cache[(pi, i)][k]
+                q = mapping[i][k]
+                bar = float(sh[0][q].duration.quarterLength) or 4.0
+                new = stream.Measure()
+                for off, ls in lyr.items():  # paroles gardées : rebuild les reprend d'après leur début
+                    holder = note.Note(quarterLength=0.25)
+                    holder.lyrics = ls
+                    new.insert(_q(off), holder)
+                new.pupitre_coupee = True
+                rebuild(new, evs, voices if pi >= offset_parts else 1, bar)
+                out.append(new)
                 continue
             evs = [events(st[idx]) for st in sh]
             bar = float(sh[0][idx].duration.quarterLength) or 4.0
@@ -992,9 +1065,10 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
     restructured, mapping = 0, None
     if IMAGE_MAP and voix and sh:
         total = image_measures(voix)
-        mapping = image_map(a, voix) if total and len(sh[0]) == total else None
+        cuts = []
+        mapping = image_map(a, voix, cuts) if total and len(sh[0]) == total else None
         if mapping is not None:
-            restructured = restructure(a, sh, voices, mapping, total)
+            restructured = restructure(a, sh, voices, mapping, total, cuts)
             if restructured:
                 print(f"Mesures d'Audiveris recoupées d'après les barres de l'image, reprises de homr : {restructured}",
                       file=sys.stderr)
@@ -1023,6 +1097,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
         if placed != pairs:
             print(f"Mesures appariées par leur place sur l'image plutôt que par leurs notes", file=sys.stderr)
             pairs = placed
+    cut_here = sum(1 for m in sa_used[0] if getattr(m, "pupitre_coupee", False))
+    if len(pairs) < 0.6 * count and CUT and cut_here and count == len(sh[0]) == image_measures(voix):
+        # mesures d'Audiveris coupées aux barres de l'image : les deux lectures ont les mesures de l'image
+        print(f"Mesures appariées par leur place sur l'image après la coupe : {count} (par les notes : {len(pairs)})",
+              file=sys.stderr)
+        pairs = [(i, i) for i in range(count)]
     if len(pairs) < 0.6 * count:
         raise SystemExit(f"Mesures impossibles à apparier ({len(pairs)}/{count}) : pas d'arbitrage")
     # mesures replacées sur l'image : les mesures vraiment perdues y ont déjà été reprises (restructure) ; sinon, d'après
@@ -1102,6 +1182,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                 continue
             if rescue:
                 if (getattr(m, "pupitre_vide", False) or not x) and y and faults(y, [], length, voices) == 0:
+                    rebuild(m, y, voices, length)
+                    changed += 1
+                    unsure = True
+                elif CUT and getattr(m, "pupitre_coupee", False) and y and \
+                        faults(y, x, length, voices) < faults(x, y, length, voices):
+                    # mesure coupée aux barres de l'image : le rythme d'Audiveris y est souvent brouillé
                     rebuild(m, y, voices, length)
                     changed += 1
                     unsure = True
