@@ -302,6 +302,60 @@ def erase_orphans(img, a, mine, keep, lines):
     return a
 
 
+# page séparée = une seule voix : un accord (tête de l'autre voix restée sur la page) ou deux notes au même instant y
+# sont une séparation manquée (homr lisait les deux têtes, à deux durées : notes en double, mesure jugée fausse et
+# écartée même quand l'image lui donnait raison). À un tel instant, la portée garde sa note la plus haute pour la voix du
+# haut et la plus basse pour la voix du bas, prises de préférence sur la page de leur voix (la tête restée peut être
+# sur l'une ou l'autre page).
+ONE_VOICE = os.environ.get("PUPITRE_ACCORDS_SEPARES", "1") == "1"
+
+
+def _items(src):
+    """[(début, élément)] d'une page séparée, accords défaits en notes de même durée."""
+    from music21 import note
+    out = []
+    for n in src.recurse().notesAndRests:
+        off = round(float(n.getOffsetInHierarchy(src)), 4)
+        if ONE_VOICE and n.isChord and len(n.pitches) > 1:
+            for k, p in enumerate(sorted(n.pitches, key=lambda q: -q.ps)):
+                single = note.Note(copy.deepcopy(p), quarterLength=n.quarterLength)
+                single.tie = copy.deepcopy(n.tie)
+                if k == 0:
+                    for ly in n.lyrics:
+                        single.lyrics.append(copy.deepcopy(ly))
+                out.append((off, single))
+        else:
+            out.append((off, copy.deepcopy(n)))
+    return out
+
+
+def _two_voices(up, down):
+    """Notes des deux pages d'une même mesure : à chaque instant où une page en porte plus d'une, la plus haute de la
+    portée pour la voix du haut, la plus basse pour la voix du bas."""
+    if not ONE_VOICE:
+        return up, down
+    offs = {}
+    for side, items in ((0, up), (1, down)):
+        for off, c in items:
+            if not c.isRest:
+                offs.setdefault(off, [[], []])[side].append(c)
+    redo = {off for off, (a, b) in offs.items() if len(a) > 1 or len(b) > 1}
+    if not redo:
+        return up, down
+    new_up = [(o, c) for o, c in up if o not in redo or c.isRest]
+    new_down = [(o, c) for o, c in down if o not in redo or c.isRest]
+    for off in sorted(redo):
+        a, b = offs[off]
+        allp = a + b
+        hi = max(c.pitches[0].ps for c in allp)
+        lo = min(c.pitches[0].ps for c in allp)
+        top = next((c for c in a if c.pitches[0].ps == hi), None) or next(c for c in b if c.pitches[0].ps == hi)
+        bot = next((c for c in b if c.pitches[0].ps == lo), None) or next(c for c in a if c.pitches[0].ps == lo)
+        new_up.append((off, copy.deepcopy(top)))
+        new_down.append((off, copy.deepcopy(bot)))
+    return sorted(new_up, key=lambda t: t[0]), sorted(new_down, key=lambda t: t[0])
+
+
 def combine(up_path, down_path, out) -> bool:
     """Lectures de homr des deux pages (une voix par portée) réunies : chaque portée porte la voix 1 (haut) et la voix 2
     (bas). Rend False si les découpages ne se correspondent pas."""
@@ -321,13 +375,12 @@ def combine(up_path, down_path, out) -> bool:
             m = stream.Measure(number=x.number)
             for el in x.getElementsByClass(("Clef", "KeySignature", "TimeSignature")):
                 m.insert(0, copy.deepcopy(el))
-            for i, src in enumerate((x, y), 1):
+            for i, items in enumerate(_two_voices(_items(x), _items(y)), 1):
                 v = stream.Voice(id=str(i))
-                for n in src.recurse().notesAndRests:
-                    c = copy.deepcopy(n)
+                for off, c in items:
                     if hasattr(c, "stemDirection"):
                         c.stemDirection = "unspecified"  # queues de homr : règle de gravure, pas la voix (render.stem_way)
-                    v.insert(float(n.getOffsetInHierarchy(src)), c)
+                    v.insert(off, c)
                 m.insert(0, v)
             part.insert(at, m)
             at += float(max(x.duration.quarterLength, y.duration.quarterLength))
