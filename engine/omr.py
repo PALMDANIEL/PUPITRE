@@ -22,6 +22,7 @@ PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES", 3))))
 # voix séparées : passes de homr (lecture adoucie et rétrécie en plus, vote mesure par mesure) ; banc deux portées
 # 93,5 → 93,8 % (bwv267 fermée usée +3,6, bwv86.6 fermée WhatsApp +2,7), 0 recul. Comme PUPITRE_PASSES par défaut.
 SPLIT_PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES_SEPAREES", PASSES))))
+DOUBLE_PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES_DOUBLE", 1))))  # double lecture : passes de homr
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
     (p for p in ("/Applications/Audiveris.app/Contents/MacOS/Audiveris", "/opt/audiveris/bin/Audiveris") if os.path.exists(p)),
     "audiveris")
@@ -420,7 +421,7 @@ def double_read(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Pat
             info = json.loads((voix / "disposition.json").read_text(encoding="utf-8"))
             info["mesure"] = meter_a
             (voix / "disposition.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-        other = read_voices(sub, voix, layout, key, time_sig, passes=1)
+        other = read_voices(sub, voix, layout, key, time_sig, passes=DOUBLE_PASSES)
         if other is None:
             return target
         return arbitrate(work, target, other, layout, voix, third)
