@@ -107,6 +107,7 @@ JUDGE_STRONG = float(os.environ.get("PUPITRE_JUGE_FORT", "0"))  # (essai) écart
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
 PLACE_PAIRS = os.environ.get("PUPITRE_APPARIEMENT_PLACE", "0") == "1"  # toutes copies (essai)
+RESCUE_PITCHES = os.environ.get("PUPITRE_SECOURS_HAUTEURS", "0") == "1"  # (essai) voir rescue
 TIE_MORE = os.environ.get("PUPITRE_EGALITE_PLUS", "0") == "1"  # égalité, homr a plus de notes → homr (essai)
 # (essai) mesure d'Audiveris qui en couvre plusieurs sur l'image (barres manquées, photo floue) et que homr ne remplace
 # pas : coupée aux barres de l'image d'après la place de ses notes, puis arbitrée mesure par mesure comme les autres.
@@ -1156,6 +1157,15 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
         medians.append([statistics.median(p) if p else None for p in per])
     same = sum(signature(events(st_a[i])) == signature(events(st_h[j])) for st_a, st_h in zip(sa_used, sh) for i, j in pairs)
     rescue = same < 0.4 * len(pairs) * len(sh) and not geo
+    if rescue and split and RESCUE_PITCHES:
+        # (essai) voix séparées : homr lit chaque voix seule, ses rythmes diffèrent souvent d'Audiveris sans que ses
+        # notes soient fausses ; mesures aux mêmes hauteurs (dans l'ordre, rythme mis à part) comptées comme semblables
+        alike = sum(sorted(e[1] for e in events(st_a[i])) == sorted(e[1] for e in events(st_h[j]))
+                    for st_a, st_h in zip(sa_used, sh) for i, j in pairs)
+        if alike >= 0.4 * len(pairs) * len(sh):
+            print(f"Lectures semblables par leurs hauteurs ({alike}/{len(pairs) * len(sh)}) : arbitrage complet",
+                  file=sys.stderr)
+            rescue = False
     if rescue and not RESCUE:
         # lectures trop différentes pour être comparées mesure à mesure (mesures décalées, portées mal appariées)
         raise SystemExit(f"Lectures trop différentes ({same}/{len(pairs) * len(sh)} portées-mesures identiques) : pas d'arbitrage")
