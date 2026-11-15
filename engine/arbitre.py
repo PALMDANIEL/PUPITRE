@@ -98,7 +98,10 @@ HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
 # les pages). PUPITRE_JUGE_IMAGE=0 : jamais.
 JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "1") == "1"
 JUDGE_GAP = float(os.environ.get("PUPITRE_JUGE_ECART", "0"))
-JUDGE_RESCUE = os.environ.get("PUPITRE_JUGE_SECOURS", "0") == "1"  # (essai) le juge aussi en secours  # (essai) écart de fautes jusqu'auquel le juge tranche
+# le juge aussi en secours (lectures trop différentes) : homr pris si l'image lui donne nettement raison (deux têtes au
+# moins) et qu'il n'a pas plus de fautes ; banc 96,4 → 96,5 % (bwv153.1 fermée dense +2,6, bwv267 fermée floue +2,6), 0 recul
+JUDGE_RESCUE = os.environ.get("PUPITRE_JUGE_SECOURS", "1") == "1"
+JUDGE_STRONG = float(os.environ.get("PUPITRE_JUGE_FORT", "0"))  # (essai) écart de têtes qui l'emporte sur les fautes  # (essai) écart de fautes jusqu'auquel le juge tranche
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
@@ -1165,13 +1168,13 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                         print(f"tessiture : portée {s} mesure {k + 1} habituelle {usual} audiveris {mx} homr {my}", file=sys.stderr)
             same_place = (mapping[k] == [j] if (mapping is not None and not restructured and k < len(mapping))
                           else (k == j and count == len(sh[0])))
-            near_tie = fa == fh or (JUDGE_GAP and abs(fa - fh) <= JUDGE_GAP)
+            near_tie = fa == fh or (JUDGE_GAP and abs(fa - fh) <= JUDGE_GAP) or JUDGE_STRONG > 0
             if judge is not None and same_place and near_tie and x and y and signature(x) != signature(y) \
                     and not only_accidentals(x, y):
                 # (seulement si les deux mesures tombent sur la même mesure de l'image : une paire décalée d'une mesure
                 # aurait l'image de l'une pour juge — bwv269 ouverte photo, alto m. 11 contre m. 10 de homr)
                 ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
-                need = 1 if fa == fh else 2  # quasi-égalité : l'image doit trancher nettement
+                need = 1 if fa == fh else (2 if JUDGE_GAP and abs(fa - fh) <= JUDGE_GAP else JUDGE_STRONG or 99)
                 if ca is not None and ch is not None and abs(ca - ch) >= need:
                     if (ch < ca) != take_h:
                         by_image += 1
