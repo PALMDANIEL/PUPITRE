@@ -23,6 +23,9 @@ PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES", 3))))
 # 93,5 → 93,8 % (bwv267 fermée usée +3,6, bwv86.6 fermée WhatsApp +2,7), 0 recul. Comme PUPITRE_PASSES par défaut.
 SPLIT_PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES_SEPAREES", PASSES))))
 DOUBLE_PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES_DOUBLE", 1))))  # double lecture : passes de homr
+# copie usée (pre/usee), voix séparées : cinq variantes d'image (banc deux portées : usées 83,9 → 85,7 %, quatre copies
+# usées +2,1 à +2,6, 0 recul ; sans effet ailleurs). Pas plus que PUPITRE_PASSES si on l'a réduit (temps compté).
+WORN_PASSES = max(1, min(5, int(os.environ.get("PUPITRE_PASSES_USEES", 5 if PASSES >= 3 else PASSES))))
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
     (p for p in ("/Applications/Audiveris.app/Contents/MacOS/Audiveris", "/opt/audiveris/bin/Audiveris") if os.path.exists(p)),
     "audiveris")
@@ -446,6 +449,43 @@ def audiveris_meter(raw) -> str | None:
         return None
 
 
+# vote entre deux séparations des voix (essai) : « union » ou « proches » (voix_separees), lectures de homr ajoutées aux
+# variantes du vote mesure par mesure ; vide : non
+SPLIT_VOTE = os.environ.get("PUPITRE_SEPARATION_VOTE", "")
+
+
+def _extra_variants(side_dir: pathlib.Path, voix: pathlib.Path, key, time_sig, meter_a):
+    """Lectures de homr des pages d'une autre séparation, copiées dans voix/ comme variantes sortie-5… (mêmes lignes
+    exigées : même nombre de lignes pour chaque voix)."""
+    import json
+    import pupitres
+    try:
+        prepared = prepare_voices(side_dir / "pages", side_dir, "grand")
+        if prepared is None or prepared[1] is None:
+            return 0
+        voix2 = prepared[0]
+        a = json.loads((voix / "disposition.json").read_text(encoding="utf-8"))
+        b = json.loads((voix2 / "disposition.json").read_text(encoding="utf-8"))
+        if [len(x) for x in a["lignes"]] != [len(x) for x in b["lignes"]]:
+            return 0
+        if meter_a:
+            b["mesure"] = meter_a
+            (voix2 / "disposition.json").write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
+        pupitres.staff_spec(voix2, "grand", "lignes", passes=SPLIT_PASSES)
+        if not homr_staves(voix2):
+            return 0
+        outs = sorted(d for d in voix2.glob("sortie*") if d.name != "sortie-entetes" and (d / "v1.musicxml").exists())
+        for k, d in enumerate(outs):
+            dest = voix / f"sortie-{5 + k}"
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(d, dest)
+        print(f"Voix séparées autrement ({SPLIT_VOTE}) : {len(outs)} lectures de plus pour le vote", file=sys.stderr)
+        return len(outs)
+    except Exception as e:  # noqa: BLE001 : le vote se fait sans elles
+        print(f"Autre séparation impossible : {e}", file=sys.stderr)
+        return 0
+
+
 def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, target: pathlib.Path, third=None):
     """
     Deux portées à deux voix : la page est séparée en voix du haut et voix du bas (voix_separees.py), homr lit chaque
@@ -464,6 +504,18 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         readings, exacts = [], []
         os.environ["PUPITRE_MESURES_IMAGE"] = "1"  # assemblage : le nombre de mesures vu sur l'image fait foi
         meter_a = audiveris_meter(raw[0] if isinstance(raw, list) else raw)
+        sub2 = None
+        if SPLIT_VOTE and not (sub / "image").exists():
+            # pages séparées aussi par une autre méthode : leurs lectures votent avec les autres, mesure par mesure
+            sub2 = work / "separees-2"
+            shutil.rmtree(sub2, ignore_errors=True)
+            saved = voix_separees.SEPARATION
+            voix_separees.SEPARATION = SPLIT_VOTE
+            try:
+                if not voix_separees.split_pages(raw, sorted(pages_dir.glob("page-*.png")), sub2):
+                    sub2 = None
+            finally:
+                voix_separees.SEPARATION = saved
         for side in ("haut", "bas"):
             prepared = prepare_voices(sub / side / "pages", sub / side, "grand")
             if prepared is None or prepared[1] is None:
@@ -474,7 +526,10 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                 info = json.loads((voix / "disposition.json").read_text(encoding="utf-8"))
                 info["mesure"] = meter_a
                 (voix / "disposition.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-            res = read_voices(sub / side, voix, "grand", key, time_sig, passes=SPLIT_PASSES)
+            if sub2 is not None:
+                _extra_variants(sub2 / side, voix, key, time_sig, meter_a)
+            worn_copy = (work / "pre" / "usee").exists()
+            res = read_voices(sub / side, voix, "grand", key, time_sig, passes=WORN_PASSES if worn_copy else SPLIT_PASSES)
             if res is None:
                 return target, False
             readings.append(res)
@@ -544,6 +599,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
         os.environ.pop("PUPITRE_MESURES_IMAGE", None)
         if not os.environ.get("PUPITRE_GARDER"):
             shutil.rmtree(sub, ignore_errors=True)
+            shutil.rmtree(work / "separees-2", ignore_errors=True)
 
 
 def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, layout: str, voix=None,
