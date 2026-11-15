@@ -108,6 +108,9 @@ JUDGE_STRONG = float(os.environ.get("PUPITRE_JUGE_FORT", "0"))  # (essai) écart
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
 PLACE_PAIRS = os.environ.get("PUPITRE_APPARIEMENT_PLACE", "0") == "1"  # toutes copies (essai)
 RESCUE_PITCHES = os.environ.get("PUPITRE_SECOURS_HAUTEURS", "0") == "1"  # (essai) voir rescue
+# signe vu par homr seul (Audiveris sans signe) repris à égalité ; (essai) =0 : seulement les signes inutiles d'Audiveris
+# (les altérations d'Audiveris sont relues sur l'image par le reconnaisseur appris de signes.py depuis le 11/11)
+HOMR_SIGN = os.environ.get("PUPITRE_SIGNE_HOMR_SEUL", "1") == "1"
 TIE_MORE = os.environ.get("PUPITRE_EGALITE_PLUS", "0") == "1"  # égalité, homr a plus de notes → homr (essai)
 # (essai) mesure d'Audiveris qui en couvre plusieurs sur l'image (barres manquées, photo floue) et que homr ne remplace
 # pas : coupée aux barres de l'image d'après la place de ses notes, puis arbitrée mesure par mesure comme les autres.
@@ -194,7 +197,7 @@ def mix_accidentals(x, y, ks):
     for k, (a, b) in enumerate(zip(x, y)):
         here = (a[3].step, a[3].octave)
         # un signe de homr qui ne sert à rien (ré♯ écrit quand l'armure a déjà ré♯) est lui aussi mal lu (un bécarre)
-        if _alter(a[3]) != _alter(b[3]) and (k in odd or (_shown(b[3]) and not _shown(a[3]) and k not in odd_h)):
+        if _alter(a[3]) != _alter(b[3]) and (k in odd or (HOMR_SIGN and _shown(b[3]) and not _shown(a[3]) and k not in odd_h)):
             out.append(b)
             n += 1
             if _shown(b[3]):
