@@ -1137,7 +1137,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                     by_range += 1
                     if os.environ.get("PUPITRE_DEBUG_TESSITURE"):
                         print(f"tessiture : portée {s} mesure {k + 1} habituelle {usual} audiveris {mx} homr {my}", file=sys.stderr)
-            if judge is not None and fa == fh and x and y and signature(x) != signature(y) and not only_accidentals(x, y):
+            same_place = (mapping[k] == [j] if (mapping is not None and not restructured and k < len(mapping))
+                          else (k == j and count == len(sh[0])))
+            if judge is not None and same_place and fa == fh and x and y and signature(x) != signature(y) \
+                    and not only_accidentals(x, y):
+                # (seulement si les deux mesures tombent sur la même mesure de l'image : une paire décalée d'une mesure
+                # aurait l'image de l'une pour juge — bwv269 ouverte photo, alto m. 11 contre m. 10 de homr)
                 ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
                 if ca is not None and ch is not None and ca != ch:
                     if (ch < ca) != take_h:
