@@ -93,6 +93,7 @@ SPLIT_BAR = os.environ.get("PUPITRE_MESURE_COUPEE", "1") == "1"  # mesure courte
 # à égalité : le nombre de têtes pleines de l'image. Désactivé par défaut (PUPITRE_TETES=1 pour l'essayer) : banc
 # complet du 10/11, bwv153.1 ouverte nette A 98 → 100 mais bwv269 ouverte photo et sombre A 100 → 88 (homr pris à tort)
 HEADS = os.environ.get("PUPITRE_TETES", "0") == "1"
+JUDGE = os.environ.get("PUPITRE_JUGE_IMAGE", "0") == "1"  # égalité de fautes : la lecture qui colle à l'image (essai)
 # voix séparées (deux portées) : mesures appariées par leur place sur l'image quand celle d'Audiveris y correspond une à
 # une ; arbitrage complet même si les lectures diffèrent beaucoup (homr y lit une voix seule, pas des accords)
 GEO = os.environ.get("PUPITRE_APPARIEMENT_IMAGE", "1") == "1"
@@ -327,6 +328,108 @@ def rebuild(m, ev, voices, length, split=None):
     if voices > 1:
         for v in target:
             m.insert(0, v)
+
+
+class PlaceJudge:
+    """
+    Juge d'après l'image (essai, PUPITRE_JUGE_IMAGE=1) : têtes de notes vues sur la page entre les barres de la mesure
+    (têtes blanches remplies, deux têtes collées coupées en deux), avec leur place sur la portée ; chaque lecture est
+    comparée colonne par colonne à ces têtes (places en trop ou en moins). À égalité de fautes, la lecture qui colle le
+    mieux à l'image l'emporte (Audiveris fond deux croches en une noire, homr place une tête un degré à côté…).
+    """
+    BOTTOM = {"G": 31, "G8": 24, "F": 19}  # place 0 = ligne du bas : mi4, mi3, sol2 (diatonicNoteNum)
+
+    def __init__(self, voix, pages, layout):
+        self.ok = False
+        try:
+            import cv2
+            import pupitres
+            self.cv2 = cv2
+            d = json.loads((pathlib.Path(voix) / "disposition.json").read_text(encoding="utf-8"))
+            self.systems = d["systems"]
+            self.pages = pathlib.Path(pages)
+            self.clefs = [c for _n, c in pupitres.LAYOUTS[layout]]
+            self.cache = {}
+            self.ok = bool(self.systems) and all("barres" in s_ for s_ in self.systems) and self.pages.exists()
+        except Exception:  # noqa: BLE001
+            self.ok = False
+
+    def _heads(self, page, sp):
+        if page not in self.cache:
+            import numpy as np
+            cv2 = self.cv2
+            img = cv2.imread(str(self.pages / page), cv2.IMREAD_GRAYSCALE)
+            ink = (img < 128).astype(np.uint8)
+            lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(1.6 * sp)), 1)))
+            body = ink & (1 - lines)
+            body = cv2.morphologyEx(body, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(3, int(0.4 * sp)))))
+            n, lab, st, _c = cv2.connectedComponentsWithStats((1 - body).astype(np.uint8), 4)
+            H, W = body.shape
+            small = (st[:, cv2.CC_STAT_AREA] < 0.9 * sp * sp) & (st[:, 0] > 0) & (st[:, 1] > 0) & \
+                    (st[:, 0] + st[:, 2] < W) & (st[:, 1] + st[:, 3] < H)
+            small[0] = False
+            body = np.where(small[lab], 1, body).astype(np.uint8)
+            k = max(3, int(0.6 * sp)) | 1
+            blobs = cv2.morphologyEx(body, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+            _n, _l, st, _c = cv2.connectedComponentsWithStats(blobs, 8)
+            out = []
+            for x, y, w, h, _a in st[1:]:
+                if not (0.8 * sp <= w <= 2.0 * sp) or not (0.55 * sp <= h <= 2.7 * sp):
+                    continue
+                cx = x + w / 2
+                if h <= 1.5 * sp:
+                    out.append((cx, y + h / 2))
+                else:
+                    out += [(cx, y + h / 4), (cx, y + 3 * h / 4)]
+            self.cache[page] = out
+        return self.cache[page]
+
+    def _columns(self, staff, j):
+        k = j
+        for s_ in self.systems:
+            n = len(s_["barres"])
+            if k < n:
+                if not k or staff >= len(s_["staves"]):
+                    return None  # 1re mesure de la ligne : la tête de ligne s'y mêle
+                t, b = s_["staves"][staff][0], s_["staves"][staff][1]
+                sp = (b - t) / 4
+                x0, x1 = s_["barres"][k - 1], s_["barres"][k]
+                pts = sorted((x, round((b - y) / (sp / 2))) for x, y in self._heads(s_["page"], sp)
+                             if x0 + 0.3 * sp < x < x1 - 0.3 * sp and t - 1.7 * sp <= y <= b + 1.7 * sp)  # pas les paroles
+                cols = []
+                for x, pl in pts:
+                    if cols and x - cols[-1][0] <= 1.0 * sp:
+                        cols[-1][1].append(pl)
+                    else:
+                        cols.append([x, [pl]])
+                return [sorted(c[1]) for c in cols]
+            k -= n
+        return None
+
+    def cost(self, staff, j, ev):
+        """Écart entre une lecture (événements de la portée) et les têtes vues ; None si on ne sait pas."""
+        if not self.ok or staff >= len(self.clefs):
+            return None
+        cols = self._columns(staff, j)
+        if cols is None:
+            return None
+        base = self.BOTTOM[self.clefs[staff]]
+        by_onset = {}
+        for o, _ps, _d, p in ev:
+            by_onset.setdefault(o, []).append(p.diatonicNoteNum - base)
+        want = [sorted(v) for _o, v in sorted(by_onset.items())]
+        n, m = len(want), len(cols)
+        D = [[0.0] * (m + 1) for _ in range(n + 1)]
+        for i in range(1, n + 1):
+            D[i][0] = D[i - 1][0] + len(want[i - 1])
+        for c in range(1, m + 1):
+            D[0][c] = D[0][c - 1] + len(cols[c - 1])
+        for i in range(1, n + 1):
+            for c in range(1, m + 1):
+                a, b_ = want[i - 1], cols[c - 1]
+                miss = sum(1 for pl in a if pl not in b_) + sum(1 for pl in b_ if pl not in a)
+                D[i][c] = min(D[i - 1][c] + len(a), D[i][c - 1] + len(b_), D[i - 1][c - 1] + miss)
+        return D[n][m]
 
 
 class HeadCounter:
@@ -938,6 +1041,9 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
     by_range = 0
     changed += inserted + restructured
     counter = HeadCounter(voix) if voix and HEADS else None
+    pages_dir = os.environ.get("PUPITRE_PAGES")
+    judge = PlaceJudge(voix, pages_dir, layout) if voix and JUDGE and pages_dir else None
+    by_image = 0
     # troisième lecture (Audiveris sur l'autre version de l'image, deux portées) : même découpage que la première ?
     st_t = None
     if third and VOTE:
@@ -1031,6 +1137,12 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
                     by_range += 1
                     if os.environ.get("PUPITRE_DEBUG_TESSITURE"):
                         print(f"tessiture : portée {s} mesure {k + 1} habituelle {usual} audiveris {mx} homr {my}", file=sys.stderr)
+            if judge is not None and fa == fh and x and y and signature(x) != signature(y) and not only_accidentals(x, y):
+                ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
+                if ca is not None and ch is not None and ca != ch:
+                    if (ch < ca) != take_h:
+                        by_image += 1
+                    take_h = ch < ca
             if HEADS and fa == fh and counter is not None and not only_accidentals(x, y):
                 seen = counter.count(s, j)
                 if seen is not None and abs(filled(y) - seen) < abs(filled(x) - seen):
@@ -1076,7 +1188,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False):
     pathlib.Path(out).with_name("fiabilite.json").write_text(json.dumps(
         {"passes": 2, "lecteurs": ["Audiveris", "homr"], "moyenne": round(mean, 3), "mesures": count,
          "arbitrees": changed, "a_verifier": doubtful, "secours": rescue}, ensure_ascii=False), encoding="utf-8")
-    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image, {by_range} par la tessiture), "
+    print(f"Double lecture : {agreed} portées-mesures identiques, {changed} reprises de homr (dont {mixed} voix par voix, {by_ear} à l'oreille, {by_usage} altérations vues par homr seul, {by_vote} par vote à trois lectures, {by_heads} par les têtes de l'image, {by_range} par la tessiture, {by_image} par le juge d'après l'image), "
           f"{len(doubtful)}/{count} mesures à vérifier", file=sys.stderr)
 
 
