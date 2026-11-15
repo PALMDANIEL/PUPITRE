@@ -19,6 +19,7 @@ SALETE = int(os.environ.get("PUPITRE_SALETE", 120))
 # Passes de lecture de chaque portée par homr (1 à 3) : avec plusieurs, les lectures votent mesure par mesure (précision
 # et indice de confiance). Trois sur ordinateur ; un seul sur l'hébergement limité à 5 minutes par requête (Vercel).
 PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES", 3))))
+SPLIT_PASSES = max(1, min(3, int(os.environ.get("PUPITRE_PASSES_SEPAREES", 1))))  # voix séparées : passes de homr
 AUDIVERIS = os.environ.get("AUDIVERIS_BIN") or next(
     (p for p in ("/Applications/Audiveris.app/Contents/MacOS/Audiveris", "/opt/audiveris/bin/Audiveris") if os.path.exists(p)),
     "audiveris")
@@ -470,7 +471,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                 info = json.loads((voix / "disposition.json").read_text(encoding="utf-8"))
                 info["mesure"] = meter_a
                 (voix / "disposition.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-            res = read_voices(sub / side, voix, "grand", key, time_sig, passes=1)
+            res = read_voices(sub / side, voix, "grand", key, time_sig, passes=SPLIT_PASSES)
             if res is None:
                 return target, False
             readings.append(res)
