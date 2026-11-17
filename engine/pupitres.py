@@ -1252,6 +1252,59 @@ def _bar_runs(bw, s, sp, weak=None, strong=0.9):
     return runs
 
 
+# portée seule (mélodie) : une barre de mesure va de la ligne du haut à celle du bas sans dépasser ; une queue qui
+# couvre toute la portée en sort d'un côté (recueil scanné : queues de blanche et de noire comptées pour des barres,
+# 17 mesures vues pour 13)
+ALONE_BARS = os.environ.get("PUPITRE_BARRES_SEULES", "1") == "1"
+HEAD_LOW, HEAD_HIGH = 0.15, 0.25  # encre d'une tête collée (tête blanche : anneau, lignes de portée ôtées ≈ 0,2)
+
+
+def _sticks_out(bw, s, sp, x):
+    """Le trait vertical trouvé près de x (portée s) se prolonge-t-il au-dessus ou au-dessous de la portée ?"""
+    top, bottom = int(round(s[0])), int(round(s[1]))
+    lo, hi = max(0, int(x - 1.3 * sp)), min(bw.shape[1], int(x + 0.3 * sp) + 1)
+    if hi - lo < 2:
+        return False
+    ink = bw[:, lo:hi] < 128
+    cover = ink[top:bottom + 1].mean(0)
+    best = int(np.argmax(cover))
+    if cover[best] < 0.85:
+        return False
+    cols = slice(max(0, best - 1), best + 2)
+    out = []
+    for a, b in ((top - 0.75 * sp, top - 0.2 * sp), (bottom + 0.2 * sp, bottom + 0.75 * sp)):
+        a, b = max(0, int(a)), min(bw.shape[0], int(b))
+        if b > a:
+            out.append(ink[a:b, cols].any(1).mean())
+    if max(out, default=0.0) >= 0.8:
+        return True
+    # tête collée au bout du trait : en bas à gauche (queue montante) ou en haut à droite (queue descendante) ; une
+    # note qui suit la barre de près n'y est pas collée de cette façon (Audiveris prend alors la barre pour sa queue)
+    cl = cr = best
+    while cl > 0 and cover[cl - 1] >= 0.85:
+        cl -= 1
+    while cr + 1 < len(cover) and cover[cr + 1] >= 0.85:
+        cr += 1
+    cl, cr = lo + cl, lo + cr
+    w = int(1.3 * sp)
+    x0, x1 = max(0, cl - w - 3), min(bw.shape[1], cr + w + 4)
+    y0, y1 = max(0, int(top - 1.2 * sp)), min(bw.shape[0], int(bottom + 1.2 * sp))
+    area = (bw[y0:y1, x0:x1] < 128).astype(np.uint8)
+    lines = cv2.morphologyEx(area, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(1.5 * sp)), 1)))
+    body = area & (1 - lines)
+    a_, b_ = cl - x0, cr - x0
+    for (ya, yb), side, need in (((bottom - 0.75 * sp, bottom + 0.75 * sp), "gauche", HEAD_LOW),
+                                 ((top - 0.75 * sp, top + 0.75 * sp), "droite", HEAD_HIGH)):
+        ra, rb = max(0, int(ya) - y0), max(0, int(yb) - y0)
+        if side == "gauche":
+            region, touch = body[ra:rb, max(0, a_ - w):a_], body[ra:rb, max(0, a_ - 2):a_]
+        else:
+            region, touch = body[ra:rb, b_ + 1:b_ + 1 + w], body[ra:rb, b_ + 1:b_ + 3]
+        if region.size and region.mean() >= need and touch.any(1).sum() >= 0.4 * sp:
+            return True
+    return False
+
+
 def _opening(bw, s, sp, x):
     """Trait d'ouverture du système (accolade, barre initiale) : les lignes de la portée ne se prolongent pas à sa gauche."""
     x0, x1 = max(0, int(x - 2.5 * sp)), max(0, int(x - 0.6 * sp))
@@ -1374,6 +1427,8 @@ def bar_lines(bw, group):
                 found.append(int(both.mean()))
         if found:
             bars = sorted(bars + found)
+    if ALONE_BARS and n == 1 and bars:
+        bars = [x for x in bars if not _sticks_out(bw, staves[0], sp, x)]
     if BARRES_TETES and END_BAR:
         ends = [_line_end(bw, s_, sp) for s_ in staves]
         x_end = int(np.median(ends))

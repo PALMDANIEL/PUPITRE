@@ -702,9 +702,14 @@ def base_by_bars(work: pathlib.Path, pages_dir: pathlib.Path, target: pathlib.Pa
     try:
         import pupitres
         from music21 import converter, stream
-        count = lambda p: max(len(pr.getElementsByClass(stream.Measure)) for pr in converter.parse(str(p)).parts)  # noqa: E731
-        a, b = count(target), count(second)
+        sa, sb = converter.parse(str(target)), converter.parse(str(second))
+        count = lambda sc: max(len(pr.getElementsByClass(stream.Measure)) for pr in sc.parts)  # noqa: E731
+        a, b = count(sa), count(sb)
         if a == b:
+            return target, second
+        # (et jamais une lecture qui a perdu des notes : photo floue, 10 mesures mais 40 notes par portée contre 9 et 85,
+        # bwv86.6 fermée floue 75 → 32 %)
+        if len(sb.recurse().notes) < len(sa.recurse().notes):
             return target, second
         seen = sum(len(bars) for _tops, bars in pupitres.page_bars(sorted(pages_dir.glob("page-*.png"))))
         if not seen or abs(b - seen) >= abs(a - seen):
