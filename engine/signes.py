@@ -61,8 +61,13 @@ def notes_of(root):
     lm = float(d.findtext("page-layout/page-margins/left-margin") or 0)
     out = []
     for pi, part in enumerate(root.findall("part")):
-        page, system, x0, sysleft, clefs, octs = 0, -1, 0.0, 0.0, {}, {}
+        page, system, x0, sysleft, clefs, octs, fifths = 0, -1, 0.0, 0.0, {}, {}, 0
         for mindex, m in enumerate(part.findall("measure")):
+            for kk in m.iter("key"):
+                try:
+                    fifths = int(kk.findtext("fifths") or 0)
+                except ValueError:
+                    pass
             pr = m.find("print")
             if pr is not None and pr.get("new-page") == "yes":
                 page += 1
@@ -89,7 +94,8 @@ def notes_of(root):
                                 x=lm + sysleft + x0 + float(n.get("default-x")), step=n.findtext("pitch/step"),
                                 octave=int(n.findtext("pitch/octave")), alter=float(n.findtext("pitch/alter") or 0),
                                 # clé non reconnue (photo) : Audiveris écrit alors les hauteurs comme en clé de sol
-                                acc=n.findtext("accidental"), clef=clefs.get(st) or ("G", 2), oc=octs.get(st, 0)))
+                                acc=n.findtext("accidental"), clef=clefs.get(st) or ("G", 2), oc=octs.get(st, 0),
+                                fifths=fifths))
             x0 += float(m.get("width") or 0)
     return out, pw
 
@@ -504,12 +510,153 @@ def write_ties(pairs):
     return len(pairs)
 
 
-def fix(mxl, pages, signs=True, ties=True, blurry=False, both=False):
+LEDGERS = os.environ.get("PUPITRE_LIGNES_SUPP", "1") == "1"
+STATS = {"confirmées": 0, "corrigées": 0, "écart > 1": 0}  # compte des notes hors portée décidées (essais)
+SHARPS, FLATS = "FCGDAEB", "BEADGCF"
+
+
+def _place_of(n):
+    """Place de la tête sur la portée, en demi-interlignes : 0 = ligne du bas, 8 = ligne du haut."""
+    d = "CDEFGAB".index(n["step"]) + 7 * n["octave"] + 1
+    return d - BOTTOM[n["clef"]] - 7 * n["oc"]
+
+
+def _runs(rows):
+    """Rangées consécutives réunies : centres des traits."""
+    out, start = [], None
+    for i, r in enumerate(rows):
+        if start is None:
+            start = r
+        if i + 1 == len(rows) or rows[i + 1] != r + 1:
+            out.append((start + r) / 2)
+            start = None
+    return out
+
+
+def read_ledgers(notes, img):
+    """
+    Notes hors de la portée sur une petite image (photo WhatsApp, petites portées) : un ré posé sur la 1re ligne
+    supplémentaire et un mi traversé par la 2e ne sont séparés que de 3 à 4 pixels sur une photo de 900 pixels, et le
+    centre de la tête qu'estiment les lecteurs se trompe d'autant (Kyrie : ré du ténor lu mi). On ne mesure pas la
+    tête : on compte, à gauche et à droite d'elle, les bouts des lignes supplémentaires qui la débordent (un trait
+    horizontal des deux côtés), et l'on regarde si la dernière traverse la tête ou passe seulement sous elle.
+    Rend [(note, écart en degrés)] pour les notes dont la lecture est fausse d'un degré, preuves nettes seulement.
+    """
+    if not notes:
+        return []
+    ink = (img < 128).astype(np.uint8)
+    H, W = ink.shape
+    sp0 = float(np.median([n["sp"] for n in notes]))
+    k = max(3, int(0.55 * sp0)) | 1
+    heads = cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    _nb, _lab, st, cen = cv2.connectedComponentsWithStats(heads, 8)
+    B = np.array([(c[0], c[1], s_[cv2.CC_STAT_WIDTH], s_[cv2.CC_STAT_HEIGHT]) for s_, c in zip(st[1:], cen[1:])
+                  if 0.6 * sp0 <= s_[cv2.CC_STAT_HEIGHT] <= 1.6 * sp0 and 0.8 * sp0 <= s_[cv2.CC_STAT_WIDTH] <= 2.2 * sp0],
+                 float).reshape(-1, 4)
+    out = []
+    for n in notes:
+        if n["tied"] or n.get("xy") is None:
+            continue
+        p = _place_of(n)
+        above, below = p >= 9, p <= -1
+        if not (above or below) or abs(p - 4) > 12:
+            continue
+        sp = n["sp"]
+        t, b = n["staff_tb"]
+        x, y = n["xy"]
+        near = B[(np.abs(B[:, 0] - x) <= 0.9 * sp) & (np.abs(B[:, 1] - y) <= 1.1 * sp)] if len(B) else B
+        if len(near) != 1 or near[0, 3] > 1.3 * sp:
+            continue  # pas de tête, ou deux têtes (accord) : on ne décide pas
+        cx, cy, w, _h = near[0]
+        hl, hr = cx - w / 2, cx + w / 2
+        ci = int(round(cx))
+        if hl - 2.2 * sp < 0 or hr + 2.2 * sp > W:
+            continue
+        # bord de la portée mesuré près de la note (photo de travers, page bombée : la portée n'est pas droite)
+        lo, hi = (t - 0.6 * sp, t + 0.6 * sp) if above else (b - 0.6 * sp, b + 0.6 * sp)
+        lo, hi = max(0, int(lo)), min(H, int(hi) + 1)
+        wide = ink[lo:hi, int(hl - 2 * sp):int(hr + 2 * sp)].mean(1) if hi > lo else np.zeros(0)
+        line = [lo + i for i in range(len(wide)) if wide[i] >= 0.75]
+        if not line:
+            continue
+        edges = _runs(line)
+        edge = min(edges, key=lambda v: abs(v - (t if above else b)))
+        # traits qui débordent la tête des deux côtés, de la tête (un peu au-delà, pas jusqu'à la ligne suivante
+        # d'un accord) jusqu'au bord de la portée : pour chaque rangée, le trait d'encre qui passe sous le centre
+        r0, r1 = (int(cy - 0.7 * sp), int(edge - 0.5 * sp)) if above else (int(edge + 0.5 * sp), int(cy + 0.7 * sp))
+        r0, r1 = max(0, r0), min(H, r1)
+        # ou deux bouts de ligne nets, à gauche et à droite de la tête (la ligne est souvent coupée près d'elle)
+        stubs = [(int(round(hl - 0.38 * sp)), int(round(hl - 0.08 * sp))),
+                 (int(round(hr + 0.08 * sp)), int(round(hr + 0.38 * sp)))]
+        rows = []
+        for r in range(r0, r1):
+            if all(ink[r, a:c].mean() >= 0.5 for a, c in stubs):
+                rows.append(r)
+                continue
+            if not ink[r, ci]:
+                continue
+            left = ci
+            while left > 0 and ink[r, left - 1]:
+                left -= 1
+            right = ci
+            while right < W - 1 and ink[r, right + 1]:
+                right += 1
+            if left <= hl - 0.12 * sp and right >= hr + 0.12 * sp and right - left <= w + 2.5 * sp:
+                rows.append(r)
+        ledgers = [v for v in _runs(rows)]
+        # un trait trop épais n'est pas une ligne supplémentaire (ligature, texte)
+        if any(sum(1 for r in rows if abs(r - v) <= 0.3 * sp) > 0.35 * sp for v in ledgers):
+            continue
+        ledgers.sort(key=lambda v: -v if above else v)  # du bord de la portée vers l'extérieur
+        # règle : 1re ligne à un interligne du bord, les suivantes d'interligne en interligne
+        ruler = [abs(abs(v - edge) - (i + 1) * sp) <= 0.35 * sp for i, v in enumerate(ledgers)]
+        if not all(ruler):
+            continue
+        L = len(ledgers)
+        outer = ledgers[-1] if L else edge
+        beyond = (outer - cy) if above else (cy - outer)  # > 0 : la tête est au-delà du dernier trait
+        sign = 1 if above else -1
+        if L and abs(beyond) <= 0.22 * sp:
+            q = 4 + sign * (4 + 2 * L)  # sur la dernière ligne
+        elif 0.3 * sp <= beyond <= 0.8 * sp:
+            q = 4 + sign * (5 + 2 * L)  # juste au-delà
+        else:
+            continue
+        STATS["confirmées" if q == p else "corrigées" if abs(q - p) == 1 else "écart > 1"] += 1
+        if abs(q - p) == 1:
+            out.append((n, q - p, cy))
+    return out
+
+
+def apply_ledgers(found):
+    """Hauteurs corrigées d'un degré ; l'altération : celle du signe écrit devant la tête, sinon celle de l'armure."""
+    changed = 0
+    for n, delta, cy in found:
+        d = "CDEFGAB".index(n["step"]) + 7 * n["octave"] + delta
+        step, octave = "CDEFGAB"[d % 7], d // 7
+        f = n["fifths"]
+        in_key = (1.0 if step in SHARPS[:f] else 0.0) if f > 0 else (-1.0 if step in FLATS[:-f] else 0.0)
+        if n["acc"] is None and n["alter"] != ((1.0 if n["step"] in SHARPS[:f] else 0.0) if f > 0 else
+                                                (-1.0 if n["step"] in FLATS[:-f] else 0.0)):
+            continue  # altération reportée dans la mesure : on ne touche pas
+        alter = ALTER[n["acc"]] if n["acc"] in ALTER else in_key
+        pitch = n["el"].find("pitch")
+        pitch.find("step").text = step
+        pitch.find("octave").text = str(octave)
+        _set(n["el"], alter, None)
+        n["step"], n["octave"], n["alter"] = step, octave, alter
+        n["xy"] = (n["xy"][0], cy)
+        changed += 1
+    return changed
+
+
+def fix(mxl, pages, signs=True, ties=True, blurry=False, both=False, ledgers=LEDGERS):
     root, name = _read(mxl)
     notes, pw = notes_of(root)
     if not notes:
         return 0, 0
     seen, links = [], []
+    moved = 0
     for k, page in enumerate(pages):
         img = imgio.imread(str(page), cv2.IMREAD_GRAYSCALE)
         if img is None:
@@ -517,6 +664,8 @@ def fix(mxl, pages, signs=True, ties=True, blurry=False, both=False):
         mine = place(notes, pw, img, k)
         if not mine:
             continue
+        if ledgers:
+            moved += apply_ledgers(read_ledgers(mine, img))
         if signs:
             seen += read_signs(mine, img, blurry, both)
             net_read(mine, img)
@@ -524,8 +673,11 @@ def fix(mxl, pages, signs=True, ties=True, blurry=False, both=False):
             links += read_ties(mine, img)
     changed = apply(seen, blurry) if signs else 0
     tied = write_ties(links) if ties else 0
-    if changed or tied:
+    if changed or tied or moved:
         _write(mxl, root, name)
+    if ledgers and (moved or STATS["confirmées"]):
+        print(f"Lignes supplémentaires relues sur l'image : {moved} notes corrigées, {STATS['confirmées']} confirmées",
+              file=sys.stderr)
     return changed, tied
 
 

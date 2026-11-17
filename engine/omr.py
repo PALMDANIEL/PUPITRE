@@ -400,6 +400,9 @@ def reread_signs(pre: pathlib.Path, pages_dir: pathlib.Path, found, pages: int) 
     msg = [l for l in r.stderr.splitlines() if l.startswith("Altérations")]
     if msg:
         print(msg[-1], file=sys.stderr)
+    for l in r.stderr.splitlines():
+        if l.startswith("Lignes supplémentaires"):
+            print(l, file=sys.stderr)
 
 
 DOUBLE = os.environ.get("PUPITRE_DOUBLE", "1") != "0"
