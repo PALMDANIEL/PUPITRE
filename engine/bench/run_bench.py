@@ -73,7 +73,7 @@ def run_case(case: pathlib.Path, reuse: bool):
         res["acc"] = {}
         for i, name in enumerate(NAMES):
             got = voices[i] if i < len(voices) and len(voices) == 4 else []
-            res["acc"][name] = score_voice(got, truth[name])
+            res["acc"][name] = score_voice(got, truth.get(name, []))  # voix absente de la bonne réponse : non comptée
     return case.name, res
 
 

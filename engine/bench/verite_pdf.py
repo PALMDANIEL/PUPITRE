@@ -234,7 +234,8 @@ def read_page(page):
                         break
             label = " ".join(w[0] for w in sorted(texts, key=lambda w: (-w[3], w[1]))
                              if w[2] < xl + 2 and y0 - 1.5 * sp <= w[3] <= y1 + 1.5 * sp)
-            content.append(dict(staff=st, notes=notes, names=names_of(label)))
+            rests = [g["x"] for g in mine if 0xE4E0 <= g["code"] <= 0xE4FF]
+            content.append(dict(staff=st, notes=notes, names=names_of(label), rests=rests, sp=sp))
         out.append(content)
     return out
 
@@ -284,6 +285,14 @@ def voices_of(systems):
                         b = sorted(both, key=lambda n: -n["midi"])
                         hi = hi or b[0]
                         lo = lo or b[-1]
+                    if len(group) == 1 and (hi is None) != (lo is None):
+                        # tête seule à une queue : l'autre voix se tait seulement si un silence l'écrit ; sinon elle
+                        # chante la même note (écriture en accords, Psaume 24 : do♯ du ténor et de la basse)
+                        h0, sp_ = group[0], staff.get("sp", 5)
+                        other = [m for m in staff["notes"] if m is not h0 and abs(m["x"] - h0["x"]) < 3 * sp_
+                                 and (m["down"] if h0["up"] else m["up"])]  # l'autre voix chante tout près (triolet)
+                        if not other and not any(abs(r - h0["x"]) < 1.5 * sp_ for r in staff.get("rests", [])):
+                            hi = lo = h0
                 for name, n in ((names[0], hi), (names[1], lo)):
                     if n is not None and not n["held"]:
                         v[name].append(n["midi"])
