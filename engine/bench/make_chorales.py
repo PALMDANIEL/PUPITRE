@@ -8,7 +8,8 @@ Les partitions restent sur la machine (droits des compositeurs) : jamais dans le
       <dossier>/<nom>-net/source.pdf (le PDF tel quel) et <dossier>/_pages/<nom>/page-NN.png (2480 points de large) ;
       doublons (même contenu) et PDF sans portée écartés
   <python du banc (bench-venv)> make_chorales.py abimer <dossier> [conditions séparées par des virgules]
-      <dossier>/<nom>-<condition>/source.jpg (ou .pdf) ; truth.json repris de <nom>-net s'il existe
+      <dossier>/<nom>-<condition>/source.jpg (ou .pdf), pour les partitions dont <nom>-net a une bonne réponse
+      (truth.json, écrit par verite_pdf.py)
       conditions : photo, whatsapp, sombre, penchee, floue, copie, usee
 """
 import hashlib, json, pathlib, re, shutil, sys, unicodedata
@@ -77,6 +78,8 @@ def damage(out, wanted):
         name = src.name
         imgs = [cv2.imread(str(p), cv2.IMREAD_GRAYSCALE) for p in sorted(src.glob("page-*.png"))]
         truth = out / f"{name}-net" / "truth.json"
+        if not truth.exists():
+            continue  # sans bonne réponse (verite_pdf.py) : rien à mesurer
         for cond in wanted:
             rng = np.random.default_rng(sum(map(ord, name + cond)))
             if cond == "photo":
