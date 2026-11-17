@@ -34,6 +34,7 @@ WORN = None
 # omr.split_read ; [(hauts des portées, [x…])] par système, ou None
 FORCED_BARS = None
 LINK_VOICES = os.environ.get("PUPITRE_LIAISON_VOIX", "1") == "1"
+NEAR_METER = os.environ.get("PUPITRE_MESURE_PROCHE", "1") == "1"  # key_and_time : mesures lues presque justes
 
 
 def _dashed():
@@ -480,12 +481,22 @@ def key_and_time(sources):
         ts += [t.ratioString for t in sc.recurse().getElementsByClass(meter.TimeSignature)][:1]
         for part in sc.parts:
             ms = list(part.getElementsByClass(stream.Measure))
-            durs += [float(m.duration.quarterLength) for m in ms[1:-1]]  # sans la levée ni la fin de ligne
+            # sans la levée ni la fin de ligne ; ni les mesures de silence (homr leur donne la durée de la mesure qu'il a
+            # lue en tête : elles votaient pour elle, « Fa damba » 3/4 pour 4/4)
+            durs += [float(m.duration.quarterLength) for m in ms[1:-1] if not NEAR_METER or m.recurse().notes]
     if not ts:
         return None
     candidates = set(ts) | {"4/4", "3/4"}
     bar = lambda t: float(meter.TimeSignature(t).barDuration.quarterLength)  # noqa: E731
     exact = {t: sum(1 for d in durs if abs(d - bar(t)) < 1e-6) for t in candidates}
+    if NEAR_METER:
+        # copie usée : homr lit mal les points et les doubles croches, peu de mesures tombent juste ; une mesure de 3,75
+        # ou de 3,5 temps reste une mesure à 4 temps (« Fa damba » : « 4/4 » lu « 3/4 » sur les quatre voix, mesures
+        # lues de 3,5 à 4 temps) : demi-voix à la mesure dont la durée est seule la plus proche, à moins d'un demi-temps
+        for d in durs:
+            gaps = sorted((abs(d - bar(t)), t) for t in candidates)
+            if gaps[0][0] > 1e-6 and gaps[0][0] <= 0.5 + 1e-6 and (len(gaps) == 1 or gaps[1][0] - gaps[0][0] > 1e-6):
+                exact[gaps[0][1]] += 0.5
     best = max(exact.values())
     # à compte égal, la mesure lue le plus souvent, puis 4/4
     pick = max((t for t in candidates if exact[t] == best), key=lambda t: (ts.count(t), t == "4/4"))
