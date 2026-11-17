@@ -686,6 +686,45 @@ def arbitrate(work: pathlib.Path, target: pathlib.Path, other: pathlib.Path, lay
     return final
 
 
+BARS_BASE = os.environ.get("PUPITRE_BASE_BARRES", "1") == "1"
+
+
+def base_by_bars(work: pathlib.Path, pages_dir: pathlib.Path, target: pathlib.Path, second: pathlib.Path):
+    """
+    Deux lectures d'Audiveris (deux versions de l'image) : la base de l'arbitrage est celle dont le nombre de mesures
+    est le plus proche de celui que montrent les barres de l'image. L'arbitrage apparie les mesures de l'autre à celles
+    de la base et n'en ajoute pas : avec pour base une lecture qui a perdu des mesures, elles restaient perdues
+    (recueil scanné, petites portées : 20 mesures contre 24 pour l'autre version, 24 sur l'image).
+    Rend (base, autre) ; la base prend le nom de la partition.
+    """
+    if not BARS_BASE:
+        return target, second
+    try:
+        import pupitres
+        from music21 import converter, stream
+        count = lambda p: max(len(pr.getElementsByClass(stream.Measure)) for pr in converter.parse(str(p)).parts)  # noqa: E731
+        a, b = count(target), count(second)
+        if a == b:
+            return target, second
+        seen = sum(len(bars) for _tops, bars in pupitres.page_bars(sorted(pages_dir.glob("page-*.png"))))
+        if not seen or abs(b - seen) >= abs(a - seen):
+            return target, second
+    except Exception as e:  # noqa: BLE001 : on garde la première lecture pour base
+        print(f"Mesures de l'image non comptées : {e}", file=sys.stderr)
+        return target, second
+    print(f"Lecture d'Audiveris sur l'autre version de l'image prise pour base : {b} mesures contre {a}, "
+          f"{seen} sur l'image", file=sys.stderr)
+    first = work / f"lecture-premiere{target.suffix}"
+    target.replace(first)
+    base = work / "partition.musicxml"
+    second.replace(base)
+    # music21 garde chaque lecture en cache d'après le chemin du fichier et ne la relit que si le fichier est plus récent
+    # que le cache : renommée, la lecture plus ancienne aurait été prise pour la partition d'avant (20 mesures pour 24)
+    base.touch()
+    first.touch()
+    return base, first
+
+
 def double_state(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path, layout: str):
     """
     Hébergement limité à 5 minutes par requête : la lecture d'Audiveris est faite ; on prépare les portées pour homr et
@@ -915,6 +954,7 @@ def main(src, work, layout=None, stage1=False):
             second = work / "lecture-alt.musicxml"
             subprocess.run(step("merge", second, *other), **QUIET)
             if second.exists():
+                target, second = base_by_bars(work, pages_dir, target, second)
                 target = arbitrate(work, target, second, guess)
                 third = second  # gardée pour le vote à trois avec homr
         shutil.rmtree(alt, ignore_errors=True)
