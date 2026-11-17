@@ -36,8 +36,14 @@ OFF_GRID = 4     # poids d'une durée hors grille, d'une fin de mesure fausse
 END = 4
 
 
+class Events(list):
+    """Notes d'une mesure, avec les silences écrits dans la lecture (rests : [(début, fin)])."""
+    rests = ()
+
+
 def events(m):
-    """Notes d'une mesure : (début, hauteur en demi-tons, durée, Pitch), têtes en double fusionnées."""
+    """Notes d'une mesure : (début, hauteur en demi-tons, durée, Pitch), têtes en double fusionnées ; les silences
+    écrits sont gardés à part (une note seule pendant le silence d'une autre voix n'est pas un unisson)."""
     seen, out = set(), []
     for n in m.recurse().notes:
         if n.duration.isGrace or not n.quarterLength:
@@ -48,7 +54,16 @@ def events(m):
             if k not in seen:
                 seen.add(k)
                 out.append((off, p.ps, k[2], p))
-    return sorted(out, key=lambda e: (e[0], -e[1]))
+    ev = Events(sorted(out, key=lambda e: (e[0], -e[1])))
+    ev.rests = [(round(float(r.getOffsetInHierarchy(m)), 4), round(float(r.getOffsetInHierarchy(m) + r.quarterLength), 4))
+                for r in m.recurse().getElementsByClass(note.Rest) if r.quarterLength]
+    return ev
+
+
+# note seule à un instant où les deux voix sont libres : unisson (chantée par les deux), sauf si la lecture écrit un
+# silence à cet instant (Kyrie réel, m. 4 : soupir du ténor, fa de la basse ; l'unisson donnait le fa au ténor, puis
+# faisait paraître fautive la lecture juste de homr) ; elle va alors à la voix dont elle est la plus proche
+REST_UNISON = os.environ.get("PUPITRE_UNISSON_SILENCE", "1") == "1"
 
 
 # consonance de deux sons (demi-tons modulo 12), comme coherence.CONSONANCE : tierces, quinte, sixtes, octave
@@ -306,9 +321,11 @@ def faults(ev, other, length, voices):
     return f
 
 
-def lines(ev, voices, length, dropped=None):
+def lines(ev, voices, length, dropped=None, medians=None):
     """
-    Répartit les notes en voix (la plus aiguë d'abord) ; unisson (une seule tête pour deux voix libres) : dans les deux.
+    Répartit les notes en voix (la plus aiguë d'abord) ; unisson (une seule tête pour deux voix libres) : dans les deux,
+    sauf pendant un silence écrit (voir REST_UNISON) : la voix dont la note est la plus proche (sa note précédente dans
+    la mesure, sinon sa hauteur habituelle, medians).
     dropped : liste où ranger les notes qu'aucune voix ne peut prendre (accord de trop, durée qui déborde).
     """
     out = [[] for _ in range(voices)]
@@ -316,6 +333,7 @@ def lines(ev, voices, length, dropped=None):
     by_onset = {}
     for e in ev:
         by_onset.setdefault(e[0], []).append(e)
+    rests = getattr(ev, "rests", ()) if REST_UNISON else ()
     for off in sorted(by_onset):
         group = sorted(by_onset[off], key=lambda e: -e[1])
         ready = [v for v in range(voices) if free[v] <= off + 1e-6]
@@ -323,6 +341,10 @@ def lines(ev, voices, length, dropped=None):
             ready = [min(range(voices), key=lambda v: free[v])]
         if voices == 2 and len(group) == 1 and len(ready) == 2:
             pairs = [(0, group[0]), (1, group[0])]
+            if any(a - 1e-6 <= off < b - 1e-6 for a, b in rests):
+                ref = [out[v][-1][1] if out[v] else (medians[v] if medians else None) for v in range(2)]
+                if all(r is not None for r in ref) and ref[0] != ref[1]:
+                    pairs = [(min(range(2), key=lambda v: abs(group[0][1] - ref[v])), group[0])]
         elif len(group) >= len(ready):
             # plus de têtes que de voix libres : les extrêmes vont aux voix libres, l'intérieur à la plus proche
             pairs = [(ready[0], group[0])] + ([(ready[-1], group[-1])] if len(ready) > 1 else [])
@@ -361,7 +383,7 @@ def composite(x, y, voices, length, medians):
     silence, serait prise pour un unisson et chantée aussi par le ténor).
     """
     drop_x, drop_y = [], []
-    lx, ly = lines(x, voices, length, drop_x), lines(y, voices, length, drop_y)
+    lx, ly = lines(x, voices, length, drop_x, medians), lines(y, voices, length, drop_y, medians)
 
     def nearest(e):
         return min(range(voices), key=lambda v: abs(e[1] - medians[v]) if medians[v] is not None else 0)
@@ -388,7 +410,7 @@ def _q(x):
     return opFrac(Fraction(x).limit_denominator(48))
 
 
-def rebuild(m, ev, voices, length, split=None):
+def rebuild(m, ev, voices, length, split=None, medians=None):
     """
     Remplace le contenu de la mesure m (lecture Audiveris) par les notes ev (lecture homr), voix par voix ; split :
     voix déjà réparties (composite). Une durée qui déborde sur la note suivante de la même voix est raccourcie.
@@ -408,7 +430,7 @@ def rebuild(m, ev, voices, length, split=None):
         parts = [[(off, g[0][2], [e[3] for e in g]) for off, g in sorted(groups.items())]]
         target = [m]
     else:
-        parts = [[(off, dur, [p]) for off, _ps, dur, p in line] for line in (split or lines(ev, voices, length))]
+        parts = [[(off, dur, [p]) for off, _ps, dur, p in line] for line in (split or lines(ev, voices, length, medians=medians))]
         target = [stream.Voice(id=str(i + 1)) for i in range(voices)]
     for i, (line, dst) in enumerate(zip(parts, target)):
         at, prev = 0.0, None
@@ -1308,20 +1330,20 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
             if rescue:
                 z = events(st_o[s][o_of[s][j]]) if st_o is not None and j in o_of[s] else None
                 if (getattr(m, "pupitre_vide", False) or not x) and y and faults(y, [], length, voices) == 0:
-                    rebuild(m, y, voices, length)
+                    rebuild(m, y, voices, length, medians=medians[s])
                     changed += 1
                     unsure = True
                 elif z and x and y and confirmed(z, y) - confirmed(z, x) >= OEMER_GAP + 1 and \
                         faults(y, x, length, voices) <= faults(x, y, length, voices):
                     # secours : homr pris quand oemer lui donne nettement raison
-                    rebuild(m, y, voices, length)
+                    rebuild(m, y, voices, length, medians=medians[s])
                     changed += 1
                     by_oemer += 1
                     unsure = True
                 elif CUT and getattr(m, "pupitre_coupee", False) and y and \
                         faults(y, x, length, voices) < faults(x, y, length, voices):
                     # mesure coupée aux barres de l'image : le rythme d'Audiveris y est souvent brouillé
-                    rebuild(m, y, voices, length)
+                    rebuild(m, y, voices, length, medians=medians[s])
                     changed += 1
                     unsure = True
                 elif JUDGE_RESCUE and judge is not None and x and y and not only_accidentals(x, y) and \
@@ -1332,18 +1354,21 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
                     ca, ch = judge.cost(s, j, x), judge.cost(s, j, y)
                     if ca is not None and ch is not None and ch + 2 <= ca and \
                             faults(y, x, length, voices) <= faults(x, y, length, voices):
-                        rebuild(m, keep_signs(x, y)[0], voices, length)
+                        rebuild(m, keep_signs(x, y)[0], voices, length, medians=medians[s])
                         changed += 1
                         by_image += 1
                         unsure = True
                 continue
             if st_t is not None and signature(events(st_t[s][k])) == signature(y):
                 # vote : homr et l'autre lecture d'Audiveris s'accordent contre la première (deux sur trois)
-                rebuild(m, y, voices, length)
+                rebuild(m, y, voices, length, medians=medians[s])
                 changed += 1
                 by_vote += 1
                 continue
             fa, fh = faults(x, y, length, voices), faults(y, x, length, voices)
+            if os.environ.get("PUPITRE_DEBUG_MESURE") == str(k + 1):
+                print(f"mesure {k + 1} portée {s} : fautes Audiveris {fa}, homr {fh}\n  A {signature(x)}\n  H {signature(y)}",
+                      file=sys.stderr)
             # à égalité, Audiveris (meilleur lecteur des pages nettes : bécarres, rythmes cohérents mais différents),
             # sauf si homr sonne nettement plus juste avec les autres portées et dans la tonalité
             take_h = fh < fa
@@ -1406,7 +1431,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
             if REDONDANT and fa == fh and only_accidentals(x, y) and not BLUR_SIGNS:
                 mixed_acc, taken = mix_accidentals(x, y, _key_at(m))
                 if taken:
-                    rebuild(m, mixed_acc, voices, length)
+                    rebuild(m, mixed_acc, voices, length, medians=medians[s])
                     changed += 1
                     by_usage += taken
                     unsure = True
@@ -1434,13 +1459,13 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
                 voted = vote_notes(base, other, z) if z else base
                 if signature(voted) != signature(base) and \
                         faults(voted, other, length, voices) <= faults(base, other, length, voices):
-                    rebuild(m, voted, voices, length)
+                    rebuild(m, voted, voices, length, medians=medians[s])
                     changed += 1
                     by_oemer += 1
                     unsure = True
                     continue
             if take_h:
-                rebuild(m, keep_signs(x, y)[0], voices, length)
+                rebuild(m, keep_signs(x, y)[0], voices, length, medians=medians[s])
                 changed += 1
             if min(fa, fh) > 0 or fa == fh:
                 unsure = True
