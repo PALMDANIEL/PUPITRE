@@ -254,6 +254,33 @@ ACCENTS = {  # mots courants des chants, écrits sans accents en majuscules sur 
     "fidele": "fidèle", "fideles": "fidèles", "ecole": "école",
 }
 FEMALE, MALE = {"Soprano", "Alto", "Mezzo"}, {"Ténor", "Basse", "Baryton"}
+# noms de voix mal lus par l'OCR (« ’I‘cnor » pour Tenor : T lu ’I‘, e lu c) : un mot d'au moins 4 lettres à 2 lettres
+# près d'un nom de voix est ce nom (« Song bal la Wende », photo WhatsApp : ténor coupé en deux voix, 7 voix pour 4)
+FUZZY_NAMES = os.environ.get("PUPITRE_NOMS_APPROCHES", "1") == "1"
+NAMED_FIRST = os.environ.get("PUPITRE_NOMMEES_DABORD", "1") == "1"  # merge_named_parts : parties bien nommées d'abord
+_FULL = [k for k in ABBR if len(k) >= 4]
+
+
+def _lev(a, b):
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        cur = [i]
+        for j, y in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y)))
+        prev = cur
+    return prev[-1]
+
+
+def abbr(token):
+    """Voix désignée par un mot du nom de la portée (abréviation, nom complet, ou nom complet mal lu), sinon None."""
+    t = token.lower()
+    if t in ABBR:
+        return ABBR[t]
+    if FUZZY_NAMES and len(t) >= 4:
+        best = min(_FULL, key=lambda k: _lev(t, k))
+        if _lev(t, best) <= 2 and _lev(t, best) < len(t) - 2:
+            return ABBR[best]
+    return None
 
 
 def clean_name(raw):
@@ -279,7 +306,7 @@ def staff_names(raw, n):
     if not name:
         return [None] * n
     tokens = re.findall(r"[^\W\d_]+", name)
-    mapped = [ABBR.get(t.lower()) for t in tokens]
+    mapped = [abbr(t) for t in tokens]
     if n == 1:
         return [pretty_name(name)]
     if len(tokens) >= n and all(mapped[:n]) and len(set(mapped[:n])) == n:
@@ -335,7 +362,7 @@ def _sung_voices(m):
 
 def _is_choir_name(name):
     tokens = re.findall(r"[^\W\d_]+", clean_name(name) or "")
-    return bool(tokens) and all(ABBR.get(t.lower()) for t in tokens)
+    return bool(tokens) and all(abbr(t) for t in tokens)
 
 
 def _low_clef(m, part):
@@ -374,7 +401,7 @@ def merge_named_parts(parts):
     def home(low):
         # portée de chœur du registre : clé de fa → T. B., clé de sol → S. A.
         for c in choirs:
-            tokens = [ABBR.get(t.lower()) for t in re.findall(r"[^\W\d_]+", clean_name(c.partName))]
+            tokens = [abbr(t) for t in re.findall(r"[^\W\d_]+", clean_name(c.partName))]
             if (low and any(t in MALE for t in tokens)) or (not low and any(t in FEMALE for t in tokens)):
                 return c
         return None
@@ -413,8 +440,11 @@ def merge_named_parts(parts):
         if not name:
             return f"#{id(p)}"
         tokens = re.findall(r"[^\W\d_]+", name)
-        mapped = [ABBR.get(t.lower()) for t in tokens]
-        return "|".join(mapped) if tokens and all(mapped) else name.lower().replace(".", "").strip()
+        mapped = [abbr(t) for t in tokens]
+        if tokens and all(mapped):
+            return "|".join(mapped)
+        whole = abbr("".join(tokens)) if len(tokens) > 1 else None  # « ’I‘cnor » : l'apostrophe coupait le mot
+        return whole or name.lower().replace(".", "").strip()
 
     def sung_numbers(p):
         return {m.number for m in p.getElementsByClass(stream.Measure) if sung_in(m)}
@@ -425,7 +455,7 @@ def merge_named_parts(parts):
         if not name:
             return True
         tokens = re.findall(r"[^\W\d_]+", name)
-        return not tokens or (not all(ABBR.get(t.lower()) for t in tokens) and len("".join(tokens)) <= 2)
+        return not tokens or (not all(abbr(t) for t in tokens) and len("".join(tokens)) <= 2)
 
     def low(p):
         c = next(iter(p.recurse().getElementsByClass(clef.Clef)), None)
@@ -435,7 +465,11 @@ def merge_named_parts(parts):
     # ou un nom mal lu) : chaque portée est rangée dans la « voix » qui ne chante pas en même temps qu'elle,
     # de même nom ; à défaut (nom absent ou mal lu), de même clé et de même registre.
     slots = []
-    for p in parts:
+    # parties bien nommées d'abord, puis celles au nom absent ou illisible, rangées par clé et registre : une partie
+    # « Voice » venue en tête ouvrait sa propre voix, que « S. » ne rejoignait plus (« Song bal la Wende », portées vides
+    # masquées par MuseScore : 6 voix pour 4)
+    order_parts = parts if not NAMED_FIRST else [p for p in parts if not weak(p)] + [p for p in parts if weak(p)]
+    for p in order_parts:
         key, mine, w, lp, pitch = name_key(p), sung_numbers(p), weak(p), low(p), mean_pitch(p) or 60
         free = [sl for sl in slots
                 if len(mine & sl["sung"]) <= 0.2 * max(1, min(len(mine), len(sl["sung"])))]
@@ -447,6 +481,19 @@ def merge_named_parts(parts):
         else:
             same["parts"].append(p); same["keys"].add(key); same["sung"] |= mine
             same["weak"] = same["weak"] and w
+    # ordre de la page : chaque voix à la place de sa première portée (parties nommées rangées en premier ci-dessus)
+    # (d'après les parties bien nommées : une basse nommée « TI » venue tôt faisait passer la basse avant le ténor ;
+    # et quand chaque voix porte un nom de voix, dans l'ordre des noms : Audiveris ne range pas toujours ses parties
+    # dans l'ordre de la page, la première peut venir d'un système du milieu)
+    rank = {"Soprano": 0, "Mezzo": 0.5, "Alto": 1, "Ténor": 2, "Baryton": 2.5, "Basse": 3}
+    ranks = [next((rank[k] for k in sl["keys"] if k in rank), None) for sl in slots]
+    if all(r is not None for r in ranks) and len(set(ranks)) == len(ranks):
+        slots = [sl for _r, sl in sorted(zip(ranks, slots), key=lambda t: t[0])]
+    else:
+        slots.sort(key=lambda sl: min((parts.index(p) for p in sl["parts"] if not weak(p)),
+                                      default=min(parts.index(p) for p in sl["parts"])))
+    for sl in slots:
+        sl["parts"].sort(key=parts.index)
     groups = {i: sl["parts"] for i, sl in enumerate(slots)}
     order = list(groups)
     merged = []
@@ -539,7 +586,7 @@ def regroup_by_place(parts):
                 if own[k] is None:
                     return None
                 _move(copy.deepcopy(rows[singers[0]][k]), own[k])
-        names = {ABBR.get(t.lower()) for i in g for t in re.findall(r"[^\W\d_]+", clean_name(parts[i].partName) or "")}
+        names = {abbr(t) for i in g for t in re.findall(r"[^\W\d_]+", clean_name(parts[i].partName) or "")}
         names.discard(None)
         # nom canonique commun, sinon aucun (pas None : music21 reprendrait le nom d'instrument, « Balme »)
         base.partName = names.pop() if len(names) == 1 else ""
