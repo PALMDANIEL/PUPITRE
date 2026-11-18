@@ -450,7 +450,18 @@ def _with_context(m, orig):
 
 
 def main(out, sources, only_if_useful=False):
-    movements = [converter.parse(s) for s in sources]
+    # un morceau illisible (copie usée : Audiveris y écrit <divisions>0</divisions>, music21 divise par zéro) est
+    # écarté au lieu d'arrêter toute la lecture (banc des chorales, Psaumes 64 et 79 sur photocopie usée)
+    movements, kept = [], []
+    for s in sources:
+        try:
+            movements.append(converter.parse(s))
+            kept.append(s)
+        except Exception as e:  # noqa: BLE001
+            print(f"Mouvement illisible écarté ({pathlib.Path(s).name} : {type(e).__name__})", file=sys.stderr)
+    if not movements:
+        sys.exit("Aucun mouvement lisible")
+    sources = kept
     raw = [s for mv in movements for s in systems_of(mv)]
     clefs = fix_clefs(raw, sources)
     clefs += fix_odd_clefs(raw)
