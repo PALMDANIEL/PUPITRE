@@ -74,6 +74,33 @@ def broken(sheets):
     return sum(1 for sheet in sheets for n in sheet if n < max(sheet))
 
 
+MIXED = os.environ.get("PUPITRE_SYSTEMES_COURTS", "1") == "1"
+
+
+def image_systems(pages_dir: pathlib.Path):
+    """Nombre de portées de chaque système, page par page, vu sur l'image (portées liées par leurs barres)."""
+    import cv2, imgio, pupitres
+    out = []
+    for pf in sorted(pages_dir.glob("page-*.png")):
+        bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
+        out.append([len(g) for g in pupitres.systems_on(bw, pupitres.find_staves(bw), dashed=pupitres._dashed())])
+    return out
+
+
+def real_short(sheets, pages_dir: pathlib.Path) -> bool:
+    """
+    Systèmes courts d'Audiveris vus aussi sur l'image : de vrais couplets sur une portée (psaume : refrain sur deux
+    portées, couplets du soliste ou de soprano et alto sur une seule), pas des portées mal regroupées. La lecture voix
+    par voix, qui ne garde que les systèmes complets, perdait alors tous les couplets (Psaumes 24, 70, 118 des chorales).
+    """
+    if not MIXED or not sheets or not broken(sheets):
+        return False
+    try:
+        return sheets == image_systems(pages_dir)
+    except Exception:  # noqa: BLE001 : on garde la règle d'avant
+        return False
+
+
 def staves(sheets):
     """Nombre de portées vues en tout."""
     return sum(sum(sheet) for sheet in sheets)
@@ -904,7 +931,7 @@ def main(src, work, layout=None, stage1=False):
     in_budget = BUDGET is None or 2 * first_took < BUDGET
     if not in_budget and found:
         print("Seconde lecture écartée faute de temps", file=sys.stderr)
-    if (not found or broken(first)) and (in_budget or not found):
+    if (not found or (broken(first) and not real_short(first, pages_dir))) and (in_budget or not found):
         # Seconde lecture avec l'autre version de l'image ; on garde celle qui regroupe le mieux les portées
         # (un vrai couplet en solo donne le même découpage dans les deux cas : on garde alors la première).
         print("Seconde lecture avec l’autre version de l’image", file=sys.stderr)
@@ -918,7 +945,8 @@ def main(src, work, layout=None, stage1=False):
             alt.rename(omr)
             found = movements(omr)
         shutil.rmtree(alt, ignore_errors=True)
-    if guess and (not found or broken(systems(omr))) and (BUDGET is None or 2 * (time.monotonic() - started) < BUDGET):
+    if guess and (not found or (broken(systems(omr)) and not real_short(systems(omr), pages_dir))) \
+            and (BUDGET is None or 2 * (time.monotonic() - started) < BUDGET):
         # les portées n'ont pas été regroupées comme sur l'image (quatre par système) : voix relues à part. Deux portées :
         # homr lit mal les accords, sa lecture ne remplace celle d'Audiveris que si elle est sûre (comme pour une copie
         # tachée) ; depuis que les pages gardent la ligne du système, cette disposition est reconnue bien plus souvent
