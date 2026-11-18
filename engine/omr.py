@@ -75,6 +75,7 @@ def broken(sheets):
 
 
 MIXED = os.environ.get("PUPITRE_SYSTEMES_COURTS", "1") == "1"
+DIRECT_PDF = os.environ.get("PUPITRE_PDF_DIRECT", "1") == "1"  # PDF gravé (SMuFL) lu directement (pdf_vectoriel.py)
 
 
 def image_systems(pages_dir: pathlib.Path):
@@ -882,6 +883,22 @@ def main(src, work, layout=None, stage1=False):
 
     for old in ("partition.mxl", "partition.musicxml", "fiabilite.json"):
         (work / old).unlink(missing_ok=True)
+    if DIRECT_PDF and src.suffix.lower() == ".pdf":
+        # PDF gravé par un logiciel (MuseScore 3 et 4 : symboles SMuFL placés exactement) : lu tel quel, sans
+        # reconnaissance d'image (banc des chorales, 14 partitions : ≈ 99 % de notes justes, contre ≈ 75 % par l'image ;
+        # couplets de psaume compris, qu'Audiveris écarte)
+        target = work / "partition.musicxml"
+        r = subprocess.run(step("pdf_vectoriel", src, target), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", **QUIET)
+        if r.returncode == 0 and target.exists():
+            sys.stderr.write(r.stderr[-300:])
+            shutil.rmtree(pre, ignore_errors=True)
+            print("lecture:pdf", flush=True)
+            print(f"partition:{target.name}", flush=True)
+            return
+        target.unlink(missing_ok=True)
+        if r.returncode not in (0, 2):
+            print(f"Lecture directe du PDF impossible : {(r.stderr.strip().splitlines() or ['?'])[-1][:160]}", file=sys.stderr)
     guess = None
     min_exact = 0.0
     if layout is None:

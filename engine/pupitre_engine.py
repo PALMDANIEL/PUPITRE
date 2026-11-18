@@ -1,11 +1,11 @@
 """
 Point d'entrée unique du moteur, pour l'exécutable autonome (PyInstaller) de la version installable.
-Usage : pupitre-engine <omr|preprocess|merge|pupitres|arbitre|signes|render> [arguments de l'étape]
+Usage : pupitre-engine <omr|preprocess|merge|pupitres|arbitre|signes|render|pdf_vectoriel> [arguments de l'étape]
 En développement, on peut toujours lancer directement python3 omr.py, render.py…
 """
 import runpy, sys
 
-STEPS = ("omr", "preprocess", "merge", "pupitres", "arbitre", "signes", "render")
+STEPS = ("omr", "preprocess", "merge", "pupitres", "arbitre", "signes", "render", "pdf_vectoriel")
 
 
 def main():
