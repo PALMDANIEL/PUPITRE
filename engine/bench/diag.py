@@ -109,6 +109,8 @@ def main(corpus, filt="", *rest):
         fams, per = collections.Counter(), []
         for i, name in enumerate(NAMES):
             got = voices[i] if len(voices) == 4 else []
+            if name not in truth:
+                continue  # voix absente de la bonne réponse
             c = collections.Counter(family(op, d) for op, d in align(got, truth[name]))
             fams += c
             per.append(f"{name[0]}{100 - 100 * sum(c.values()) // max(len(truth[name]), 1):3d}")
