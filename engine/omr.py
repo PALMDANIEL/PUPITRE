@@ -95,6 +95,10 @@ def real_short(sheets, pages_dir: pathlib.Path) -> bool:
     """
     if not MIXED or not sheets or not broken(sheets):
         return False
+    if (pages_dir.parent / "pre" / "usee").exists():
+        # copie usée : lignes de portée retracées, Audiveris et l'image y voient les mêmes faux systèmes courts
+        # (banc, bwv153.1 ouverte usée : 98 → 0 %, 5 voix ; la lecture voix par voix la sauvait)
+        return False
     try:
         return sheets == image_systems(pages_dir)
     except Exception:  # noqa: BLE001 : on garde la règle d'avant
