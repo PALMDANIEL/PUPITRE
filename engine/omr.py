@@ -96,14 +96,29 @@ def real_short(sheets, pages_dir: pathlib.Path) -> bool:
     """
     if not MIXED or not sheets or not broken(sheets):
         return False
-    if (pages_dir.parent / "pre" / "usee").exists():
-        # copie usée : lignes de portée retracées, Audiveris et l'image y voient les mêmes faux systèmes courts
-        # (banc, bwv153.1 ouverte usée : 98 → 0 %, 5 voix ; la lecture voix par voix la sauvait)
-        return False
+    worn = (pages_dir.parent / "pre" / "usee").exists()
     try:
-        return sheets == image_systems(pages_dir)
+        if sheets != image_systems(pages_dir):
+            return False
+        # copie usée : lignes de portée retracées, Audiveris et l'image y voient les mêmes faux systèmes courts
+        # (banc, bwv153.1 ouverte usée : 98 → 0 %, 5 voix ; la lecture voix par voix la sauvait) ; seule la disposition
+        # des psaumes est admise : systèmes complets, puis seulement des portées seules. La lecture voix par voix perdait tous les couplets
+        # (photocopies des Psaumes 24, 70, 118 : soprano et alto réduits au refrain)
+        return not worn or (WORN_VERSES and tail_verses(sheets))
     except Exception:  # noqa: BLE001 : on garde la règle d'avant
         return False
+
+
+WORN_VERSES = os.environ.get("PUPITRE_COUPLETS_USES", "1") == "1"
+
+
+def tail_verses(sheets) -> bool:
+    """Systèmes complets (deux portées ou plus), puis seulement des portées seules : la disposition des psaumes."""
+    flat = [n for sheet in sheets for n in sheet]
+    k = len(flat)
+    while k and flat[k - 1] == 1:
+        k -= 1
+    return 0 < k < len(flat) and max(flat) >= 2 and all(n == max(flat) for n in flat[:k])
 
 
 def staves(sheets):

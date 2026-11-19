@@ -106,6 +106,9 @@ def upright(gray):
     return cw if left_heavy(cw) >= left_heavy(ccw) else ccw
 
 
+DARK_BACKGROUND = os.environ.get("PUPITRE_FOND", "sombre") != "otsu"
+
+
 def crop_page(gray):
     """Photo d'une feuille posée sur une table : on repère la feuille (le plus grand quadrilatère clair) et on la remet à plat."""
     h, w = gray.shape
@@ -113,6 +116,19 @@ def crop_page(gray):
     small = cv2.GaussianBlur(cv2.resize(gray, None, fx=k, fy=k), (5, 5), 0)
     _, mask = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
+    ring = np.concatenate([small[:10].ravel(), small[-10:].ravel(), small[:, :10].ravel(), small[:, -10:].ravel()])
+    bg, paper = float(np.median(ring)), float(np.percentile(small, 90))
+    if DARK_BACKGROUND and bg < 90 and paper - bg > 60:
+        # fond vraiment sombre (table) : la feuille mesurée entre le fond (pourtour de la photo) et le papier ; si le seuil
+        # d'Otsu en garde nettement moins (côté de la feuille dans l'ombre), sa découpe couperait la page : on n'en fait pas
+        # (Psaume 22 sombre : 60 % de la page gardés, 16 → 89 % ; « Regarde vers ton alliance » sombre : coupée à
+        # mi-hauteur). Découper d'après ce seuil-là faisait reculer d'autres photos sombres (Psaumes 64, 79, 118)
+        sheet = cv2.morphologyEx(((small > bg + 0.4 * (paper - bg)) * 255).astype(np.uint8), cv2.MORPH_CLOSE,
+                                 np.ones((25, 25), np.uint8))
+        biggest = lambda m: max((cv2.contourArea(c) for c in cv2.findContours(m, cv2.RETR_EXTERNAL,  # noqa: E731
+                                                                               cv2.CHAIN_APPROX_SIMPLE)[0]), default=0.0)
+        if biggest(mask) < biggest(sheet) - 0.1 * small.shape[0] * small.shape[1]:
+            return gray
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return gray

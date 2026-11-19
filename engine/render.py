@@ -287,6 +287,8 @@ FEMALE, MALE = {"Soprano", "Alto", "Mezzo"}, {"Ténor", "Basse", "Baryton"}
 # noms de voix mal lus par l'OCR (« ’I‘cnor » pour Tenor : T lu ’I‘, e lu c) : un mot d'au moins 4 lettres à 2 lettres
 # près d'un nom de voix est ce nom (« Song bal la Wende », photo WhatsApp : ténor coupé en deux voix, 7 voix pour 4)
 FUZZY_NAMES = os.environ.get("PUPITRE_NOMS_APPROCHES", "1") == "1"
+DEBRIS = os.environ.get("PUPITRE_DEBRIS", "1") == "1"  # fold_solos : voix fantôme de quelques notes écartée
+OVERLAP = int(os.environ.get("PUPITRE_MESURE_COMMUNE", "1"))  # merge_named_parts : mesures communes tolérées
 SOLO_APART = os.environ.get("PUPITRE_SOLO_A_PART", "1") == "1"  # merge_named_parts : ligne seule ≠ portée à deux voix
 NAMED_FIRST = os.environ.get("PUPITRE_NOMMEES_DABORD", "1") == "1"  # merge_named_parts : parties bien nommées d'abord
 _FULL = [k for k in ABBR if len(k) >= 4]
@@ -503,8 +505,10 @@ def merge_named_parts(parts):
     for p in order_parts:
         key, mine, w, lp, pitch = name_key(p), sung_numbers(p), weak(p), low(p), mean_pitch(p) or 60
         two = bool(needs_split(p)) if SOLO_APART else None
+        # une mesure en commun au plus est tolérée : la dernière mesure lue des deux côtés (nouvelles parties d'Audiveris
+        # pour le dernier système, Psaume 22 WhatsApp : 8 voix au lieu de 4)
         free = [sl for sl in slots
-                if len(mine & sl["sung"]) <= 0.2 * max(1, min(len(mine), len(sl["sung"])))]
+                if len(mine & sl["sung"]) <= max(OVERLAP, 0.2 * max(1, min(len(mine), len(sl["sung"]))))]
         same = next((sl for sl in free if key in sl["keys"]), None)
         if same is None and (w or all(sl_w for sl in free for sl_w in [sl["weak"]])):
             # une ligne seule (couplet du soliste, sur sa propre portée) ne rejoint pas une portée à deux voix (S. A. du
@@ -686,6 +690,17 @@ def fold_solos(voices):
                 for el in m.notesAndRests:
                     dst.insert(el.offset, copy.deepcopy(el))
         kept.remove(v)
+    if DEBRIS and len(kept) > 4:
+        # débris de lecture (accords chiffrés, signes, texte lus comme une portée : nom illisible et quelques notes,
+        # pendant que le chœur chante ; Psaume 79 sombre : 5 notes contre 21 à 22 par voix) : écartés
+        sizes = sorted(len(v.recurse().notes) for v in kept)
+        median = sizes[len(sizes) // 2]
+        for v in sorted(kept, key=lambda v: len(v.recurse().notes)):
+            if len(kept) <= 4:
+                break
+            readable = clean_name(v.partName or "") and re.search(r"[^\W\d_]{2,}", v.partName or "")
+            if not readable and len(v.recurse().notes) < 0.3 * median:
+                kept.remove(v)
     return kept
 
 
