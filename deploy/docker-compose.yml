@@ -6,10 +6,16 @@ services:
     restart: unless-stopped
     volumes:
       - pupitre-donnees:/data
+    # secrets de la vente et de l'administration (DATABASE_URL, VENTE_CLE_PRIVEE, LIGDICASH_…) : collés par AIT dans
+    # secrets.env à côté de ce fichier, jamais dans Git ; sans eux, la lecture des partitions fonctionne quand même
+    env_file:
+      - path: ./secrets.env
+        required: false
     environment:
       # origines de l'application mobile (Android : https://localhost, iOS : capacitor://localhost)
       CORS_ORIGINS: https://localhost,capacitor://localhost
       MAX_UPLOAD_MB: '30'
+      PUBLIC_URL: https://${DOMAINE}
   caddy:
     image: caddy:2.10
     restart: unless-stopped
