@@ -732,9 +732,9 @@ def base_by_bars(work: pathlib.Path, pages_dir: pathlib.Path, target: pathlib.Pa
     if not BARS_BASE:
         return target, second
     try:
-        import pupitres
+        import arbitre, pupitres
         from music21 import converter, stream
-        sa, sb = converter.parse(str(target)), converter.parse(str(second))
+        sa, sb = arbitre.drop_chord_symbols(converter.parse(str(target)), converter.parse(str(second)))
         count = lambda sc: max(len(pr.getElementsByClass(stream.Measure)) for pr in sc.parts)  # noqa: E731
         a, b = count(sa), count(sb)
         if a == b:
@@ -1029,8 +1029,41 @@ def main(src, work, layout=None, stage1=False):
                 target = double_read(pages_dir, work, target, guess, third)
     if third is not None and not os.environ.get("PUPITRE_GARDER"):
         third.unlink(missing_ok=True)
+    if BUDGET is None or time.monotonic() - _T0 + 60 < BUDGET:
+        target = reread_verses(pages_dir, work, target)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
+
+
+def reread_verses(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path) -> pathlib.Path:
+    """
+    Couplets sur une portée seule après le refrain (psaumes) : relus par homr, qui ne perd pas les notes d'une mesure
+    plus longue que la mesure écrite (brève de récitation), contrairement à Audiveris (couplets.py).
+    """
+    if os.environ.get("PUPITRE_COUPLETS", "1") == "0" or homr_base() is None:
+        return target
+    folder = work / "couplets"
+    try:
+        r = subprocess.run(step("couplets", "prepare", pages_dir, folder), **QUIET)
+        if r.returncode or not homr_staves(folder):
+            return target
+        out = work / "partition-couplets.musicxml"
+        r = subprocess.run(step("couplets", "apply", target, folder, out), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", **QUIET)
+        sys.stderr.write("".join(l + "\n" for l in r.stderr.splitlines() if l.startswith("Couplets")))
+        if r.returncode or not out.exists():
+            return target
+        final = work / "partition.musicxml"
+        if target != final:
+            target.unlink(missing_ok=True)
+        out.replace(final)
+        return final
+    except Exception as e:  # noqa: BLE001 : la lecture d'avant reste
+        print(f"Couplets non relus ({type(e).__name__})", file=sys.stderr)
+        return target
+    finally:
+        if not os.environ.get("PUPITRE_GARDER"):
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def _fail(e: BaseException) -> None:

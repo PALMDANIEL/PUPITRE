@@ -41,6 +41,18 @@ class Events(list):
     rests = ()
 
 
+
+def drop_chord_symbols(*scores):
+    """Accords chiffrés pour la guitare (G, Em, Am7) lus par Audiveris : des accords sans durée que music21 compte
+    parmi les notes (instants chantés par trop de notes, hauteurs, notes à apparier). Ils ne se chantent pas."""
+    if os.environ.get("PUPITRE_ACCORDS_CHIFFRES") == "garder":
+        return scores[0] if len(scores) == 1 else scores
+    from music21 import harmony
+    for sc in scores:
+        for h in list(sc.recurse().getElementsByClass(harmony.Harmony)):
+            h.activeSite.remove(h)
+    return scores[0] if len(scores) == 1 else scores
+
 def events(m):
     """Notes d'une mesure : (début, hauteur en demi-tons, durée, Pitch), têtes en double fusionnées ; les silences
     écrits sont gardés à part (une note seule pendant le silence d'une autre voix n'est pas un unisson)."""
@@ -1132,7 +1144,7 @@ def adopt_key(a, h, voix=None, layout=None):
 
 
 def arbitrate(a_path, h_path, out, layout, voix=None, third=None, split=False, oemer=None):
-    a, h = converter.parse(a_path), converter.parse(h_path)
+    a, h = drop_chord_symbols(converter.parse(a_path), converter.parse(h_path))
     before = sorted(set(_keys(a)))
     adopted = adopt_key(a, h, voix, layout)
     if adopted is not None:
@@ -1267,7 +1279,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
     st_t = None
     if third and VOTE:
         try:
-            tt = staves(converter.parse(third))
+            tt = staves(drop_chord_symbols(converter.parse(third)))
             if len(tt) == len(sa) and all(len(x) == count for x in tt[len(tt) - len(sh):]):
                 st_t = tt[len(tt) - len(sh):]
         except Exception:  # noqa: BLE001 : sans troisième lecture, l'arbitrage à deux
@@ -1275,7 +1287,7 @@ def _arbitrate(a, h, out, layout, third=None, voix=None, split=False, oemer=None
     st_o, o_of, by_oemer = None, {}, 0
     if oemer:
         try:
-            oo = staves(converter.parse(oemer))
+            oo = staves(drop_chord_symbols(converter.parse(oemer)))
             if len(oo) >= len(sh):
                 st_o = oo[len(oo) - len(sh):]
                 # mesures d'oemer appariées à celles de homr d'après leurs notes, portée par portée (ses barres ne sont
@@ -1492,7 +1504,7 @@ def homr_vote(h_path, a_path, o_path, out):
     et oemer voient tous deux, et perd celles qu'aucun ne voit quand tous deux s'accordent sur une autre (vote_notes),
     si elle n'en devient pas moins cohérente. Écrit out ; rend le nombre de portées-mesures corrigées.
     """
-    h, a, o = converter.parse(h_path), converter.parse(a_path), converter.parse(o_path)
+    h, a, o = drop_chord_symbols(converter.parse(h_path), converter.parse(a_path), converter.parse(o_path))
     sh, sa, so = staves(h), staves(a), staves(o)
     sa, so = sa[len(sa) - len(sh):], so[len(so) - len(sh):]
     if len(sa) != len(sh) or len(so) != len(sh) or len({len(x) for x in sa}) != 1:

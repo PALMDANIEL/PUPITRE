@@ -9,7 +9,7 @@ ou soprano et alto en accords), les portées masquées d'un système reconnues �
   python3 pdf_vectoriel.py <partition.pdf> <sortie.musicxml>
       code de sortie 2 : PDF sans symboles SMuFL (scan, autre logiciel) : la lecture d'image prend le relais
 """
-import ctypes, statistics, sys
+import ctypes, os, statistics, sys
 from fractions import Fraction
 
 import pypdfium2 as pdfium
@@ -419,7 +419,7 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
         down = [v for v in stems if abs(v[0] - h["left"]) < 0.3 * sp and abs(v[3] - h["y"]) < 0.6 * sp and v[1] < h["y"] - sp]
         notes.append(dict(x=h["x"], y=h["y"], left=h["left"], right=h["right"], midi=midi, step=step, octave=d // 7,
                           alter=alter, base=HEADS[h["code"]], up=bool(up), down=bool(down),
-                          stem=(up or down or [None])[0], tie=False))
+                          stem=(up or down or [None])[0], stem_down=down[0] if up and down else None, tie=False))
     # queue partagée par un accord : la tête du bout la porte, les autres au même x et sous la même queue aussi
     for n in notes:
         if n["stem"] is None:
@@ -429,11 +429,10 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
                     if s_[1] - 0.6 * sp <= n["y"] <= s_[3] + 0.6 * sp:
                         n["stem"], n["up"], n["down"] = s_, m["up"], m["down"]
                         break
-    for n in notes:
+    def stem_dur(n, s_, up):
         dur = Fraction(n["base"])
-        if n["base"] == 1 and n["stem"] is not None:
-            s_ = n["stem"]
-            tip = s_[3] if n["up"] else s_[1]
+        if n["base"] == 1 and s_ is not None:
+            tip = s_[3] if up else s_[1]
             sx = (s_[0] + s_[2]) / 2
             # crochet : son origine au bout de la queue (SMuFL) ou à la tête (polices Sonata), son bord au bout
             flags = [g for g in mine if g["code"] in FLAGS and abs(g["x"] - sx) < 0.6 * sp
@@ -442,7 +441,7 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
                 dur = Fraction(1, 2 ** FLAGS[flags[0]["code"]])
             else:
                 # ligatures : au bout de la queue, les suivantes empilées vers la tête (3/4 d'interligne chacune)
-                toward = 1 if not n["up"] else -1  # queue descendante : les ligatures suivantes sont au-dessus
+                toward = 1 if not up else -1  # queue descendante : les ligatures suivantes sont au-dessus
                 beams = [b for b in shapes if not b[4] and b[0] - 0.4 <= sx <= b[2] + 0.4 and 0.35 * sp <= (b[3] - b[1]) < 3 * sp and (b[2] - b[0]) > 0.6 * sp
                          and b[1] - 0.6 * sp <= tip + (2.6 * sp if toward > 0 else 0) and b[3] + 0.6 * sp >= tip - (2.6 * sp if toward < 0 else 0)
                          and not (b[1] > n["y"] - 0.3 * sp and b[3] < n["y"] + 0.3 * sp)]
@@ -450,10 +449,19 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
                     # une ligature par niveau, chacune son tracé (penchée : son cadre est plus haut qu'elle, on ne
                     # mesure pas sa hauteur, on compte les tracés qui passent au bout de la queue)
                     dur = Fraction(1, 2 ** min(4, len(beams)))
+        return dur
+
+    for n in notes:
+        dur = stem_dur(n, n["stem"], n["up"])
+        # unisson à deux queues : chaque voix sa durée (noire du ténor, croche ligaturée de la basse : Psaume 118)
+        dur_down = stem_dur(n, n["stem_down"], False) if n["stem_down"] is not None else None
         dots = [g for g in mine if g["code"] == DOT and 0 < g["x"] - n["right"] < 1.6 * sp and abs(g["y"] - n["y"]) < 0.6 * sp]
         if dots:
             dur = dur * (Fraction(3, 2) if len(dots) == 1 else Fraction(7, 4))
+            dur_down = dur_down and dur_down * (Fraction(3, 2) if len(dots) == 1 else Fraction(7, 4))
         n["dur"] = dur
+        if dur_down is not None and dur_down != dur:
+            n["dur_down"] = dur_down
     # triolets : chiffre « 3 » au-dessus d'un groupe ligaturé ou d'un crochet
     for g in mine:
         if g["code"] in TUPLET and TUPLET[g["code"]] in (3, 5, 6):
@@ -464,6 +472,8 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
             for n in group:
                 if round(n["x"]) in xs:
                     n["dur"] = n["dur"] * Fraction(2 if k == 3 else 4, k)
+                    if "dur_down" in n:
+                        n["dur_down"] = n["dur_down"] * Fraction(2 if k == 3 else 4, k)
     # liaisons de prolongation
     for k, n in enumerate(notes):
         for m in notes[k + 1:]:
@@ -545,8 +555,12 @@ def plan_of(system):
     return [(s, ["Soprano", "Alto"] if chordal(s) else ["Soprano"])]
 
 
-def split_voices(staff, names):
-    """Événements de chaque voix de la portée, triés par x : (x, durée, [notes] ou None pour un silence)."""
+HOLD = os.environ.get("PUPITRE_UNISSON_TENUE", "1") != "0"
+
+
+def split_voices(staff, names, cuts=()):
+    """Événements de chaque voix de la portée, triés par x : (x, durée, [notes] ou None pour un silence).
+    cuts : barres de mesure du système (abscisses), pour suivre le temps de chaque voix dans la mesure."""
     notes = sorted(staff["notes"], key=lambda n: (round(n["x"], 1), -n["midi"]))
     onsets = []
     for n in notes:
@@ -563,7 +577,32 @@ def split_voices(staff, names):
         return out
     two_stems = any(any(n["up"] and not n["down"] for n in g) and any(n["down"] and not n["up"] for n in g) for g in onsets)
     sp = staff["sp"]
-    for g in onsets:
+
+    def rest_target(r):
+        # silence au-dessus du milieu : voix du haut ; au-dessous : voix du bas
+        return names[0] if r["y"] > staff["mid"] + 0.3 * sp else names[1] if r["y"] < staff["mid"] - 0.3 * sp else None
+
+    # temps de chaque voix depuis la dernière barre : une tête seule n'est un unisson que si l'autre voix ne tient pas
+    # encore sa note (« Avec toi Seigneur » : note de l'alto pendant la ronde de la soprano ; Psaume 118 : croche de la
+    # basse pendant la noire du ténor)
+    items = [(g[0]["x"], 0, g) for g in onsets] + [(r["x"], 1, r) for r in staff["rests"]]
+    items.sort(key=lambda t: (t[0], t[1]))
+    clock = {name: Fraction(0) for name in names}
+    rests = {name: [] for name in names}
+    bar_i = 0
+    for x, kind, it in items:
+        while bar_i < len(cuts) and x >= cuts[bar_i]:
+            bar_i += 1
+            clock = {name: Fraction(0) for name in names}
+        if kind == 1:
+            target = rest_target(it)
+            busy = target is None and any(abs(g[0]["x"] - it["x"]) < 0.8 * sp for g in onsets)
+            for name in ([target] if target else names):
+                rests[name].append(it)
+                if not busy:
+                    clock[name] += it["dur"]
+            continue
+        g = it
         ups = [n for n in g if n["up"] and not n["down"]]
         downs = [n for n in g if n["down"] and not n["up"]]
         if not two_stems or (len(g) >= 2 and (not ups or not downs)) or (not ups and not downs):
@@ -575,18 +614,18 @@ def split_voices(staff, names):
                 h0 = g[0]
                 other = [m for m in staff["notes"] if m is not h0 and abs(m["x"] - h0["x"]) < 3 * sp
                          and (m["down"] if h0["up"] else m["up"])]
-                if not other and not any(abs(r["x"] - h0["x"]) < 1.5 * sp for r in staff["rests"]):
+                mine, theirs = (names[0], names[1]) if h0["up"] else (names[1], names[0])
+                holding = HOLD and clock[theirs] > clock[mine]
+                if not other and not holding and not any(abs(r["x"] - h0["x"]) < 1.5 * sp for r in staff["rests"]):
                     hi = lo = [h0]
-        if hi:
-            out[names[0]].append((g[0]["x"], min(n["dur"] for n in hi), hi))
-        if lo:
-            out[names[1]].append((g[0]["x"], min(n["dur"] for n in lo), lo))
-    for r in staff["rests"]:
-        # silence au-dessus du milieu : voix du haut ; au-dessous : voix du bas
-        target = names[0] if r["y"] > staff["mid"] + 0.3 * sp else names[1] if r["y"] < staff["mid"] - 0.3 * sp else None
-        for name in ([target] if target else names):
-            if not any(abs(e[0] - r["x"]) < 0.8 * sp for e in out[name]):
-                out[name].append((r["x"], r["dur"], None))
+        for name, grp in ((names[0], hi), (names[1], lo)):
+            if grp:
+                d = min(n.get("dur_down", n["dur"]) if name == names[1] else n["dur"] for n in grp)
+                out[name].append((g[0]["x"], d, grp))
+                clock[name] += d
+    for name in names:  # silence écrit là où la voix a déjà une note : l'autre voix
+        sounding = [e[0] for e in out[name]]
+        out[name] += [(r["x"], r["dur"], None) for r in rests[name] if not any(abs(x - r["x"]) < 0.8 * sp for x in sounding)]
     return out
 
 
@@ -618,7 +657,7 @@ def build(systems):
         n_meas = max(1, len(cuts))
         seen = set()
         for staff, names in plan_of(system):
-            ev = split_voices(staff, names)
+            ev = split_voices(staff, names, cuts)
             for name in names:
                 seen.add(name)
                 cl = staff["clefs"][0][1] if staff["clefs"] else ("G", 0)

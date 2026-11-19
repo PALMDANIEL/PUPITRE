@@ -257,6 +257,7 @@ FEMALE, MALE = {"Soprano", "Alto", "Mezzo"}, {"Ténor", "Basse", "Baryton"}
 # noms de voix mal lus par l'OCR (« ’I‘cnor » pour Tenor : T lu ’I‘, e lu c) : un mot d'au moins 4 lettres à 2 lettres
 # près d'un nom de voix est ce nom (« Song bal la Wende », photo WhatsApp : ténor coupé en deux voix, 7 voix pour 4)
 FUZZY_NAMES = os.environ.get("PUPITRE_NOMS_APPROCHES", "1") == "1"
+SOLO_APART = os.environ.get("PUPITRE_SOLO_A_PART", "1") == "1"  # merge_named_parts : ligne seule ≠ portée à deux voix
 NAMED_FIRST = os.environ.get("PUPITRE_NOMMEES_DABORD", "1") == "1"  # merge_named_parts : parties bien nommées d'abord
 _FULL = [k for k in ABBR if len(k) >= 4]
 
@@ -471,13 +472,18 @@ def merge_named_parts(parts):
     order_parts = parts if not NAMED_FIRST else [p for p in parts if not weak(p)] + [p for p in parts if weak(p)]
     for p in order_parts:
         key, mine, w, lp, pitch = name_key(p), sung_numbers(p), weak(p), low(p), mean_pitch(p) or 60
+        two = bool(needs_split(p)) if SOLO_APART else None
         free = [sl for sl in slots
                 if len(mine & sl["sung"]) <= 0.2 * max(1, min(len(mine), len(sl["sung"])))]
         same = next((sl for sl in free if key in sl["keys"]), None)
         if same is None and (w or all(sl_w for sl in free for sl_w in [sl["weak"]])):
-            same = next((sl for sl in free if (w or sl["weak"]) and sl["low"] == lp and abs(sl["pitch"] - pitch) <= 7), None)
+            # une ligne seule (couplet du soliste, sur sa propre portée) ne rejoint pas une portée à deux voix (S. A. du
+            # refrain) : séparée, elle est versée dans la voix la plus aiguë (fold_solos) ; réunie, la séparation des
+            # voix la donnait aussi à l'alto, en unisson (Psaume 118 des chorales : 13 notes de trop à l'alto)
+            same = next((sl for sl in free if (w or sl["weak"]) and sl["low"] == lp and abs(sl["pitch"] - pitch) <= 7
+                         and (two is None or sl["two"] is None or sl["two"] == two)), None)
         if same is None:
-            slots.append({"parts": [p], "keys": {key}, "sung": set(mine), "weak": w, "low": lp, "pitch": pitch})
+            slots.append({"parts": [p], "keys": {key}, "sung": set(mine), "weak": w, "low": lp, "pitch": pitch, "two": two})
         else:
             same["parts"].append(p); same["keys"].add(key); same["sung"] |= mine
             same["weak"] = same["weak"] and w
@@ -866,10 +872,23 @@ def align_measures(voices):
     return rebuilt
 
 
+def drop_chord_symbols(score):
+    """Accords chiffrés pour la guitare (G, Em, Am7 au-dessus de la portée) : Audiveris les lit comme des accords sans
+    durée, que music21 compte parmi les notes. Ils ne se chantent pas, et faussaient la hauteur moyenne des voix,
+    leur nombre de notes et le banc d'essai."""
+    if os.environ.get("PUPITRE_ACCORDS_CHIFFRES") == "garder":
+        return 0
+    found = list(score.recurse().getElementsByClass(harmony.Harmony))
+    for h in found:
+        h.activeSite.remove(h)
+    return len(found)
+
+
 def extract_voices(score, trust_names=True):
     """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
     c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
     Pour un fichier MusicXML ou MIDI (hauteurs exactes, ordre des pistes parfois quelconque), on trie par hauteur."""
+    drop_chord_symbols(score)
     if not trust_names:
         harmonize_keys(score)
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
