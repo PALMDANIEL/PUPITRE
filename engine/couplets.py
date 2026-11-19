@@ -24,6 +24,8 @@ import imgio
 import pupitres
 
 ENABLED = os.environ.get("PUPITRE_COUPLETS", "1") != "0"
+AGREE = float(os.environ.get("PUPITRE_COUPLETS_ACCORD", "0.6"))
+RELOCATE = os.environ.get("PUPITRE_COUPLETS_HAUT", "1") != "0"  # couplets écrits dans la portée du haut du refrain  # part des notes d'Audiveris que homr doit retrouver
 
 
 def layout(pages_dir: pathlib.Path):
@@ -87,6 +89,123 @@ def _clean(p, ks):
         p.accidental = pitch.Accidental(a.name) if a else None
 
 
+def _degrees(ms):
+    """Note la plus haute de chaque instant (Audiveris range les deux voix d'un couplet S+A l'une après l'autre)."""
+    out = []
+    for m in ms:
+        tops = {}
+        for n in m.recurse().notes:
+            if n.pitches and not n.duration.isGrace:
+                t = round(float(n.getOffsetInHierarchy(m)), 3)
+                p = max(n.pitches, key=lambda q: q.ps)
+                if t not in tops or p.ps > tops[t].ps:
+                    tops[t] = p
+        out += [(tops[t].step, tops[t].octave) for t in sorted(tops)]
+    return out
+
+
+def _from_homr(hm, ks, old):
+    """Notes d'une mesure de homr, à la suite : [(début, élément)] ; paroles d'Audiveris reportées (même hauteur)."""
+    from music21 import chord, note
+    new = []
+    for el in hm.recurse().notesAndRests:
+        # accords gardés : couplet de soprano et alto sur une portée (Psaumes 24, 70), écrit en accords
+        if isinstance(el, chord.Chord):
+            n = chord.Chord(sorted({p.nameWithOctave: p for p in el.pitches}.values(), key=lambda p: p.ps),
+                            quarterLength=el.quarterLength)
+        elif isinstance(el, note.Note):
+            n = note.Note(el.pitch, quarterLength=el.quarterLength)
+        else:
+            n = note.Rest(quarterLength=el.quarterLength)
+        if not n.isRest:
+            n.tie = el.tie
+            for p in n.pitches:
+                _clean(p, ks)
+        new.append(n)
+    top = lambda x: max(p.midi for p in x.pitches)  # noqa: E731
+    a_seq = [top(o) for o in old]
+    b_seq = [top(n) if not n.isRest else -1 for n in new]
+    for tag, a1, a2, b1, b2 in difflib.SequenceMatcher(a=a_seq, b=b_seq, autojunk=False).get_opcodes():
+        if tag in ("equal", "replace"):
+            for o, n in zip(old[a1:a2], new[b1:b2]):
+                if not n.isRest and o.lyrics:
+                    n.lyrics = copy.deepcopy(o.lyrics)
+    out, at = [], 0.0
+    for n in new:
+        out.append((at, n))
+        at += float(n.quarterLength)
+    return out
+
+
+def _voices_of(m):
+    """Contenu d'une mesure d'Audiveris, voix par voix : [[(début, élément)]]."""
+    srcs = list(m.voices) or [m]
+    return [[(float(el.offset), copy.deepcopy(el)) for el in v.notesAndRests] for v in srcs]
+
+
+def _clear(m, rest=False):
+    from music21 import note
+    for el in list(m.recurse().notesAndRests):
+        el.activeSite.remove(el)
+    for v in list(m.voices):
+        m.remove(v)
+    if rest:
+        m.insert(0, note.Rest(quarterLength=float(m.barDuration.quarterLength)))
+
+
+def _fill(m, content):
+    """Couplet écrit dans la mesure m ; à une seule voix sans accord, l'alto se tait (silence caché en 2e voix) :
+    la séparation des voix de la portée S. A. donnait sinon le couplet du soliste aussi à l'alto."""
+    from music21 import chord, note, stream
+    _clear(m)
+    content = [c for c in content if c]
+    if not content:
+        return
+    single = len(content) == 1 and not any(isinstance(el, chord.Chord) for _t, el in content[0])
+    groups = content + ([[(0.0, None)]] if single else [])
+    length = max((t + float(el.quarterLength) for c in content for t, el in c), default=0.0)
+    for k, items in enumerate(groups, 1):
+        v = stream.Voice()
+        v.id = str(k)
+        for t, el in items:
+            if el is None:
+                # silence caché, découpé en durées simples (sans makeNotation, music21 refuse d'écrire 5 ou 7 temps)
+                at = 0.0
+                for q in _plain(length or float(m.barDuration.quarterLength)):
+                    r = note.Rest(quarterLength=q)
+                    r.style.hideObjectOnPrint = True
+                    v.insert(at, r)
+                    at += q
+                continue
+            v.insert(t, el)
+        m.insert(0, v)
+
+
+def _plain(length):
+    """Durée découpée en valeurs simples (brève, ronde pointée, ronde…)."""
+    out = []
+    for q in (8.0, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.75, 0.5, 0.25):
+        while length >= q - 1e-6:
+            out.append(q)
+            length -= q
+    return out
+
+
+def _top_staff(staves, rows, start):
+    """Portée du haut du refrain (S. A.) : la première, dans l'ordre de la partition, qui chante avant les couplets en
+    clé de sol. Audiveris range les lignes des couplets par leur place sur la page, parfois dans la partie T. B.
+    (« Toussaint » : couplet chanté par l'alto, le ténor et la basse)."""
+    from music21 import clef
+    for k, r in enumerate(rows):
+        sung = [m for m in r[:start] if _sounding(m)]
+        if not sung:
+            continue
+        c = sung[0].getContextByClass(clef.Clef)
+        if c is None or c.sign == "G":
+            return k
+    return None
+
+
 def apply(partition, folder: pathlib.Path, out) -> int:
     """Mesures des couplets remplacées par la lecture de homr. Rend le nombre de lignes reprises."""
     from music21 import chord, converter, note, stream
@@ -121,52 +240,44 @@ def apply(partition, folder: pathlib.Path, out) -> int:
     if not voices:
         return 0
     staff_of = max(set(voices.values()), key=list(voices.values()).count)
+    top = _top_staff(staves, rows, start) if RELOCATE else None
     taken = 0
     i = start
-    for line in lines:
+    for li, line in enumerate(lines):
+        # homr complète la lecture d'Audiveris (notes perdues dans une mesure trop longue) ; s'il la contredit (photo
+        # floue : homr y lit mal, Psaume 24 flou : soprano 85 → 60 %), la ligne d'Audiveris reste
+        aud = _degrees([rows[voices.get(i + k, staff_of)][i + k] for k in range(len(line))
+                        if i + k < len(rows[voices.get(i + k, staff_of)])])
+        hom = _degrees(line)
+        common = sum(b.size for b in difflib.SequenceMatcher(a=aud, b=hom, autojunk=False).get_matching_blocks())
+        accept = not aud or common >= AGREE * len(aud)
+        if not accept:
+            print(f"Couplets : ligne {li + 1} gardée d'Audiveris (homr n'en retrouve que {common}/{len(aud)} notes)",
+                  file=sys.stderr)
+        wrote = False
         for k, hm in enumerate(line):
             idx = i + k
-            r = rows[voices.get(idx, staff_of)]
-            if idx >= len(r):
+            src = voices.get(idx, staff_of)
+            if idx >= len(rows[src]):
                 continue
-            m = r[idx]
-            ks = _keysig(staves[voices.get(idx, staff_of)], m)
-            old = _sounding(m)
-            new = []
-            for el in hm.recurse().notesAndRests:
-                # accords gardés : couplet de soprano et alto sur une portée (Psaumes 24, 70), écrit en accords
-                if isinstance(el, chord.Chord):
-                    n = chord.Chord(sorted({p.nameWithOctave: p for p in el.pitches}.values(), key=lambda p: p.ps),
-                                    quarterLength=el.quarterLength)
-                elif isinstance(el, note.Note):
-                    n = note.Note(el.pitch, quarterLength=el.quarterLength)
-                else:
-                    n = note.Rest(quarterLength=el.quarterLength)
-                if not n.isRest:
-                    n.tie = el.tie
-                    for p in n.pitches:
-                        _clean(p, ks)
-                new.append(n)
-            # paroles d'Audiveris reportées sur la note de même hauteur (alignement des suites de hauteurs)
-            top = lambda x: max(p.midi for p in x.pitches)  # noqa: E731
-            a_seq = [top(o) for o in old]
-            b_seq = [top(n) if not n.isRest else -1 for n in new]
-            for tag, a1, a2, b1, b2 in difflib.SequenceMatcher(a=a_seq, b=b_seq, autojunk=False).get_opcodes():
-                if tag in ("equal", "replace"):
-                    for o, n in zip(old[a1:a2], new[b1:b2]):
-                        if not n.isRest and o.lyrics:
-                            n.lyrics = copy.deepcopy(o.lyrics)
-            for el in list(m.recurse().notesAndRests):
-                el.activeSite.remove(el)
-            for v in list(m.voices):
-                m.remove(v)
-            at = 0.0
-            for n in new:
-                m.insert(at, n)
-                at += float(n.quarterLength)
+            m = rows[src][idx]
+            ks = _keysig(staves[src], m)
+            if accept:
+                content = [_from_homr(hm, ks, _sounding(m))]
+            elif top is not None and src != top and voices.get(idx) is not None:
+                content = _voices_of(m)
+            else:
+                continue
+            dst = rows[top][idx] if top is not None and idx < len(rows[top]) else m
+            if dst is not m:
+                _clear(m, rest=True)
+            _fill(dst, content)
+            wrote = True
         i += len(line)
-        taken += 1
-    score.write("musicxml", fp=str(out))
+        taken += wrote
+    # sans makeNotation : music21 coupait les mesures de récitation (plus longues que la mesure écrite) par des
+    # liaisons, et plantait (KeyError) ou tournait sans fin sur une copie usée
+    score.write("musicxml", fp=str(out), makeNotation=False)
     return taken
 
 

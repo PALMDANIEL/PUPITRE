@@ -316,6 +316,11 @@ def staves_of(hor):
             merged.append(list(s_))
         else:
             m[3], m[4] = min(m[3], s_[3]), max(m[4], s_[4])
+    # lignes supplémentaires empilées sous une portée (cinq petits traits réguliers, « Toussaint » : 8 interlignes de
+    # large) : pas une portée ; gardée, elle prenait les crochets des notes voisines (croches lues noires)
+    if merged:
+        widest = max(m[4] - m[3] for m in merged)
+        merged = [m for m in merged if m[4] - m[3] >= max(12 * m[2], 0.25 * widest)]
     return sorted((tuple(m) for m in merged), key=lambda s: -s[1])
 
 
@@ -519,10 +524,16 @@ def read_pdf(path):
             content = []
             for st in group:
                 y0, y1, sp, xl, xr = st
-                mine = [g for g in gl if y0 - 4 * sp <= g["y"] <= y1 + 4 * sp and xl - 2 * sp <= g["x"] <= xr + sp
+                # 6,5 interlignes : crochet d'une note à deux lignes supplémentaires (ténor au-dessus de la clé de fa,
+                # « Toussaint » : croches lues noires à 4 interlignes) ; chaque signe va à la portée la plus proche
+                mine = [g for g in gl if y0 - 6.5 * sp <= g["y"] <= y1 + 6.5 * sp and xl - 2 * sp <= g["x"] <= xr + sp
                         and min(staves, key=lambda s: abs((s[0] + s[1]) / 2 - g["y"])) is st]
                 content.append(read_staff(st, mine, ver, shapes, texts, staves, size))
-            systems.append(content)
+            # cinq traits parallèles sans clé, sans note ni silence (cadre, traits décoratifs) : pas une portée ; gardée,
+            # elle prenait la place de la portée de fa (« Toussaint » : soprano lue sur la portée de fa, ténor et basse perdus)
+            content = [c for c in content if c["notes"] or c["rests"] or c["clefs"]]
+            if content:
+                systems.append(content)
     return systems
 
 

@@ -33,13 +33,37 @@ def mean_pitch(obj):
     return statistics.mean(ps) if ps else None
 
 
-def needs_split(part):
+def needs_split(part, choir=None):
     """Portée qui porte deux voix (S+A, T+B) : deux voix dans une bonne part des mesures, ou beaucoup d'accords.
-    Une seule mesure à deux voix est presque toujours une erreur de lecture, pas une voix de plus."""
+    Une seule mesure à deux voix est presque toujours une erreur de lecture, pas une voix de plus.
+    choir : numéros des mesures où le chœur chante ensemble (plusieurs portées) ; on n'y juge que celles-là quand la
+    portée y chante assez, pour qu'un couplet de soliste rangé dans la même partie que le refrain S. A. ne fasse pas
+    passer celle-ci pour une seule voix (« Toussaint » usée : alto du refrain perdu)."""
     sung = [m for m in part.getElementsByClass(stream.Measure) if m.recurse().notes]
+    if choir is not None and CHOIR_ONLY:
+        together = [m for m in sung if m.number in choir]
+        if len(together) >= 2 and len(together) < len(sung):
+            sung = together
+            notes = [n for m in sung for n in m.recurse().notes]
+            chords = [c for c in notes if isinstance(c, chord.Chord) and not isinstance(c, harmony.ChordSymbol)]
+            doubled = sum(1 for m in sung if sum(1 for v in m.voices if v.notes) >= 2)
+            return doubled >= 0.3 * len(sung) or (notes and len(chords) > len(notes) * 0.3)
     doubled = sum(1 for m in sung if sum(1 for v in m.voices if v.notes) >= 2)
     n = len(part.recurse().notes)
     return (sung and doubled >= 0.3 * len(sung)) or (n and len(real_chords(part)) > n * 0.3)
+
+
+CHOIR_ONLY = os.environ.get("PUPITRE_DEUX_VOIX_CHOEUR", "1") == "1"
+
+
+def choir_measures(parts):
+    """Numéros des mesures chantées par au moins deux portées (le chœur ensemble, pas un couplet de soliste)."""
+    count = {}
+    for p in parts:
+        for m in p.getElementsByClass(stream.Measure):
+            if m.recurse().notes:
+                count[m.number] = count.get(m.number, 0) + 1
+    return {k for k, v in count.items() if v >= 2}
 
 
 def keep_highest_or_lowest(line, pick):
@@ -195,6 +219,12 @@ def split_staff(part):
             src_t, src_b = sung[0], sung[-1]
         else:
             src_t = src_b = sung[0] if sung else (m.voices[0] if m.voices else m)
+            # voix muette écrite exprès (silence caché : couplet du soliste, couplets.py) : la voix du bas se tait,
+            # au lieu de chanter la mélodie à l'unisson
+            mute = [v for v in m.voices if not v.notes and v.notesAndRests
+                    and all(r.style.hideObjectOnPrint for r in v.notesAndRests)]
+            if len(sung) == 1 and mute:
+                src_b = mute[0]
         if len(sung) >= 3 and GAPS and MAIN_VOICES:
             mt, mb = two_voices(m, sung, mt)
             top.append(mt); bottom.append(mb)
@@ -902,8 +932,9 @@ def extract_voices(score, trust_names=True):
             print(f"Portée {i + 1}, mesures {a + 1} à {b + 1} : recalée d'un degré vers le {'bas' if s < 0 else 'haut'} "
                   "(harmonie et altérations)", file=sys.stderr)
     voices = []
+    choir = choir_measures(sung)
     for part in sung:
-        lines = split_staff(part) if needs_split(part) else [flatten_voices(part)]
+        lines = split_staff(part) if needs_split(part, choir) else [flatten_voices(part)]
         for line, name in zip(lines, staff_names(part.partName or part.partAbbreviation, len(lines))):
             line.partName = name or ""  # None ferait reparaître le nom d'instrument d'Audiveris (« Voice », « Balme »)
         share_lyrics(lines)

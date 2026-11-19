@@ -1044,12 +1044,12 @@ def reread_verses(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.P
         return target
     folder = work / "couplets"
     try:
-        r = subprocess.run(step("couplets", "prepare", pages_dir, folder), **QUIET)
+        r = subprocess.run(step("couplets", "prepare", pages_dir, folder), timeout=120, **QUIET)
         if r.returncode or not homr_staves(folder):
             return target
         out = work / "partition-couplets.musicxml"
         r = subprocess.run(step("couplets", "apply", target, folder, out), capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", **QUIET)
+                           encoding="utf-8", errors="replace", timeout=180, **QUIET)
         sys.stderr.write("".join(l + "\n" for l in r.stderr.splitlines() if l.startswith("Couplets")))
         if r.returncode or not out.exists():
             return target
