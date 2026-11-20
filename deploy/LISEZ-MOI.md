@@ -7,7 +7,22 @@ Pupitre) et renvoie un pack de répétition au téléphone. L'écoute se fait en
 - Une chorale ne voit jamais les partitions d'une autre.
 - L'image est construite et testée par GitHub Actions (workflow *Serveur*) : `ghcr.io/palmdaniel/pupitre-serveur`.
 
-## Hébergement actuel : Vercel (essai gratuit)
+## Hébergement actuel : VPS d'AIT (depuis le 20/11/2026)
+
+Le serveur tourne sur le VPS d'AIT (Integris, Ubuntu x86_64) : **https://pupitre-102-204-24-173.sslip.io** (adresse
+provisoire, en attendant un nom de domaine), à côté de DaniMak (https://danimak-102-204-24-173.sslip.io), derrière le
+même Caddy. Dossier `~/pupitre` sur le VPS : ce `docker-compose.yml`, `secrets.env` (registre, vente : collés par AIT
+avec `~/pupitre-secrets/installer-pupitre.sh` sur le Mac), `.env` (`DOMAINE=…`). Mise à jour après un envoi sur `main`
+(l'image est construite et testée par GitHub Actions) :
+
+```bash
+ssh ubuntu@102.204.24.173 'cd pupitre && sudo docker compose pull pupitre && sudo docker compose up -d'
+```
+
+Quotas : copies à déchiffrer par jour, par forfait, réglées dans le tableau de bord de l'Espace AIT (section
+« Copies à déchiffrer par jour »).
+
+## Ancien hébergement : Vercel (bloqué depuis le 19/11/2026, « fair use »)
 
 Le serveur tourne sur **https://pupitre-lecture.vercel.app** (projet `pupitre-lecture`, équipe `palmdaniels-projects`).
 Vercel construit `Dockerfile.vercel` (même image, réglée pour Vercel) en **lecture directe** : le téléphone reste

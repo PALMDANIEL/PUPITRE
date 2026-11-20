@@ -12,7 +12,32 @@ export interface Item {
   issued: string | null; expires: string | null; status: 'active' | 'revoked'; reason: string | null;
   revoked_at: string | null; registered_at: string; first_seen: string | null; last_seen: string | null;
   app_version: string | null; os: string | null; ip: string | null; uses: number; device?: string | null;
+  /** Forfait (produit des tarifs) : enregistré à la vente ou par AIT, sinon déduit de la durée */
+  product: string | null; plan: string; plan_label: string | null;
+  /** Limite propre au client (NULL : celle du forfait) ; limite en vigueur (NULL : illimité) ; copies lues aujourd'hui */
+  daily_quota: number | null; limit: number | null; used_today: number;
 }
+
+/** Quota de copies à déchiffrer par jour d'une licence ou d'un code. */
+export interface Quota { plan: string; label: string | null; limit: number | null; used: number; own: boolean }
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Forfait d'une licence ou d'un code : celui de la vente (ou choisi par AIT), sinon d'après sa durée
+ * (forfait le plus proche : jusqu'à 106 jours 1 mois, jusqu'à 273 jours 6 mois, au-delà ou sans date de fin 1 an).
+ */
+export function planOf(it: { kind: string; product?: string | null; issued?: string | null; expires?: string | null }): string {
+  if (it.product) return it.product;
+  const kind = it.kind === 'licence' ? 'licence' : 'acces';
+  if (!it.issued || !it.expires) return `${kind}-1a`;
+  const days = (Date.parse(`${it.expires}T00:00:00Z`) - Date.parse(`${it.issued}T00:00:00Z`)) / DAY_MS;
+  // au plus près : 3 mois → 1 mois, 9 mois → 1 an ; 2 ans et définitive → 1 an
+  return `${kind}-${days <= 106 ? '1m' : days <= 273 ? '6m' : '1a'}`;
+}
+
+/** Jour en cours (heure du Burkina = temps universel). */
+export const today = (now = new Date()) => now.toISOString().slice(0, 10);
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS ait_items (
@@ -87,6 +112,14 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS ait_counters (name text PRIMARY KEY, n integer NOT NULL);
   ALTER TABLE ait_orders ADD COLUMN IF NOT EXISTS gateway text;
   ALTER TABLE ait_orders ADD COLUMN IF NOT EXISTS declared_at timestamptz;
+  -- Copies à déchiffrer par jour : par forfait (NULL = illimité), et limite propre à un client si AIT la fixe
+  ALTER TABLE ait_prices ADD COLUMN IF NOT EXISTS daily_quota integer;
+  ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS product text;
+  ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS daily_quota integer;
+  -- ordinateurs : lectures du jour signalées à chaque vérification de licence
+  ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS desk_day date;
+  ALTER TABLE ait_items ADD COLUMN IF NOT EXISTS desk_used integer;
+  CREATE INDEX IF NOT EXISTS ait_events_lecture ON ait_events (item_id, at) WHERE kind = 'lecture';
 `;
 
 let pool: pg.Pool | null = null;
@@ -196,9 +229,61 @@ export async function overview() {
 
 export async function listItems(): Promise<Item[]> {
   const d = (await db())!;
-  const { rows } = await d.query(`SELECT *, to_char(issued, 'YYYY-MM-DD') AS issued, to_char(expires, 'YYYY-MM-DD') AS expires
-    FROM ait_items ORDER BY last_seen DESC NULLS LAST, registered_at DESC`);
-  return rows;
+  const { rows } = await d.query(`SELECT i.*, to_char(i.issued, 'YYYY-MM-DD') AS issued, to_char(i.expires, 'YYYY-MM-DD') AS expires,
+      CASE WHEN i.kind = 'licence' THEN CASE WHEN i.desk_day = (now() AT TIME ZONE 'UTC')::date THEN COALESCE(i.desk_used, 0) ELSE 0 END
+           ELSE (SELECT count(*) FROM ait_events e WHERE e.item_id = i.id AND e.kind = 'lecture' AND e.at >= ${DAY_START})::int END AS used_today
+    FROM ait_items i ORDER BY i.last_seen DESC NULLS LAST, i.registered_at DESC`);
+  const plans = await planQuotas();
+  return rows.map((r) => {
+    const plan = planOf(r);
+    return { ...r, plan, plan_label: plans.get(plan)?.label ?? null, limit: r.daily_quota ?? plans.get(plan)?.quota ?? null };
+  });
+}
+
+/** Début du jour en cours, en temps universel (heure du Burkina). */
+const DAY_START = `((now() AT TIME ZONE 'UTC')::date::timestamp AT TIME ZONE 'UTC')`;
+
+async function planQuotas(): Promise<Map<string, { label: string; quota: number | null }>> {
+  const d = (await db())!;
+  const { rows } = await d.query<{ product: string; label: string; daily_quota: number | null }>(`SELECT product, label, daily_quota FROM ait_prices`);
+  return new Map(rows.map((r) => [r.product, { label: r.label, quota: r.daily_quota }]));
+}
+
+/**
+ * Quota du jour d'une licence ou d'un code inscrit au registre ; null sans base ou s'il est inconnu.
+ * Codes de chorale : lectures comptées par le serveur (événements « lecture » du jour).
+ * Licences d'ordinateur : lectures signalées par l'ordinateur à sa dernière vérification.
+ */
+export async function quotaOf(id: string): Promise<Quota | null> {
+  const d = await db();
+  if (!d) return null;
+  const { rows } = await d.query(
+    `SELECT i.kind, i.product, i.daily_quota, to_char(i.issued, 'YYYY-MM-DD') AS issued, to_char(i.expires, 'YYYY-MM-DD') AS expires,
+       CASE WHEN i.kind = 'licence' THEN CASE WHEN i.desk_day = (now() AT TIME ZONE 'UTC')::date THEN COALESCE(i.desk_used, 0) ELSE 0 END
+            ELSE (SELECT count(*) FROM ait_events e WHERE e.item_id = i.id AND e.kind = 'lecture' AND e.at >= ${DAY_START})::int END AS used
+     FROM ait_items i WHERE i.id = $1`, [id]);
+  if (!rows[0]) return null;
+  const r = rows[0];
+  const plan = planOf(r);
+  const { rows: p } = await d.query<{ label: string; daily_quota: number | null }>(`SELECT label, daily_quota FROM ait_prices WHERE product = $1`, [plan]);
+  const own = r.daily_quota !== null && r.daily_quota !== undefined;
+  return { plan, label: p[0]?.label ?? null, limit: own ? r.daily_quota : (p[0]?.daily_quota ?? null), used: Number(r.used ?? 0), own };
+}
+
+/** Lectures du jour signalées par un ordinateur (vérification de licence). */
+export async function reportDeskUse(id: string, day: string, used: number) {
+  const d = await db();
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(used)) return;
+  await d.query(`UPDATE ait_items SET desk_day = $2::date, desk_used = $3 WHERE id = $1 AND (desk_day IS NULL OR desk_day <= $2::date)`,
+    [id, day, Math.max(0, Math.round(used))]);
+}
+
+/** Forfait et limite propre d'un client, choisis par AIT (null : forfait déduit, limite du forfait). */
+export async function setItemQuota(id: string, product: string | null, dailyQuota: number | null) {
+  const d = (await db())!;
+  const { rowCount } = await d.query(`UPDATE ait_items SET product = $2, daily_quota = $3 WHERE id = $1`, [id, product, dailyQuota]);
+  if (rowCount) await event(id, 'quota', { product, daily_quota: dailyQuota });
+  return rowCount ?? 0;
 }
 
 export async function setStatus(id: string, status: 'active' | 'revoked', reason: string | null) {

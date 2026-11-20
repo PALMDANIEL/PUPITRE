@@ -9,7 +9,7 @@ const EVENT_LABEL: Record<string, string> = {
 };
 const SERVER_KEY = 'pupitre-ait-serveur';
 
-interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean }
+interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean; daily_quota: number | null }
 interface SaleOrder {
   id: string; created_at: string; gateway: string | null; product: string; amount: number; client: string; contact: string | null; status: string;
   item_id: string | null; renew_id: string | null; operator: string | null; reference: string | null; declared_at: string | null; reason: string | null;
@@ -98,6 +98,10 @@ function chime(ctx: AudioContext) {
                 {{ seen(i) }}{{ i.machine ? ' · ' + i.machine : '' }}{{ i.os ? ' · ' + i.os : '' }}{{ i.app_version ? ' · v' + i.app_version : '' }}{{ i.kind === 'acces' ? ' · ' + i.uses + ' photo(s) lue(s)' : '' }}
               </span>
               <span class="small">{{ i.issued ? 'du ' + date(i.issued) + ' ' : '' }}{{ i.expires ? 'au ' + date(i.expires) : '· sans date de fin' }}{{ i.reason ? ' · motif : ' + i.reason : '' }}</span>
+              <span class="small quota" [class.full]="i.limit !== null && i.limit !== undefined && (i.used_today ?? 0) >= i.limit">
+                {{ i.plan_label ?? i.plan }} · aujourd’hui {{ i.used_today ?? 0 }}{{ i.limit === null || i.limit === undefined ? ' copie(s) · illimité' : ' / ' + i.limit + ' copie(s)' }}{{ i.daily_quota !== null && i.daily_quota !== undefined ? ' (limite propre)' : '' }}
+              </span>
+              <button type="button" class="act" (click)="itemQuota(i)">Copies par jour…</button>
               @if (i.kind === 'acces' && i.device) {
                 <button type="button" class="act" (click)="freeDevice(i)">Libérer le téléphone</button>
               }
@@ -112,6 +116,20 @@ function chime(ctx: AudioContext) {
       </section>
     }
     @if (loaded() && !groups().length) { <p class="hint">Aucune licence ni aucun code dans le registre du serveur pour l’instant.</p> }
+
+    <section class="glass quotas">
+      <h3>Copies à déchiffrer par jour</h3>
+      <p class="small">Pour chaque forfait : nombre de partitions qu’un client peut faire lire par jour (photos, PDF). Vide : illimité. Les relectures et corrections d’une partition déjà envoyée ne comptent pas. Un client peut avoir sa propre limite (« Copies par jour… » ci-dessus).</p>
+      <form class="prices" (ngSubmit)="savePrices()">
+        @for (p of prices(); track p.product) {
+          <label class="price">
+            <span>{{ p.label }}</span>
+            <input class="amount" type="number" inputmode="numeric" min="0" step="1" [(ngModel)]="p.daily_quota" [name]="'q-' + p.product" placeholder="illimité" [attr.aria-label]="'Copies par jour, ' + p.label">
+          </label>
+        }
+        <button class="btn" type="submit">Enregistrer les limites</button>
+      </form>
+    </section>
 
     <section class="glass sales">
       <h3>Ventes en ligne</h3>
@@ -194,6 +212,7 @@ function chime(ctx: AudioContext) {
     .price { display: grid; grid-template-columns: auto 1fr 7.5rem; gap: .6rem; align-items: center; font-size: .88rem; }
     .amount { border-radius: 10px; border: 1px solid var(--hair); background: var(--raised); color: var(--ink); padding: .4rem .6rem; font: inherit; text-align: right; }
     .prices .btn { justify-self: start; }
+    .quota.full { color: var(--warn, #e0a030); font-weight: 600; }
     .order { font-size: .82rem; display: block; }
     .confirm { padding: 1rem 1.1rem; margin-bottom: 1rem; display: grid; gap: .5rem; border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
     .confirm h3 { font-size: 1.1rem; color: var(--ok); }
@@ -218,7 +237,10 @@ export class AitDashboard {
   protected readonly sales = signal<{ total: number; month: number; count: number } | null>(null);
   protected readonly date = frDateShort;
   protected query = '';
-  protected server = (() => { try { return localStorage.getItem(SERVER_KEY) || ADMIN_SERVER; } catch { return ADMIN_SERVER; } })();
+  // adresse enregistrée sur cet appareil ; l'ancien hébergement Vercel (fermé le 19/11/2026) est remplacé par le VPS
+  protected server = (() => {
+    try { const s = localStorage.getItem(SERVER_KEY); return s && !/vercel\.app/.test(s) ? s : ADMIN_SERVER; } catch { return ADMIN_SERVER; }
+  })();
   private readonly q = signal('');
 
   protected readonly groups = computed(() => {
@@ -324,6 +346,20 @@ export class AitDashboard {
     catch (e) { this.error.set((e as Error).message); }
   }
 
+  /** Limite propre à un client (copies à déchiffrer par jour) ; vide : celle de son forfait. */
+  protected async itemQuota(i: ServerItem) {
+    const plan = i.plan_label ?? i.plan ?? 'son forfait';
+    const current = i.daily_quota ?? '';
+    const answer = prompt(`Copies à déchiffrer par jour pour ${i.id} (${i.client}).\nLaissez vide pour suivre le forfait « ${plan} ».`, String(current));
+    if (answer === null) return;
+    const value = answer.trim() === '' ? null : Number(answer.trim());
+    if (value !== null && (!Number.isFinite(value) || value < 0)) { this.error.set('Nombre de copies invalide.'); return; }
+    try {
+      await this.ait.admin(`/elements/${encodeURIComponent(i.id)}/quota`, { method: 'POST', body: { daily_quota: value, product: i.product ?? null } }, this.base);
+      await this.refresh();
+    } catch (e) { this.error.set((e as Error).message); }
+  }
+
   protected async freeDevice(i: ServerItem) {
     if (!confirm(`Libérer le téléphone lié à ${i.id} (${i.client}) ? Le prochain téléphone qui utilisera ce code sera lié à sa place.`)) return;
     try { await this.ait.admin(`/elements/${encodeURIComponent(i.id)}/appareil`, { method: 'POST', body: {} }, this.base); await this.refresh(); }
@@ -339,9 +375,11 @@ export class AitDashboard {
 
   protected async savePrices() {
     try {
-      const r = await this.ait.admin<{ prices: Price[] }>('/tarifs', { method: 'POST', body: { prices: this.prices().map(({ product, amount, active }) => ({ product, amount, active })) } }, this.base);
+      const r = await this.ait.admin<{ prices: Price[] }>('/tarifs', { method: 'POST', body: { prices: this.prices().map(({ product, amount, active, daily_quota }) => ({ product, amount, active, daily_quota: daily_quota ?? null })) } }, this.base);
       this.prices.set(r.prices);
       this.error.set(null);
+      // limite en vigueur de chaque client (celle de son forfait a pu changer)
+      this.items.set(await this.ait.admin<ServerItem[]>('/elements', {}, this.base));
     } catch (e) { this.error.set((e as Error).message); }
   }
   protected money(n: number) { return `${Number(n).toLocaleString('fr-FR')} FCFA`; }

@@ -2,13 +2,18 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Langue, ScoreMeta, ScoreStatus, Timbre, Voyelle } from './api';
 import { PackStore } from './packs';
 import { shrinkPhoto } from './shrink';
+import { AIT_SERVER_DEFAULT } from './serveur';
 
 /**
  * Serveur de lecture AIT (en ligne) : le téléphone envoie la photo d'une partition, le serveur lit les notes
  * et renvoie un pack de répétition, enregistré dans le téléphone (l'écoute se fait ensuite sans Internet).
  */
 /** direct : serveur sans stockage (Vercel) → lecture en une seule connexion (/api/lire), application ouverte */
-export interface AccessInfo { client: string; id: string; issued?: string | null; expires: string | null; direct?: boolean }
+export interface AccessInfo {
+  client: string; id: string; issued?: string | null; expires: string | null; direct?: boolean;
+  /** Forfait : partitions à déchiffrer par jour (limit null : illimité) et déjà déchiffrées aujourd'hui */
+  quota?: { limit: number | null; used: number; label: string | null } | null;
+}
 export interface RemoteSettings { url: string; code: string; direct?: boolean; info?: AccessInfo | null }
 export interface RemoteJob { id: string; title: string; status: ScoreStatus; progress: number; error: string | null; startedAt: string; direct?: boolean }
 
@@ -30,6 +35,14 @@ const JOBS_KEY = 'pupitre-lectures';
 
 function read<T>(key: string, fallback: T): T {
   try { return { ...fallback, ...JSON.parse(localStorage.getItem(key) ?? 'null') } as T; } catch { return fallback; }
+}
+/**
+ * Adresse du serveur de lecture : celle d'AIT par défaut (seul le code de la chorale est à coller) ; l'ancienne
+ * adresse Vercel, fermée le 19/11/2026, est remplacée d'elle-même (le mode de lecture est relu au prochain contrôle).
+ */
+function withServer(s: RemoteSettings): RemoteSettings {
+  if (!s.url || /pupitre-lecture\.vercel\.app/.test(s.url)) return { ...s, url: AIT_SERVER_DEFAULT };
+  return s;
 }
 function readJobs(): RemoteJob[] {
   try {
@@ -58,7 +71,7 @@ export function decodeCode(code: string | null | undefined): { id: string; clien
 @Injectable({ providedIn: 'root' })
 export class RemoteReader {
   private readonly packs = inject(PackStore);
-  readonly settings = signal<RemoteSettings>(read(SETTINGS_KEY, { url: '', code: '' }));
+  readonly settings = signal<RemoteSettings>(withServer(read(SETTINGS_KEY, { url: '', code: '' })));
   readonly jobs = signal<RemoteJob[]>(readJobs());
   readonly uploading = signal(false);
   readonly uploadProgress = signal(0);

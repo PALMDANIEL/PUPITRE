@@ -10,12 +10,17 @@ import { checkLicence, decodeLicence, frDate, LicenceError, type LicencePayload 
 import { machineId } from '../../licence/machine';
 import PUBLIC_KEY from '../../licence/cle-publique.pem';
 import SALE_KEY from '../../licence/cle-vente.pem';
+import { usedToday } from '../../server/quota-local';
 
 /** Clé AIT, et clé de vente du serveur (licences achetées et renouvelées en ligne). */
 const KEYS = [PUBLIC_KEY, SALE_KEY];
 
-export const SERVER = process.env.PUPITRE_SERVEUR ?? 'https://pupitre-lecture.vercel.app';
+// serveur AIT (VPS) ; l'ancien hébergement Vercel est fermé depuis le 19/11/2026
+export const SERVER = process.env.PUPITRE_SERVEUR ?? 'https://pupitre-102-204-24-173.sslip.io';
 export const OFFLINE_DAYS = 30;
+
+/** Forfait de la licence : copies à déchiffrer par jour (null : illimité), reçu d'AIT à chaque vérification. */
+export interface DeskQuota { limit: number | null; label: string | null; plan: string | null }
 
 interface State {
   licence: string | null;
@@ -23,9 +28,10 @@ interface State {
   installedAt: string | null;
   lastCheck: string | null;
   revoked: string | null; // message d'AIT
+  quota: DeskQuota | null;
 }
 
-const EMPTY: State = { licence: null, lastSeen: null, installedAt: null, lastCheck: null, revoked: null };
+const EMPTY: State = { licence: null, lastSeen: null, installedAt: null, lastCheck: null, revoked: null, quota: null };
 const file = () => path.join(app.getPath('userData'), 'licence.json');
 
 function load(): State {
@@ -43,7 +49,7 @@ function save(state: State) {
 
 export type Problem = LicenceError['problem'] | 'revoked' | 'offline';
 export type LicenceStatus =
-  | { ok: true; licence: LicencePayload; machine: string; lastCheck: string | null; checkDeadline: string }
+  | { ok: true; licence: LicencePayload; machine: string; lastCheck: string | null; checkDeadline: string; quota: DeskQuota | null }
   | { ok: false; problem: Problem; message: string; machine: string };
 
 const DAY = 86_400_000;
@@ -69,7 +75,7 @@ export function currentStatus(now = new Date()): LicenceStatus {
     };
   }
   if (!state.lastSeen || now.toISOString() > state.lastSeen) save({ ...state, lastSeen: now.toISOString() });
-  return { ok: true, licence, machine, lastCheck: state.lastCheck, checkDeadline: deadline.toISOString() };
+  return { ok: true, licence, machine, lastCheck: state.lastCheck, checkDeadline: deadline.toISOString(), quota: state.quota };
 }
 
 /** Installe une nouvelle licence si elle est valide pour cette machine ; renvoie l'état obtenu. */
@@ -82,7 +88,7 @@ export function install(text: string, now = new Date()): LicenceStatus {
     const err = e as LicenceError;
     return { ok: false, problem: err.problem ?? 'format', message: err.message, machine };
   }
-  save({ licence: text.replace(/\s+/g, ''), lastSeen: now.toISOString(), installedAt: now.toISOString(), lastCheck: null, revoked: null });
+  save({ licence: text.replace(/\s+/g, ''), lastSeen: now.toISOString(), installedAt: now.toISOString(), lastCheck: null, revoked: null, quota: null });
   return currentStatus(now);
 }
 
@@ -131,13 +137,17 @@ export async function checkIn(timeoutMs = 8000): Promise<LicenceStatus> {
       adopt(r?.licence);
       if (!load().licence) return currentStatus();
     }
-    const r = await post<{ status: 'active' | 'revoked' | 'invalid'; message: string | null; renewal?: string | null }>(
-      '/api/checkin', { licence: load().licence, machine: machineId(), version: app.getVersion(), os: osName() }, timeoutMs);
+    // copies déchiffrées aujourd'hui sur cet ordinateur : signalées à AIT (tableau de bord)
+    const lectures = usedToday(process.env.STORAGE_DIR ?? path.join(app.getPath('documents'), 'Pupitre'));
+    const r = await post<{ status: 'active' | 'revoked' | 'invalid'; message: string | null; renewal?: string | null; quota?: DeskQuota | null }>(
+      '/api/checkin', { licence: load().licence, machine: machineId(), version: app.getVersion(), os: osName(), lectures }, timeoutMs);
     if (r) {
       adopt(r.renewal);
       const fresh = load();
-      if (r.status === 'active' || (r.status === 'invalid' && r.renewal)) save({ ...fresh, lastCheck: new Date().toISOString(), revoked: null });
-      if (r.status === 'revoked') save({ ...fresh, revoked: r.message ?? 'Cette licence a été désactivée par AIT.' });
+      // forfait : limite de copies par jour fixée par AIT (gardée hors ligne jusqu'à la vérification suivante)
+      if (r.quota !== undefined) save({ ...fresh, quota: r.quota ?? null });
+      if (r.status === 'active' || (r.status === 'invalid' && r.renewal)) save({ ...load(), lastCheck: new Date().toISOString(), revoked: null });
+      if (r.status === 'revoked') save({ ...load(), revoked: r.message ?? 'Cette licence a été désactivée par AIT.' });
     }
   } catch { /* hors ligne ou serveur injoignable : on réessaiera */ }
   return currentStatus();

@@ -15,7 +15,11 @@ import { config } from './config';
 import { activeGateway, directNumbers, gatewayOf } from './passerelles';
 import { UserError } from './types';
 
-export interface Price { product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean; sort: number }
+export interface Price {
+  product: string; kind: 'licence' | 'acces'; duration: string; label: string; amount: number | null; active: boolean; sort: number;
+  /** Copies à déchiffrer par jour avec ce forfait (null : illimité) */
+  daily_quota: number | null;
+}
 export interface Order {
   id: string; created_at: string; gateway: string | null; product: string; kind: 'licence' | 'acces'; duration: string; amount: number;
   client: string; contact: string | null; machine: string | null; renew_id: string | null;
@@ -44,11 +48,20 @@ export async function listPrices(all = false): Promise<Price[]> {
   return rows;
 }
 
-export async function setPrices(prices: { product: string; amount: number | null; active: boolean }[]) {
+/** Nombre entier positif ou nul ; vide, négatif ou illisible : null (illimité). */
+export const quotaValue = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.min(10_000, Math.round(n)) : null;
+};
+
+export async function setPrices(prices: { product: string; amount: number | null; active: boolean; daily_quota?: number | null | string }[]) {
   const d = await pool();
   for (const p of prices) {
     const amount = p.amount === null || p.amount === undefined || Number(p.amount) <= 0 ? null : Math.round(Number(p.amount));
     await d.query('UPDATE ait_prices SET amount = $2, active = $3 AND $2::integer IS NOT NULL WHERE product = $1', [p.product, amount, !!p.active]);
+    // copies par jour : seulement si le tableau de bord l'envoie (une ancienne version ne doit pas les effacer)
+    if ('daily_quota' in p) await d.query('UPDATE ait_prices SET daily_quota = $2 WHERE product = $1', [p.product, quotaValue(p.daily_quota)]);
   }
   await event(null, 'tarifs', { prices });
 }
@@ -158,10 +171,12 @@ async function fulfil(order: Order, operator: string | null): Promise<void> {
       await conn.query('UPDATE ait_items SET expires = $2, text = $3 WHERE id = $1', [id, expires, text]);
     } else {
       await conn.query(
-        `INSERT INTO ait_items (id, kind, client, contact, machine, issued, expires, text) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT (id) DO UPDATE SET expires = EXCLUDED.expires, text = EXCLUDED.text`,
-        [id, order.kind, order.client, contact ?? null, machine, issued, expires, text]);
+        `INSERT INTO ait_items (id, kind, client, contact, machine, issued, expires, text, product) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (id) DO UPDATE SET expires = EXCLUDED.expires, text = EXCLUDED.text, product = EXCLUDED.product`,
+        [id, order.kind, order.client, contact ?? null, machine, issued, expires, text, order.product]);
     }
+    // renouvellement : le forfait acheté devient celui du client (quota de copies par jour)
+    if (order.renew_id) await conn.query('UPDATE ait_items SET product = $2 WHERE id = $1', [id, order.product]);
     await conn.query(`UPDATE ait_orders SET status = 'paid', paid_at = now(), operator = $2, item_id = $3, expires = $4, text = $5 WHERE id = $1`,
       [order.id, operator, id, expires, text]);
     await conn.query(`INSERT INTO ait_events (item_id, kind, detail) VALUES ($1, 'vente', $2)`,

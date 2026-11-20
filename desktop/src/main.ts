@@ -164,7 +164,7 @@ function publishLicence(status = currentStatus()) {
   const l = status.licence;
   process.env.PUPITRE_LICENCE = JSON.stringify({
     id: l.id, client: l.client, issued: l.issued, expires: l.expires, machine: status.machine, daysLeft: daysLeft(l, new Date()),
-    lastCheck: status.lastCheck, checkDeadline: status.checkDeadline,
+    lastCheck: status.lastCheck, checkDeadline: status.checkDeadline, quota: status.quota,
   });
 }
 

@@ -3,6 +3,7 @@ import { Share } from '@capacitor/share';
 import jsQR from 'jsqr';
 import { parseKeyQr, seal, signToken, unseal, type SealedKey } from './ait-crypto';
 import { addDuration } from './duree';
+import { AIT_SERVER } from './serveur';
 
 /**
  * Espace AIT (administrateur, sur son téléphone) : créer les licences d'ordinateur et les codes d'accès des chorales.
@@ -21,13 +22,15 @@ export interface IssuedItem {
   text: string;
 }
 
-export const ADMIN_SERVER = 'https://pupitre-lecture.vercel.app';
+export const ADMIN_SERVER = AIT_SERVER;
 
 /** Élément du registre du serveur (licence ou code), avec sa dernière connexion. */
 export interface ServerItem {
   id: string; kind: 'licence' | 'acces'; client: string; contact: string | null; machine: string | null;
   issued: string | null; expires: string | null; status: 'active' | 'revoked'; reason: string | null;
   first_seen: string | null; last_seen: string | null; app_version: string | null; os: string | null; uses: number; device?: string | null;
+  /** Forfait (produit des tarifs) et son nom ; limite propre au client (null : celle du forfait) ; limite en vigueur ; copies du jour */
+  product?: string | null; plan?: string; plan_label?: string | null; daily_quota?: number | null; limit?: number | null; used_today?: number;
 }
 export interface ServerEvent { at: string; kind: string; item_id: string | null; client: string | null; detail: Record<string, unknown> | null }
 export type Overview = Record<'licences' | 'licences_desactivees' | 'codes' | 'codes_desactives' | 'en_ligne' | 'actifs_7j' | 'clients' | 'lectures' | 'lectures_24h', number>;

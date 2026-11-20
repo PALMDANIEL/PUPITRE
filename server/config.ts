@@ -55,7 +55,7 @@ export const config = {
     baseUrl: env.LIGDICASH_URL ?? (env.LIGDICASH_MODE === 'live' ? 'https://app.ligdicash.com/pay/v01/' : 'https://test.ligdicash.com/pay/v01/'),
   },
   /** Adresse publique du serveur (liens de retour après paiement). */
-  publicUrl: (env.PUBLIC_URL ?? 'https://pupitre-lecture.vercel.app').replace(/\/+$/, ''),
+  publicUrl: (env.PUBLIC_URL ?? 'https://pupitre-102-204-24-173.sslip.io').replace(/\/+$/, ''),
   /** Registre d'administration (en ligne) : base PostgreSQL, par exemple Neon via Vercel (DATABASE_URL). */
   adminDatabaseUrl: env.ADMIN_DATABASE_URL ?? env.DATABASE_URL ?? null,
   corsOrigins: (env.CORS_ORIGINS ?? 'https://localhost,capacitor://localhost,http://localhost').split(',').map((o) => o.trim()).filter(Boolean),

@@ -57,6 +57,12 @@ jobs:
           docker run -d --name essai2 -p 3001:3000 -v "$RUNNER_TEMP/cle-essai.pem:/cle.pem:ro" -e ACCESS_PUBLIC_KEY_FILE=/cle.pem -e LECTURE_DIRECTE=1 -e PORT=3000 pupitre-serveur
           for i in $(seq 1 60); do curl -fs localhost:3001/api/health && break; sleep 2; done; echo
           python3 .github/scripts/test_etapes.py http://localhost:3001 "$CODE" engine/tests/echantillon-4-voix.pdf || { docker logs essai2 | tail -60; echo "::error title=Serveur::la lecture en trois requêtes a échoué"; exit 1; }
+      - name: Quotas de copies à déchiffrer par jour (forfaits, tableau de bord AIT)
+        shell: bash
+        run: |
+          docker run -d --name pg-quotas -e POSTGRES_PASSWORD=essai -p 5433:5432 postgres:16-alpine
+          for i in $(seq 1 30); do docker exec pg-quotas pg_isready -U postgres > /dev/null 2>&1 && break; sleep 2; done
+          QUOTA_DB=postgresql://postgres:essai@127.0.0.1:5433/postgres npx tsx .github/scripts/test_quotas.ts
       - name: Publication (ghcr.io)
         if: github.event_name != 'pull_request'
         shell: bash

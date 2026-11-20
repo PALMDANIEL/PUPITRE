@@ -30,6 +30,9 @@ import { SHOP_SERVER, SHOP_TARGET, shopUrl } from '../../core/shop';
       @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
       @if (info(); as i) {
         <p class="ok" role="status">✓ Code valable pour <b>{{ i.client }}</b>{{ i.issued ? ', du ' + date(i.issued) : '' }}{{ i.expires ? ' au ' + date(i.expires) + ' inclus' : ' (sans date de fin)' }}.</p>
+        @if (i.quota && i.quota.limit !== null) {
+          <p class="small">Aujourd’hui : {{ i.quota.used }} / {{ i.quota.limit }} partition{{ i.quota.limit === 1 ? '' : 's' }} déchiffrée{{ i.quota.limit === 1 ? '' : 's' }}{{ i.quota.label ? ' (' + i.quota.label + ')' : '' }}.</p>
+        }
       }
     </form>
     <app-renew-access />

@@ -4,9 +4,10 @@ import { RouterLink } from '@angular/router';
 import { AitStore, IssuedItem, readQrPhoto } from '../../core/ait';
 import { frDateShort } from '../../core/dates';
 import { AitDashboard } from './ait-dashboard';
+import { AIT_SERVER } from '../../core/serveur';
 
 type Tab = 'tableau' | 'licence' | 'acces' | 'registre';
-const SERVER = 'https://pupitre-lecture.vercel.app';
+const SERVER = AIT_SERVER;
 const DUREES = [
   { v: '1a', l: '1 an' }, { v: '2a', l: '2 ans' }, { v: '6m', l: '6 mois' }, { v: '3m', l: '3 mois' },
   { v: '1m', l: '1 mois' }, { v: '30j', l: '30 jours (essai)' }, { v: 'illimitee', l: 'Définitive (sans fin)' },

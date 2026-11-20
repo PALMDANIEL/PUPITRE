@@ -17,6 +17,7 @@ import { checkLicence, decodeLicence, signedWith, type LicencePayload } from '..
 import * as admin from './admin';
 import { journal } from './journal';
 import * as pay from './paiement';
+import { addUse, licenceLimit, usedToday } from './quota-local';
 import { directNumbers as paymentNumbers } from './passerelles';
 
 const PHONE = '00226 77 41 91 06';
@@ -42,6 +43,47 @@ function fail(status: number, message: string): never {
 }
 /** Chorale à l'origine de la requête (serveur en ligne) ; null en local. */
 const ownerOf = (res: Response): string | null => (res.locals['owner'] as string | undefined) ?? null;
+
+const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
+
+/**
+ * Copies à déchiffrer par jour, selon le forfait (réglé par AIT dans le tableau de bord). À appeler avant toute
+ * nouvelle lecture ; les relectures et corrections d'une partition déjà envoyée ne comptent pas.
+ * Serveur en ligne : lectures du code de chorale comptées dans le registre. Ordinateur : compteur local, limite
+ * reçue d'AIT à la vérification de licence. Registre injoignable : la lecture continue.
+ */
+async function checkQuota(res: Response) {
+  const embedded = process.env.PUPITRE_EMBEDDED === '1';
+  let limit: number | null = null;
+  let used = 0;
+  let label: string | null = null;
+  if (config.online) {
+    const owner = ownerOf(res);
+    if (!owner) return;
+    const q = await admin.quotaOf(owner).catch((e) => { console.error('Quota indisponible :', (e as Error).message); return null; });
+    if (!q) return;
+    ({ limit, used, label } = q);
+  } else if (embedded) {
+    ({ limit, label } = licenceLimit());
+    used = usedToday(config.storageDir).count;
+  }
+  if (limit === null || used < limit) return;
+  fail(429, limit === 0
+    ? `Votre forfait${label ? ` (${label})` : ''} ne permet pas de déchiffrer de partition. Contactez AIT au ${PHONE}.`
+    : `Votre forfait${label ? ` (${label})` : ''} permet de déchiffrer ${plural(limit, 'partition', 'partitions')} par jour : `
+      + `la limite d’aujourd’hui est atteinte. Réessayez demain, ou contactez AIT au ${PHONE} pour un forfait plus grand.`);
+}
+
+/** Une lecture de plus : registre (serveur en ligne) ou compteur de l'ordinateur. */
+function countReading(res: Response, title: string, pages: number) {
+  const owner = ownerOf(res);
+  if (config.online && owner) {
+    void admin.countUse(owner).catch(() => undefined);
+    void admin.event(owner, 'lecture', { title, pages }).catch(() => undefined);
+  } else if (process.env.PUPITRE_EMBEDDED === '1') {
+    addUse(config.storageDir);
+  }
+}
 
 async function getScore(id: unknown, res: Response): Promise<ScoreMeta> {
   const meta = isId(id) ? await readMeta(id) : null;
@@ -116,6 +158,7 @@ if (config.online) {
     // licence renouvelée en ligne : renvoyée même si celle de l'ordinateur a déjà expiré
     const peek = pay.peekLicence(String(licence ?? ''), keys);
     const renewal = peek && peek.machine === String(machine ?? '') ? await pay.renewalOf(peek.id, peek.expires).catch(() => null) : null;
+    const { lectures } = (req.body ?? {}) as { lectures?: { day?: string; count?: number } };
     let lic: LicencePayload;
     try {
       lic = checkLicence(String(licence ?? ''), keys, String(machine ?? ''), new Date());
@@ -132,6 +175,7 @@ if (config.online) {
       }
       await admin.register('licence', lic);
       await admin.touch(lic.id, { version, os, ip: clientIp(req) });
+      if (lectures?.day) await admin.reportDeskUse(lic.id, String(lectures.day), Number(lectures.count ?? 0));
       const st = await admin.statusOf(lic.id);
       if (st?.status === 'revoked') {
         status = 'revoked';
@@ -140,7 +184,10 @@ if (config.online) {
     } catch (e) {
       console.error('Registre d’administration indisponible :', (e as Error).message);
     }
-    res.json({ status, message, renewal: status === 'active' ? renewal : null, serverTime: new Date().toISOString(), managed: admin.adminEnabled() });
+    // forfait de la licence : copies à déchiffrer par jour (null : illimité), appliqué par l'ordinateur lui-même
+    const q = await admin.quotaOf(lic.id).catch(() => null);
+    const quota = q ? { limit: q.limit, label: q.label, plan: q.plan } : null;
+    res.json({ status, message, renewal: status === 'active' ? renewal : null, serverTime: new Date().toISOString(), managed: admin.adminEnabled(), quota });
   });
 
   // Vente en ligne (LigdiCash) : sans code d'accès, la page d'achat est publique.
@@ -205,6 +252,13 @@ if (config.online) {
     if (!n) fail(404, 'Licence ou code introuvable dans le registre.');
     res.json({ ok: true });
   });
+  // forfait et limite propre d'un client (copies à déchiffrer par jour) ; vides : forfait déduit, limite du forfait
+  app.post('/api/admin/elements/:id/quota', async (req, res) => {
+    const product = typeof req.body?.product === 'string' && /^(licence|acces)-[a-z0-9]{1,12}$/.test(req.body.product) ? req.body.product : null;
+    const n = await admin.setItemQuota(req.params.id, product, pay.quotaValue(req.body?.daily_quota));
+    if (!n) fail(404, 'Licence ou code introuvable dans le registre.');
+    res.json({ ok: true, quota: await admin.quotaOf(req.params.id) });
+  });
   app.post('/api/admin/elements/:id/appareil', async (req, res) => {
     if (!(await admin.freeDevice(req.params.id))) fail(404, 'Code introuvable dans le registre.');
     res.json({ ok: true });
@@ -232,13 +286,23 @@ if (config.online) {
 
 /** Application de bureau : licence de cet ordinateur (dates de début et de fin) ; null ailleurs. */
 app.get('/api/licence', (_req, res) => {
-  try { res.json({ licence: process.env.PUPITRE_LICENCE ? JSON.parse(process.env.PUPITRE_LICENCE) : null }); } catch { res.json({ licence: null }); }
+  try {
+    const licence = process.env.PUPITRE_LICENCE ? JSON.parse(process.env.PUPITRE_LICENCE) : null;
+    // copies déchiffrées aujourd'hui sur cet ordinateur, et limite du forfait (affichées dans « À propos »)
+    if (licence) licence.today = usedToday(config.storageDir).count;
+    res.json({ licence });
+  } catch { res.json({ licence: null }); }
 });
 app.get('/api/health', (_req, res) => { res.json({ ok: true, online: config.online, direct: config.direct, problems: checkSetup() }); });
 /** Réglages de l'application mobile : vérifie le code et affiche la chorale. */
-app.get('/api/acces', (_req, res) => {
+app.get('/api/acces', async (_req, res) => {
   const acc = res.locals['access'] as AccessPayload | undefined;
-  res.json({ ...(acc ? { client: acc.client, id: acc.id, issued: acc.issued, expires: acc.expires } : { client: null, id: null, issued: null, expires: null }), direct: config.direct });
+  // forfait du code : copies à déchiffrer par jour, et lectures déjà faites aujourd'hui
+  const q = acc ? await admin.quotaOf(acc.id).catch(() => null) : null;
+  res.json({
+    ...(acc ? { client: acc.client, id: acc.id, issued: acc.issued, expires: acc.expires } : { client: null, id: null, issued: null, expires: null }),
+    direct: config.direct, quota: q ? { limit: q.limit, used: q.used, label: q.label } : null,
+  });
 });
 app.get('/api/scores', async (_req, res) => {
   const owner = ownerOf(res);
@@ -249,6 +313,7 @@ app.get('/api/scores/:id', async (req, res) => { res.json(await getScore(req.par
 app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (!files.length) fail(400, 'Aucun fichier reçu.');
+  await checkQuota(res);
   const named = files.map((f) => ({ f, name: utf8Name(f.originalname), ext: path.extname(utf8Name(f.originalname)).toLowerCase() }));
   for (const n of named) if (!KINDS[n.ext]) fail(415, UNSUPPORTED);
   if (named.length > 1 && named.some((n) => KINDS[n.ext] !== 'image' && KINDS[n.ext] !== 'pdf')) {
@@ -278,6 +343,7 @@ app.post('/api/scores', upload.array('file', MAX_PAGES), async (req, res) => {
     createdAt: now, updatedAt: now,
   });
   enqueue({ id, kind: 'process' });
+  countReading(res, meta.title, named.length);
   res.status(201).json(meta);
 });
 
@@ -434,6 +500,7 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
   });
   if (!files.length) fail(400, 'Aucune photo reçue.');
   if (files.some((f) => KINDS[f.ext] !== 'image' && KINDS[f.ext] !== 'pdf')) fail(415, 'Envoyez des photos (JPG, PNG, HEIC) ou un PDF.');
+  await checkQuota(res);
   files.sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
   const title = (typeof req.body?.titre === 'string' && req.body.titre.trim().slice(0, 140)) || titleFrom(files[0].name);
   res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -446,19 +513,18 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
     if (!Buffer.isBuffer(result) && 'etat' in result) {
       // copie usée : étape 1 faite ; le téléphone relance l'étape 2 (/api/lire/suite) avec cet état (limite de 5 minutes)
       send({ status: 'etape', progress: 30, title, etat: result.etat.toString('base64'), pages: result.pages.map((p) => p.toString('base64')) });
+      countReading(res, title, files.length); // une seule copie, même lue en plusieurs requêtes
       return;
     }
     if (!Buffer.isBuffer(result)) {
       // copie usée lue voix par voix : le téléphone demande l'audio dans une seconde requête (limite de 5 minutes)
       send({ status: 'partition', progress: 60, title, partition: result.partition.toString('base64'), pages: result.pages.map((p) => p.toString('base64')), fiabilite: result.fiabilite });
-      const who = ownerOf(res);
-      if (who) { void admin.countUse(who).catch(() => undefined); void admin.event(who, 'lecture', { title, pages: files.length }).catch(() => undefined); }
+      countReading(res, title, files.length);
       return;
     }
     const pack = result;
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
-    const owner = ownerOf(res);
-    if (owner) { void admin.countUse(owner).catch(() => undefined); void admin.event(owner, 'lecture', { title, pages: files.length }).catch(() => undefined); }
+    countReading(res, title, files.length);
   } catch (e) {
     console.error('Lecture directe :', e, (e as { detail?: string }).detail ?? '');
     void journal('lecture directe', e);

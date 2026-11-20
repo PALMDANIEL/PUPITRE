@@ -37,6 +37,9 @@ import { SHOP_TARGET, shopUrl } from '../../core/shop';
             <div><dt>Reste</dt><dd [class.warn]="l.daysLeft <= 30">{{ l.daysLeft }} jour{{ l.daysLeft === 1 ? '' : 's' }}</dd></div>
           }
           <div><dt>Ordinateur</dt><dd class="mono">{{ l.machine }}</dd></div>
+          @if (l.quota?.limit !== null && l.quota?.limit !== undefined) {
+            <div><dt>Aujourd’hui</dt><dd [class.warn]="(l.today ?? 0) >= l.quota!.limit!">{{ l.today ?? 0 }} / {{ l.quota!.limit }} partition{{ l.quota!.limit === 1 ? '' : 's' }} déchiffrée{{ l.quota!.limit === 1 ? '' : 's' }}{{ l.quota!.label ? ' (' + l.quota!.label + ')' : '' }}</dd></div>
+          }
         </dl>
         @if (l.expires) {
           <p class="note"><a class="btn" [href]="shop(l.id, l.machine)" [target]="shopTarget" rel="noopener">Renouveler en ligne</a>
