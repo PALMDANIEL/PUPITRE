@@ -24,8 +24,9 @@ import imgio
 import pupitres
 
 ENABLED = os.environ.get("PUPITRE_COUPLETS", "1") != "0"
-AGREE = float(os.environ.get("PUPITRE_COUPLETS_ACCORD", "0.6"))
-RELOCATE = os.environ.get("PUPITRE_COUPLETS_HAUT", "1") != "0"  # couplets écrits dans la portée du haut du refrain  # part des notes d'Audiveris que homr doit retrouver
+AGREE = float(os.environ.get("PUPITRE_COUPLETS_ACCORD", "0.6"))  # part des notes d'Audiveris que homr doit retrouver
+KEEP_MUTE = os.environ.get("PUPITRE_COUPLETS_MUETS", "1") != "0"  # alto muet aussi sous une ligne d'Audiveris gardée
+RELOCATE = os.environ.get("PUPITRE_COUPLETS_HAUT", "1") != "0"  # couplets écrits dans la portée du haut du refrain
 
 
 def layout(pages_dir: pathlib.Path):
@@ -264,7 +265,9 @@ def apply(partition, folder: pathlib.Path, out) -> int:
             ks = _keysig(staves[src], m)
             if accept:
                 content = [_from_homr(hm, ks, _sounding(m))]
-            elif top is not None and src != top and voices.get(idx) is not None:
+            elif voices.get(idx) is not None and ((top is not None and src != top) or KEEP_MUTE):
+                # ligne d'Audiveris gardée : écrite elle aussi dans la portée du haut, avec l'alto muet si elle est à une
+                # voix (Psaume 22 photocopie : l'alto rechantait le couplet, 100 → 44 %)
                 content = _voices_of(m)
             else:
                 continue
