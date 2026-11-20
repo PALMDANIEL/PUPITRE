@@ -929,6 +929,88 @@ def drop_chord_symbols(score):
     return len(found)
 
 
+BY_CLEF = os.environ.get("PUPITRE_VOIX_PAR_CLE", "1") == "1"
+MIN_PARTS_CLEF = int(os.environ.get("PUPITRE_VOIX_PAR_CLE_PARTIES", "4"))
+
+
+def _clef_kind(c):
+    if c is None:
+        return None
+    if c.sign == "F":
+        return "F"
+    if c.sign == "G":
+        return "G8" if getattr(c, "octaveChange", 0) < 0 else "G"
+    return None
+
+
+def regroup_by_clef(parts):
+    """
+    Chœur sur quatre portées séparées (S., A., T., B.) dont MuseScore masque les portées vides (systèmes de 2, 3 ou 4
+    portées) : Audiveris crée une partie par nom lu et range des portées dans la partie d'une autre voix (passage du
+    ténor dans la partie de la basse ; « Song bal la Wende » : 8 à 19 parties). Chaque mesure est rendue à sa voix
+    d'après la clé de sa portée : fa → basse ; sol avec 8 → ténor ; sol, de haut en bas → soprano, alto (puis ténor).
+    Rend les quatre voix, ou None si la partition n'est pas ainsi faite.
+    """
+    if len(parts) < MIN_PARTS_CLEF:
+        return None
+    rows = [list(p.getElementsByClass(stream.Measure)) for p in parts]
+    n = max(len(r) for r in rows)
+    kinds = []  # clé en vigueur, par partie et par mesure
+    for r in rows:
+        cur, ks = None, []
+        for m in r:
+            cs = [c for c in m.recurse().getElementsByClass(clef.Clef) if float(c.offset) == 0.0]
+            if cs:
+                cur = _clef_kind(cs[0])
+            ks.append(cur)
+        kinds.append(ks)
+    plan, fours, typical, doubled, sung = [], 0, 0, 0, 0
+    for i in range(n):
+        singing = [k for k, r in enumerate(rows) if i < len(r) and r[i].recurse().notes]
+        for k in singing:
+            sung += 1
+            doubled += sum(1 for v in rows[k][i].voices if v.notes) >= 2
+        got = {}
+        gs = [k for k in singing if kinds[k][i] in ("G", None)]
+        for k in singing:
+            if kinds[k][i] == "F" and "Basse" not in got:
+                got["Basse"] = k
+            elif kinds[k][i] == "G8" and "Ténor" not in got:
+                got["Ténor"] = k
+        for name, k in zip(("Soprano", "Alto", "Ténor"), gs):
+            got.setdefault(name, k)
+        if len(singing) >= 3:
+            fours += 1
+            typical += any(kinds[k][i] in ("F", "G8") for k in singing)
+        plan.append(got)
+    # quatre portées d'une voix chacune (peu de mesures à deux voix), avec des clés de ténor ou de basse
+    if not fours or typical < 0.6 * fours or doubled > 0.15 * max(1, sung):
+        return None
+    out = []
+    for name, cl in (("Soprano", clef.TrebleClef()), ("Alto", clef.TrebleClef()), ("Ténor", clef.Treble8vbClef()),
+                     ("Basse", clef.BassClef())):
+        part = stream.Part()
+        part.partName = name
+        for i in range(n):
+            k = plan[i].get(name)
+            if k is not None:
+                m = copy.deepcopy(rows[k][i])
+                for c in list(m.recurse().getElementsByClass(clef.Clef)):
+                    c.activeSite.remove(c)
+            else:
+                ref = next((r[i] for r in rows if i < len(r)), None)
+                m = stream.Measure(number=ref.number if ref is not None else i + 1)
+                for el in (ref.getElementsByClass((key.KeySignature, meter.TimeSignature)) if ref is not None else []):
+                    m.insert(el.offset, copy.deepcopy(el))
+                bar = ref.barDuration.quarterLength if ref is not None else 4.0
+                m.insert(0, note.Rest(quarterLength=bar))
+            if i == 0:
+                m.insert(0, copy.deepcopy(cl))
+            part.append(m)
+        out.append(part)
+    return out
+
+
 def extract_voices(score, trust_names=True):
     """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
     c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
@@ -939,9 +1021,13 @@ def extract_voices(score, trust_names=True):
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
-    named = merge_named_parts(sung)
-    placed = regroup_by_place(sung) if not trust_names and len(named) > 2 else None
-    sung = placed if placed is not None and len(placed) < len(named) else named
+    by_clef = regroup_by_clef(sung) if BY_CLEF and not trust_names else None
+    if by_clef is not None:
+        sung = by_clef
+    else:
+        named = merge_named_parts(sung)
+        placed = regroup_by_place(sung) if not trust_names and len(named) > 2 else None
+        sung = placed if placed is not None and len(placed) < len(named) else named
     if not trust_names:
         for i, a, b, s in coherence.fix_staff_shifts(sung):
             print(f"Portée {i + 1}, mesures {a + 1} à {b + 1} : recalée d'un degré vers le {'bas' if s < 0 else 'haut'} "
