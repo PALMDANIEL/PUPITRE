@@ -503,7 +503,9 @@ app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: '
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
     // partition corrigée sur le téléphone et entièrement vérifiée : au répertoire de la chorale (comme sur l'ordinateur)
-    if (body.corrigee === '1' && !reliability && owner) void correctedToRepertoire(file!.buffer, title, owner);
+    if (body.corrigee === '1' && !reliability && owner) {
+      void correctedToRepertoire(file!.buffer, title, owner).catch((e) => console.error('Répertoire :', (e as Error).message));
+    }
     if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);
   } catch (e) {
     console.error('Recréation :', e, (e as { detail?: string }).detail ?? '');
