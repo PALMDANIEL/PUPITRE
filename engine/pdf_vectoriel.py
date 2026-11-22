@@ -679,6 +679,7 @@ VOICE_COUNT = os.environ.get("PUPITRE_VOIX_COMPTEES", "1") != "0"
 TENOR_8 = os.environ.get("PUPITRE_TENOR_SOL", "1") != "0"
 CHOIR_BELOW = os.environ.get("PUPITRE_CHOEUR_BAS", "1") != "0"
 VOICE_CLEFS = os.environ.get("PUPITRE_VOIX_CLES", "1") != "0"
+SATB_STAVES = os.environ.get("PUPITRE_QUATRE_PORTEES", "1") != "0"
 DOT_OWNER = os.environ.get("PUPITRE_POINT_UNIQUE", "1") != "0"
 FLAGS_PAGE = os.environ.get("PUPITRE_CROCHETS_PAGE", "1") != "0"
 THICK_BARS = os.environ.get("PUPITRE_BARRES_EPAISSES", "1") != "0"
@@ -705,6 +706,15 @@ def plan_of(system):
             plan.append((s, names))
         return plan
     if k >= 4:
+        if SATB_STAVES and k > 4:
+            # quatre portées à une voix, clés d'un chœur (sol, sol, sol ou sol 8, fa), au-dessus d'un accompagnement
+            # (« Donne-moi seulement de t'aimer », refrain) : ce sont elles, pas la réduction pour piano
+            cl = [s["clefs"][0][1] if s["clefs"] else ("G", 0) for s in system]
+            for i in range(k - 3):
+                four = system[i:i + 4]
+                if not any(two_voiced(s) for s in four) and cl[i][0] == "G" and cl[i + 1][0] == "G" \
+                        and cl[i + 2][0] == "G" and cl[i + 3][0] == "F" and any(two_voiced(s) for s in system[i + 4:]):
+                    return [(s, [NAMES[j]]) for j, s in enumerate(four)]
         if CHOIR_BELOW and chordal(system[-2]) and chordal(system[-1]) and not any(chordal(s) for s in system[:-2]):
             # mélodies (couplets, soliste) au-dessus d'un chœur écrit sur deux portées à deux voix
             # (« Donne-moi seulement de t'aimer » : trois portées de couplets, puis S+A et T+B)

@@ -308,8 +308,10 @@ def read_page(page, sp=None):
     chars = []
     for i in range(n):
         u = raw.FPDFText_GetUnicode(tp, i)
-        if u in (9, 10, 13, 32, 0xA0, 0xFFFE):
+        if u in (32, 0xA0, 0xFFFE):
             continue
+        # blancs et retours à la ligne écartés par leur taille nulle, pas par leur code : LilyPond donne le code 0x0A
+        # (retour à la ligne) au demi-soupir
         l, b, r, t = tp.get_charbox(i)
         if r - l <= 0.05 or t - b <= 0.05:
             continue
