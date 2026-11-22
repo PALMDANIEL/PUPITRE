@@ -12,7 +12,7 @@ WORK=$(mktemp -d)
 mkdir -p "$WORK/commun"
 n=0; skip=0; dup=0
 for pdf in "$SRC"/*.pdf(N); do
-  title=$(basename "$pdf" .pdf | sed -E 's/ ?(\([0-9]+\)| [0-9]| copie)$//')  # « Laetamini 1.pdf » : copie du fichier
+  title=$(basename "$pdf" .pdf | sed -E 's/( ?\([0-9]\))+$//; s/-[0-9]$//; s/ copie$//')  # « Laetamini 1.pdf » : copie du fichier
   name=$("$PY" -c 'import re, sys, unicodedata
 s = "".join(c for c in unicodedata.normalize("NFKD", sys.argv[1]) if not unicodedata.combining(c)).lower()
 print(re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:60])' "$title")
@@ -20,7 +20,7 @@ print(re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:60])' "$title")
   base=$name; k=1
   while [[ -e "$WORK/commun/$name.musicxml" ]]; do k=$((k + 1)); name="$base-$k"; done
   if PYTHONHASHSEED=0 "$PY" "$REPO/engine/pdf_vectoriel.py" "$pdf" "$WORK/$name.musicxml" > /dev/null 2>&1; then
-    out=$(PYTHONHASHSEED=0 "$PY" "$REPO/engine/repertoire.py" ajouter "$WORK/$name.musicxml" "$WORK/commun" "$name" "$title" 2>&1 || true)
+    out=$(PYTHONHASHSEED=0 "$PY" "$REPO/engine/repertoire.py" ajouter "$WORK/$name.musicxml" "$WORK/commun" "$name" "$title" --pdf "$pdf" 2>&1 || true)
     rm -f "$WORK/$name.musicxml"
     if [[ "$out" == *"Déjà dans le répertoire"* ]]; then dup=$((dup + 1)); else n=$((n + 1)); fi
   else

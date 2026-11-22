@@ -931,6 +931,7 @@ def drop_chord_symbols(score):
 
 BY_CLEF = os.environ.get("PUPITRE_VOIX_PAR_CLE", "1") == "1"
 MIN_PARTS_CLEF = int(os.environ.get("PUPITRE_VOIX_PAR_CLE_PARTIES", "4"))
+CLEF_STABLE = os.environ.get("PUPITRE_VOIX_PAR_CLE_STABLES", "1") == "1"  # 4 parties stables : pas de regroupement
 
 
 def _clef_kind(c):
@@ -964,6 +965,13 @@ def regroup_by_clef(parts):
                 cur = _clef_kind(cs[0])
             ks.append(cur)
         kinds.append(ks)
+    if CLEF_STABLE and len(parts) == 4 and all(len({k for k in ks if k}) <= 1 for ks in kinds):
+        seq = [next((k for k in ks if k), None) for ks in kinds]
+        if seq[0] in ("G", None) and seq[1] in ("G", None) and seq[3] == "F":
+            # quatre parties d'une voix chacune, chacune toujours dans sa clé, déjà dans l'ordre S, A, T, B : rien à
+            # regrouper ; une soprano qui se tait n'est pas une portée masquée (l'alto passait à la soprano :
+            # bwv269 ouverte usée S 92 → 84 %)
+            return None
     plan, fours, typical, doubled, sung = [], 0, 0, 0, 0
     for i in range(n):
         singing = [k for k, r in enumerate(rows) if i < len(r) and r[i].recurse().notes]

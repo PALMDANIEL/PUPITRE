@@ -112,7 +112,7 @@ async function processScore(id: string) {
   if (!partitionFile) throw new UserError('Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.');
   // PDF gravé lu sans faute : il entre au répertoire de la chorale, et ses copies photographiées seront reconnues
   const exact = await fs.readFile(path.join(dir, 'partition.exacte'), 'utf8').catch(() => '');
-  if (exact === 'pdf') await addToRepertoire(id, path.join(dir, partitionFile), library[1], meta.title);
+  if (exact === 'pdf') await addToRepertoire(id, path.join(dir, partitionFile), library[1], meta.title, path.join(dir, meta.sourceFile));
   const pages = (await fs.readdir(pagesDir)).filter((f) => f.endsWith('.png')).sort();
   await patchMeta(id, { pages, partitionFile, lecture, corrected: false, progress: 62 });
   await renderScore(id);
@@ -128,10 +128,11 @@ export function repertoireDirs(owner: string | null): [string, string] {
   return [path.join(base, 'commun'), path.join(base, owner ? owner.replace(/[^A-Za-z0-9-]/g, '_') : 'local')];
 }
 
-async function addToRepertoire(id: string, partition: string, folder: string, title: string) {
+/** pdf : le PDF gravé, dont le titre imprimé servira à reconnaître les photos (nom de fichier souvent sans rapport). */
+async function addToRepertoire(id: string, partition: string, folder: string, title: string, pdf: string) {
   try {
     await fs.mkdir(folder, { recursive: true });
-    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title]);
+    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title, '--pdf', pdf]);
     await run(cmd, args, { label: 'L’ajout au répertoire', timeoutMs: 120_000 });
   } catch (e) {
     console.error('Répertoire :', (e as Error).message); // la partition reste lue ; seul l'ajout manque

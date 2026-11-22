@@ -7,7 +7,7 @@ forte ET nettement meilleure que celle de tous les autres chants (sinon la lectu
   python repertoire.py chercher <partition lue> <dossier du répertoire>     → JSON sur la sortie
   python repertoire.py remplacer <partition lue> <sortie> <dossiers…>      → version exacte (paroles reprises de la
                                                                              lecture) ; code 3 si rien n'est reconnu
-  python repertoire.py ajouter <partition exacte> <dossier du répertoire> [nom] [titre]
+  python repertoire.py ajouter <partition exacte> <dossier du répertoire> [nom] [titre] [--pdf <PDF gravé>]
   (remplacer … --page <image de la 1re page> : reconnaissance aussi par le titre imprimé ; lecture « - » si les notes
    n'ont pas pu être lues)
 Le dossier contient <nom>.musicxml (version exacte) et <nom>.json (empreinte, refaite si absente ou plus ancienne).
@@ -54,9 +54,13 @@ def voices_of(path, exact=False):
     return out
 
 
-def fingerprint(path, title=None):
-    """Empreinte d'un chant exact : ses voix, et son titre (nom du fichier, ou titre donné à l'ajout)."""
-    return {"voices": voices_of(path, exact=True), "titre": title or pathlib.Path(path).stem}
+def fingerprint(path, title=None, page_title=None):
+    """Empreinte d'un chant exact : ses voix, son titre (nom du fichier, ou titre donné à l'ajout) et le titre imprimé
+    sur la 1re page du PDF gravé, s'il est connu."""
+    fp = {"voices": voices_of(path, exact=True), "titre": title or pathlib.Path(path).stem}
+    if page_title:
+        fp["titre_page"] = page_title
+    return fp
 
 
 # --- Titre imprimé en haut de la page (OCR) : il résiste souvent mieux que les notes (copie usée, photo floue) ---
@@ -64,6 +68,7 @@ def fingerprint(path, title=None):
 TITLE_ACCEPT = float(os.environ.get("PUPITRE_REPERTOIRE_TITRE", "0.8"))  # part des mots du titre retrouvés
 TITLE_MARGIN = 0.3                                                         # avance sur le 2e titre le plus proche
 TITLE_MIN_WORDS = 3  # mots du titre retrouvés : « Kyrie », « Ave Maria » ne désignent pas un chant (tant de versions)
+TITLE_MIN_KEYS = 2   # mots clés (hors mots courants, GENERIC) dans le titre
 TITLE_MELODY_SLACK = 0.05  # les notes lues ne doivent pas ressembler nettement mieux à un autre chant…
 MELODY_INFORMATIVE = 0.45  # …quand elles sont assez lisibles pour être un indice (copie usée : presque toutes fausses)
 SAME_PIECE = 0.9           # deux entrées aussi proches sont le même chant (PDF en double dans le dossier)
@@ -79,22 +84,94 @@ def _words(text):
     return [w for w in re.findall(r"[a-z]+|\d+", t) if len(w) >= 3 or w.isdigit()]
 
 
+def _mixed(text):
+    """Nombres mal lus par l'OCR, gardés d'un tenant (« (1f9) » pour « (119) ») : lettres et chiffres mêlés."""
+    import re
+    return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 3 and any(c.isdigit() for c in t)
+            and any(c.isalpha() for c in t)]
+
+
 def _near(w, words):
-    """Mot du titre retrouvé dans le texte lu : à l'identique, ou à une ou deux lettres près (OCR : « Psaunie »)."""
+    """Mot du titre retrouvé dans le texte lu : à l'identique, ou à une ou deux lettres près (OCR : « Psaunie »).
+    Nombre de trois chiffres au moins : un seul caractère mal lu toléré (« 1f9 » pour 119) ; les petits nombres non
+    (« 17e dimanche », dates : trop de faux)."""
     if w in words:
         return True
-    if w.isdigit() or len(w) < 4:
+    if w.isdigit():
+        return len(w) >= 3 and any(len(x) == len(w) and sum(a != b for a, b in zip(w, x)) <= 1 and
+                                   sum(c.isdigit() for c in x) >= len(w) - 1 for x in words)
+    if len(w) < 4:
         return False
     tol = 1 if len(w) < 6 else 2
     return any(abs(len(x) - len(w)) <= tol and _lev(w, x) <= tol for x in words if not x.isdigit())
 
 
+# Mots trop courants pour désigner un chant : titres liturgiques, en-têtes de recueil ou de chorale (« Répertoire de la
+# maîtrise Notre-Dame… », « Psaume », « Messe »), mots-outils. Le titre est jugé sur ses autres mots (les mots clés) :
+# une copie d'un autre chant du même recueil n'a que l'en-tête en commun.
+GENERIC = set("""
+psaume psaumes cantique cantiques chant chants messe messes kyrie gloria sanctus agnus dei alleluia alleluya amen credo
+seigneur dieu jesus christ marie notre dame pere esprit saint sainte saints vierge ave maria
+repertoire chorale choeur maitrise paroisse cathedrale basilique eglise diocese communaute recueil partition partitions
+refrain couplet couplets strophe dimanche ordinaire temps careme avent noel paques annee
+les des une nous vous toi moi est mon ton son mes tes ses nos vos leur pour dans avec qui que par sur sous vers
+""".split())
+
+
+def _key_words(title):
+    return [w for w in _words(title) if w not in GENERIC]
+
+
 def title_score(title, text_words, count=False):
-    words = _words(title)
-    found = sum(1 for w in words if _near(w, text_words))
+    """Part des mots clés du titre retrouvés dans le texte lu (count : nombre de mots du titre retrouvés, tous compris)."""
     if count:
-        return found
-    return found / len(words) if words else 0.0
+        return sum(1 for w in _words(title) if _near(w, text_words))
+    keys = _key_words(title)
+    if len(keys) < TITLE_MIN_KEYS:
+        return 0.0  # « Kyrie », « O Seigneur nous tes enfants » : pas assez de mots propres à ce chant
+    return sum(1 for w in keys if _near(w, text_words)) / len(keys)
+
+
+def pdf_title(pdf):
+    """Titre imprimé sur la 1re page d'un PDF gravé : la plus grande ligne de texte du haut de la page (polices de texte
+    seulement : les symboles des polices musicales, SMuFL ou Sonata, sont écartés). None si rien n'est lisible."""
+    try:
+        import pypdfium2 as pdfium
+        import pypdfium2.raw as raw
+        import pdf_vectoriel as pv
+        page = pdfium.PdfDocument(str(pdf))[0]
+        height = page.get_height()
+        tp = page.get_textpage()
+        chars, codes = [], {}
+        for i in range(tp.count_chars()):
+            ch = raw.FPDFText_GetUnicode(tp, i)
+            font = pv._font(tp, i)
+            codes.setdefault(font, set()).add(ch)
+            if not 32 < ch < 0x2000:
+                if ch == 32 and chars:
+                    chars[-1]["space"] = True
+                continue
+            left, bottom, right, top = tp.get_charbox(i, loose=True)
+            if bottom < 0.65 * height:  # haut de la page seulement (compté depuis le bas)
+                continue
+            chars.append({"c": chr(ch), "font": font, "size": top - bottom, "left": left, "right": right, "base": bottom})
+        music = {f for f, cs in codes.items() if pv.kind_of(f, cs)}
+        chars = [c for c in chars if c["font"] not in music and (c["c"].isalnum() or c["c"] in "'’-")]
+        if not chars:
+            return None
+        big = max(c["size"] for c in chars)
+        title = sorted((c for c in chars if c["size"] >= 0.85 * big), key=lambda c: (-round(c["base"] / (0.5 * big)), c["left"]))
+        out, last = "", None
+        for c in title:
+            if last is not None and (abs(c["base"] - last["base"]) > 0.5 * big or last.get("space")
+                                     or c["left"] - last["right"] > 0.18 * c["size"]):
+                out += " "
+            out += c["c"]
+            last = c
+        return out.strip() or None
+    except Exception as e:  # noqa: BLE001
+        print(f"Répertoire : titre du PDF non lu ({type(e).__name__})", file=sys.stderr)
+        return None
 
 
 def ocr_title(page):
@@ -114,18 +191,26 @@ def ocr_title(page):
         return None
 
 
+def _titles(x, f):
+    return [t for t in (f.get("titre") or x.stem, f.get("titre_page")) if t]
+
+
+def _title_match(x, f, words):
+    """Meilleur des titres d'un chant (nom du fichier, titre imprimé) : (part des mots retrouvés, nombre de mots)."""
+    return max(((title_score(t, words), title_score(t, words, count=True)) for t in _titles(x, f)), default=(0.0, 0))
+
+
 def search_title(text, items, read=None):
     """Chant dont le titre est lu en haut de la page, ou None ; les notes lues, s'il y en a, ne doivent pas le démentir."""
-    words = set(_words(text or ""))
+    words = set(_words(text or "")) | set(_mixed(text))
     if not words:
         return None
-    ranked = sorted(((title_score(f.get("titre") or x.stem, words), x, f) for x, f in items), key=lambda t: -t[0])
+    ranked = sorted(((_title_match(x, f, words), x, f) for x, f in items), key=lambda t: (-t[0][0], -t[0][1]))
     if not ranked:
         return None
-    best, x, f = ranked[0]
-    second = next((sc for sc, y, g in ranked[1:] if not _same(f, g)), 0.0)
-    if best < TITLE_ACCEPT or best - second < TITLE_MARGIN or \
-            title_score(f.get("titre") or x.stem, words, count=True) < TITLE_MIN_WORDS:
+    (best, found), x, f = ranked[0]
+    second = next((sc for (sc, _n), y, g in ranked[1:] if not _same(f, g)), 0.0)
+    if best < TITLE_ACCEPT or best - second < TITLE_MARGIN or found < TITLE_MIN_WORDS:
         return None
     if read and sum(len(v) for v in read) >= MIN_NOTES:
         mine = similarity(read, f["voices"])
@@ -176,7 +261,8 @@ def load(folder: pathlib.Path):
         fp = xml.with_suffix(".json")
         try:
             if not fp.exists() or fp.stat().st_mtime < xml.stat().st_mtime:
-                fp.write_text(json.dumps(fingerprint(xml)), encoding="utf-8")
+                old = json.loads(fp.read_text(encoding="utf-8")) if fp.exists() else {}  # titres donnés à l'ajout gardés
+                fp.write_text(json.dumps(fingerprint(xml, old.get("titre"), old.get("titre_page"))), encoding="utf-8")
             items.append((xml, json.loads(fp.read_text(encoding="utf-8"))))
         except Exception as e:  # noqa: BLE001 : un chant illisible n'empêche pas les autres
             print(f"Répertoire : {xml.name} illisible ({type(e).__name__})", file=sys.stderr)
@@ -301,9 +387,14 @@ def main():
     elif cmd == "ajouter":
         import shutil
         folder.mkdir(parents=True, exist_ok=True)
-        name = sys.argv[4] if len(sys.argv) > 4 else src.stem
-        title = sys.argv[5] if len(sys.argv) > 5 else None
-        fp = fingerprint(src, title)
+        rest = sys.argv[4:]
+        pdf = None
+        if "--pdf" in rest:
+            i = rest.index("--pdf")
+            pdf, rest = rest[i + 1], rest[:i] + rest[i + 2:]
+        name = rest[0] if rest else src.stem
+        title = rest[1] if len(rest) > 1 else None
+        fp = fingerprint(src, title, pdf_title(pdf) if pdf else None)
         # même chant déjà présent sous un autre nom (PDF en double, chorale qui renvoie sa partition) : pas de doublon,
         # sinon les deux entrées se feraient concurrence et aucune ne serait reconnue
         for x, f in load(folder):
