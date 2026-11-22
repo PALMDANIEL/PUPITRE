@@ -211,7 +211,7 @@ def search_title(text, items, read=None):
     (best, found), x, f = ranked[0]
     second = next((sc for (sc, _n), y, g in ranked[1:] if not _same(f, g)), 0.0)
     if best < TITLE_ACCEPT or best - second < TITLE_MARGIN or found < TITLE_MIN_WORDS:
-        return None
+        return short_title(words, items, read)
     if read and sum(len(v) for v in read) >= MIN_NOTES:
         mine = similarity(read, f["voices"])
         others = max((similarity(read, g["voices"]) for y, g in items if y != x and not _same(f, g)), default=0.0)
@@ -219,6 +219,28 @@ def search_title(text, items, read=None):
         if max(mine, others) >= MELODY_INFORMATIVE and mine < others - TITLE_MELODY_SLACK:
             return None
     return {"nom": x.stem, "chemin": str(x), "titre": round(best, 3), "ecart_titre": round(best - second, 3)}
+
+
+SHORT_TITLE = os.environ.get("PUPITRE_TITRE_COURT", "1") != "0"
+SHORT_MIN, SHORT_GAP = 0.3, 0.03
+
+
+def short_title(words, items, read):
+    """Titre court (« Devant toi » : un seul mot propre au chant) retrouvé en entier dans l'en-tête, et notes lues qui
+    ressemblent d'abord à ce même chant, même de peu (copie WhatsApp mal lue : 0,39 contre 0,34) : deux indices faibles
+    qui s'accordent. Un titre plus long de la même tournure (« Voici ce que nous portons devant toi ») est reconnu avant,
+    par la règle ordinaire."""
+    if not SHORT_TITLE or not read or sum(len(v) for v in read) < MIN_NOTES:
+        return None
+    sims = sorted(((similarity(read, g["voices"]), y, g) for y, g in items if g["voices"]), key=lambda t: -t[0])
+    if not sims:
+        return None
+    top, y, g = sims[0]
+    second = next((sc for sc, z, h in sims[1:] if not _same(g, h)), 0.0)
+    full = any(len(_words(t)) >= 2 and all(_near(w, words) for w in _words(t)) for t in _titles(y, g))
+    if full and top >= SHORT_MIN and top - second >= SHORT_GAP:
+        return {"nom": y.stem, "chemin": str(y), "titre": 1.0, "ecart_titre": round(top - second, 3)}
+    return None
 
 
 def _lev(a, b):
