@@ -272,25 +272,30 @@ def _raster(contours, width, height):
 
 
 def _merge(segs, horizontal):
-    """Morceaux de traits (caractères mis bout à bout) recollés."""
-    if horizontal:
-        segs = sorted(segs, key=lambda s: (round(s[1] * 4), s[0]))
-        out = []
-        for s in segs:
-            if out and abs(out[-1][1] - s[1]) < 0.3 and s[0] <= out[-1][2] + 1.0:
-                p = out[-1]
-                out[-1] = (p[0], p[1], max(p[2], s[2]), p[3])
-            else:
-                out.append(s)
-        return out
-    segs = sorted(segs, key=lambda s: (round(s[0] * 4), s[1]))
+    """Morceaux de traits (caractères mis bout à bout) recollés : même ligne (à 0,35 point près) et bouts qui se
+    touchent. (Trier sur la position arrondie mêlait deux traits voisins de portées différentes : une barre de mesure
+    avalée par une queue de la portée du dessus.)"""
+    a, b = (1, 0) if horizontal else (0, 1)  # a : position du trait ; b : sens de sa longueur
+    pts = sorted(segs, key=lambda s: s[a])
+    groups, cur = [], []
+    for s in pts:
+        if cur and s[a] - cur[-1][a] > 0.35:
+            groups.append(cur)
+            cur = []
+        cur.append(s)
+    if cur:
+        groups.append(cur)
     out = []
-    for s in segs:
-        if out and abs(out[-1][0] - s[0]) < 0.35 and s[1] <= out[-1][3] + 1.0:
-            p = out[-1]
-            out[-1] = (p[0], p[1], p[2], max(p[3], s[3]))
-        else:
-            out.append(s)
+    for g in groups:
+        g.sort(key=lambda s: s[b])
+        run = list(g[0])
+        for s in g[1:]:
+            if s[b] <= run[b + 2] + 1.0:
+                run[b + 2] = max(run[b + 2], s[b + 2])
+            else:
+                out.append(tuple(run))
+                run = list(s)
+        out.append(tuple(run))
     return out
 
 

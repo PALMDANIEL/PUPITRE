@@ -499,7 +499,10 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size, page_flags=None):
         if g["code"] == DOT:
             near = [n for n in notes if 0 < g["x"] - n["right"] < 1.6 * sp and abs(g["y"] - n["y"]) < 0.6 * sp]
             if near:
-                owner[id(g)] = id(min(near, key=lambda n: (abs(g["y"] - n["y"]), g["x"] - n["right"])))
+                # à égale distance de deux têtes (tierce : point dans l'interligne entre elles), il est à celle qu'il
+                # surmonte (note sur une ligne : point dans l'interligne au-dessus ; « Songo Soalla »)
+                owner[id(g)] = id(min(near, key=lambda n: (round(abs(g["y"] - n["y"]) / sp * 4), g["y"] < n["y"] - 0.1 * sp,
+                                                           g["x"] - n["right"])))
     for n in notes:
         dur = stem_dur(n, n["stem"], n["up"])
         # unisson à deux queues : chaque voix sa durée (noire du ténor, croche ligaturée de la basse : Psaume 118)
