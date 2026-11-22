@@ -13,11 +13,11 @@ import { BUSY, UserError, type Job, type Manifest } from './types';
  * - au-delà du plafond de sécurité (1 h) ; sur Vercel (lecture directe), la limite courte demandée (la plateforme
  *   coupe chaque requête à 5 min : mieux vaut s'arrêter proprement avec un message clair).
  */
-export function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void }): Promise<void> {
+export function run(cmd: string, args: string[], opts: { label: string; timeoutMs: number; onLine?: (l: string) => void; env?: Record<string, string> }): Promise<void> {
   return new Promise((resolve, reject) => {
     // UTF-8 pour Python : sous Windows il lit et écrit les fichiers texte en cp1252 (paroles en « ɛ », « ɔ », titres accentués)
     // PYTHONHASHSEED : même copie, même lecture (l'ordre des ensembles Python ne varie plus d'un lancement à l'autre)
-    const env = { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHONHASHSEED: '0' };
+    const env = { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHONHASHSEED: '0', ...(opts.env ?? {}) };
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env, windowsHide: true });
     let tail = '';
     let buffer = '';
@@ -93,9 +93,11 @@ async function processScore(id: string) {
   if (meta.disposition) omrIn.push('--disposition', meta.disposition);
   let lecture: 'voix' | null = null;
   const [omrCmd, omrArgs] = engineCommand('omr', omrIn);
+  const library = repertoireDirs(meta.owner ?? null);
   await run(omrCmd, omrArgs, {
     label: 'La lecture des notes',
     timeoutMs: config.omrTimeoutMs * 2,
+    env: { PUPITRE_REPERTOIRE: library.join(path.delimiter) },
     onLine: (line) => {
       if (line.startsWith('pages:')) {
         void fs.readdir(pagesDir).then((files) => update({ pages: files.filter((f) => f.endsWith('.png')).sort(), status: 'recognizing', progress: 20 }));
@@ -108,9 +110,38 @@ async function processScore(id: string) {
     },
   });
   if (!partitionFile) throw new UserError('Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.');
+  // PDF gravé lu sans faute : il entre au répertoire de la chorale, et ses copies photographiées seront reconnues
+  const exact = await fs.readFile(path.join(dir, 'partition.exacte'), 'utf8').catch(() => '');
+  if (exact === 'pdf') await addToRepertoire(id, path.join(dir, partitionFile), library[1], meta.title);
   const pages = (await fs.readdir(pagesDir)).filter((f) => f.endsWith('.png')).sort();
   await patchMeta(id, { pages, partitionFile, lecture, corrected: false, progress: 62 });
   await renderScore(id);
+}
+
+/**
+ * Répertoire vérifié (engine/repertoire.py) : versions exactes des chants déjà connus. Une copie photographiée d'un
+ * chant du répertoire est reconnue (notes lues, ou titre imprimé) et la version exacte remplace la lecture de l'image.
+ * Deux dossiers : le répertoire commun d'AIT, puis celui de la chorale (code d'accès) ou de cet ordinateur.
+ */
+export function repertoireDirs(owner: string | null): [string, string] {
+  const base = path.join(config.storageDir, 'repertoire');
+  return [path.join(base, 'commun'), path.join(base, owner ? owner.replace(/[^A-Za-z0-9-]/g, '_') : 'local')];
+}
+
+async function addToRepertoire(id: string, partition: string, folder: string, title: string) {
+  try {
+    await fs.mkdir(folder, { recursive: true });
+    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title]);
+    await run(cmd, args, { label: 'L’ajout au répertoire', timeoutMs: 120_000 });
+  } catch (e) {
+    console.error('Répertoire :', (e as Error).message); // la partition reste lue ; seul l'ajout manque
+  }
+}
+
+/** Partition supprimée : son entrée du répertoire aussi (elle ne servira plus à reconnaître ses copies). */
+export async function removeFromRepertoire(id: string, owner: string | null) {
+  const folder = repertoireDirs(owner)[1];
+  await Promise.all(['musicxml', 'json'].map((ext) => fs.rm(path.join(folder, `${id}.${ext}`), { force: true })));
 }
 
 async function renderScore(id: string) {

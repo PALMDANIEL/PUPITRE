@@ -6,7 +6,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { checkSetup, config } from './config';
-import { enqueue, recover } from './jobs';
+import { enqueue, recover, removeFromRepertoire, repertoireDirs } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, LANGUES, TIMBRES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre, type Voyelle } from './types';
 import { buildPack, packFileName } from './pack';
@@ -439,6 +439,7 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
 app.delete('/api/scores/:id', async (req, res) => {
   const meta = await getScore(req.params.id, res);
   assertIdle(meta);
+  await removeFromRepertoire(meta.id, meta.owner ?? null).catch(() => undefined);
   await removeScore(meta.id);
   res.status(204).end();
 });
@@ -509,7 +510,7 @@ app.post('/api/lire', upload.array('file', 12), async (req, res) => {
   const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
   const ping = setInterval(() => send({ ping: true }), 10_000); // garde la connexion ouverte pendant les longues lectures
   try {
-    const result = await readDirect(files, title, (e) => send(e), req.body?.disposition === 'satb' ? 'satb' : null);
+    const result = await readDirect(files, title, (e) => send(e), req.body?.disposition === 'satb' ? 'satb' : null, repertoireDirs(ownerOf(res)));
     if (!Buffer.isBuffer(result) && 'etat' in result) {
       // copie usée : étape 1 faite ; le téléphone relance l'étape 2 (/api/lire/suite) avec cet état (limite de 5 minutes)
       send({ status: 'etape', progress: 30, title, etat: result.etat.toString('base64'), pages: result.pages.map((p) => p.toString('base64')) });
@@ -544,7 +545,7 @@ app.post('/api/lire/suite', upload.single('etat'), async (req, res) => {
   const send = (o: object) => res.write(`${JSON.stringify(o)}\n`);
   const ping = setInterval(() => send({ ping: true }), 10_000);
   try {
-    const r = await resumeDirect(state.buffer, (e) => send(e));
+    const r = await resumeDirect(state.buffer, (e) => send(e), repertoireDirs(ownerOf(res)));
     send({ status: 'partition', progress: 60, partition: r.partition.toString('base64'), pages: [], fiabilite: r.fiabilite });
   } catch (e) {
     console.error('Lecture directe (suite) :', e, (e as { detail?: string }).detail ?? '');

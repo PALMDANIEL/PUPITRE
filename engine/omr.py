@@ -896,7 +896,7 @@ def main(src, work, layout=None, stage1=False):
     except Exception:  # noqa: BLE001
         pass
 
-    for old in ("partition.mxl", "partition.musicxml", "fiabilite.json"):
+    for old in ("partition.mxl", "partition.musicxml", "fiabilite.json", EXACT_MARK):
         (work / old).unlink(missing_ok=True)
     if DIRECT_PDF and src.suffix.lower() == ".pdf":
         # PDF gravé par un logiciel (MuseScore 3 et 4 : symboles SMuFL placés exactement) : lu tel quel, sans
@@ -908,6 +908,7 @@ def main(src, work, layout=None, stage1=False):
         if r.returncode == 0 and target.exists():
             sys.stderr.write(r.stderr[-300:])
             shutil.rmtree(pre, ignore_errors=True)
+            mark_exact(work, target, "pdf")  # rendue sans les retouches d'une lecture d'image
             print("lecture:pdf", flush=True)
             print(f"partition:{target.name}", flush=True)
             return
@@ -949,6 +950,8 @@ def main(src, work, layout=None, stage1=False):
             shutil.rmtree(pre, ignore_errors=True)
             print(f"disposition:{chosen}", flush=True)
             # état de l'étape 1 (hébergement limité à 5 minutes par requête) ou partition terminée
+            if target.suffix != ".zip":
+                target = recognize(work, target)
             print(f"etat:{target.name}" if target.suffix == ".zip" else f"partition:{target.name}", flush=True)
         return target
 
@@ -995,6 +998,12 @@ def main(src, work, layout=None, stage1=False):
             shutil.rmtree(omr, ignore_errors=True)
             return
     if not found:
+        # aucune portée lue (copie très usée) : le titre imprimé suffit si le chant est au répertoire
+        known = recognize(work, None)
+        if known is not None:
+            shutil.rmtree(pre, ignore_errors=True)
+            print(f"partition:{known.name}", flush=True)
+            return
         sys.exit("Aucune portée n’a été reconnue. Essayez un scan plus net : page bien à plat, éclairage régulier, sans ombre.")
 
     reread_signs(pre, pages_dir, found, len(pages))
@@ -1046,8 +1055,59 @@ def main(src, work, layout=None, stage1=False):
         third.unlink(missing_ok=True)
     if BUDGET is None or time.monotonic() - _T0 + 60 < BUDGET:
         target = reread_verses(pages_dir, work, target)
+    target = recognize(work, target)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
+
+
+EXACT_MARK = "partition.exacte"  # partition exacte (PDF gravé lu directement, chant reconnu) : rendue sans retouches
+
+
+def mark_exact(work: pathlib.Path, partition: pathlib.Path, how: str):
+    """Partition exacte : marque à côté (serveur, banc) et dans le fichier (render.EXACT_TAG : elle suit la partition
+    renvoyée au téléphone puis à /api/recreer)."""
+    (work / EXACT_MARK).write_text(how, encoding="utf-8")
+    if partition.suffix == ".musicxml":
+        text = partition.read_text(encoding="utf-8")
+        if "<!-- pupitre:exacte -->" not in text[:4096]:
+            head, sep, rest = text.partition("?>")
+            text = f"{head}{sep}\n<!-- pupitre:exacte -->{rest}" if sep and head.lstrip().startswith("<?xml") else \
+                f"<!-- pupitre:exacte -->\n{text}"
+            partition.write_text(text, encoding="utf-8")
+
+
+def recognize(work: pathlib.Path, target) -> pathlib.Path:
+    """
+    Copie d'un chant du répertoire vérifié (PUPITRE_REPERTOIRE : dossiers séparés par « : » ou « ; ») : la version
+    exacte remplace la lecture de l'image, avec les paroles lues sur la copie (repertoire.py). Un chant inconnu garde
+    sa lecture : il faut une ressemblance forte et nettement meilleure que celle de tous les autres chants.
+    """
+    folders = [f for f in os.environ.get("PUPITRE_REPERTOIRE", "").split(os.pathsep) if f and os.path.isdir(f)]
+    if not folders or (target is not None and not target.exists()):
+        return target
+    out = work / "partition-repertoire.musicxml"
+    page = work / "pages" / "page-01.png"  # titre imprimé en haut de la 1re page, si les notes ne suffisent pas
+    try:
+        r = subprocess.run(step("repertoire", "remplacer", target if target is not None else "-", out, *folders,
+                                *(["--page", page] if page.exists() else [])),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, **QUIET)
+    except Exception as e:  # noqa: BLE001 : la lecture de l'image reste
+        print(f"Répertoire non consulté ({type(e).__name__})", file=sys.stderr)
+        return target
+    if r.returncode or not out.exists():
+        return target
+    import json
+    found = json.loads((r.stdout.strip().splitlines() or ["{}"])[-1] or "{}")
+    final = work / "partition.musicxml"
+    if target is not None and target != final:
+        target.unlink(missing_ok=True)
+    out.replace(final)
+    mark_exact(work, final, f"repertoire:{found.get('nom', '')}")
+    how = f"titre lu à {found.get('titre')}" if found.get("par") == "titre" else f"ressemblance {found.get('ressemblance')}"
+    print(f"Chant reconnu dans le répertoire : {found.get('nom')} ({how}, "
+          f"{found.get('paroles', 0)} syllabes reprises de la copie)", file=sys.stderr)
+    print(f"repertoire:{found.get('nom')}", flush=True)
+    return final
 
 
 def reread_verses(pages_dir: pathlib.Path, work: pathlib.Path, target: pathlib.Path) -> pathlib.Path:
@@ -1093,7 +1153,7 @@ def _fail(e: BaseException) -> None:
 def resume(state, work, layout=None):
     """Seconde requête de la lecture voix par voix : reprend l'état de l'étape 1 (etat.zip)."""
     work = pathlib.Path(work)
-    for old in ("partition.mxl", "partition.musicxml", "fiabilite.json"):
+    for old in ("partition.mxl", "partition.musicxml", "fiabilite.json", EXACT_MARK):
         (work / old).unlink(missing_ok=True)
     import zipfile
     with zipfile.ZipFile(state) as z:
@@ -1103,6 +1163,7 @@ def resume(state, work, layout=None):
         sys.exit("PUPITRE-ERREUR: La lecture des voix n'a pas abouti. Reprenez la photo : page bien à plat, en pleine lumière.")
     if not double:
         print(f"disposition:{layout or 'voix'}", flush=True)
+    target = recognize(work, target)
     print(f"partition:{target.name}", flush=True)
 
 

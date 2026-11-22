@@ -5,7 +5,7 @@ En développement, on peut toujours lancer directement python3 omr.py, render.py
 """
 import runpy, sys
 
-STEPS = ("omr", "preprocess", "merge", "pupitres", "arbitre", "signes", "render", "pdf_vectoriel", "couplets")
+STEPS = ("omr", "preprocess", "merge", "pupitres", "arbitre", "signes", "render", "pdf_vectoriel", "couplets", "repertoire")
 
 
 def main():

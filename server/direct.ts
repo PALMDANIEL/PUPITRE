@@ -9,6 +9,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { config, engineCommand } from './config';
 import { run } from './jobs';
+
+/** Répertoire vérifié (jobs.repertoireDirs) : une copie d'un chant connu est rendue exacte. */
+const libraryEnv = (library: string[]) => ({ PUPITRE_REPERTOIRE: library.join(path.delimiter) });
 import { buildPack } from './pack';
 import { UserError, type Langue, type Manifest, type ScoreStatus, type Timbre, type Voyelle } from './types';
 import { ensureVoices } from './voix';
@@ -34,7 +37,7 @@ async function pagesOf(dir: string): Promise<Buffer[]> {
 }
 
 /** Étape 2 : lecture des portées par homr et assemblage, à partir de l'état de l'étape 1. */
-export async function resumeDirect(state: Buffer, onEvent: (e: DirectEvent) => void): Promise<DirectPartition> {
+export async function resumeDirect(state: Buffer, onEvent: (e: DirectEvent) => void, library: string[] = []): Promise<DirectPartition> {
   const dir = path.join(os.tmpdir(), `pupitre-suite-${randomUUID()}`);
   await fs.mkdir(dir, { recursive: true });
   try {
@@ -44,7 +47,7 @@ export async function resumeDirect(state: Buffer, onEvent: (e: DirectEvent) => v
     let partition = '';
     const [cmd, args] = engineCommand('omr', ['--reprise', zipFile, dir]);
     await run(cmd, args, {
-      label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2,
+      label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2, env: libraryEnv(library),
       onLine: (line) => {
         if (line.startsWith('actif:')) onEvent({ status: 'recognizing', progress: 45 });
         const done = /^partition:(.+)$/.exec(line);
@@ -63,6 +66,7 @@ export async function readDirect(
   title: string,
   onEvent: (e: DirectEvent) => void,
   disposition: 'satb' | null = null,
+  library: string[] = [],
 ): Promise<Buffer | DirectPartition | DirectState> {
   const dir = path.join(os.tmpdir(), `pupitre-direct-${randomUUID()}`);
   await fs.mkdir(dir, { recursive: true });
@@ -82,7 +86,7 @@ export async function readDirect(
     // hébergement limité à 5 minutes par requête : une copie lue voix par voix s'arrête après l'étape 1 (--etape1)
     const [omrCmd, omrArgs] = engineCommand('omr', [source, dir, ...(disposition ? ['--disposition', disposition] : []), ...(config.direct ? ['--etape1'] : [])]);
     await run(omrCmd, omrArgs, {
-      label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2,
+      label: 'La lecture des notes', timeoutMs: config.omrTimeoutMs * 2, env: libraryEnv(library),
       onLine: (line) => {
         if (line.startsWith('pages:')) onEvent({ status: 'recognizing', progress: 20 });
         const pct = /^progress:omr:(\d+)/.exec(line);

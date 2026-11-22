@@ -37,7 +37,8 @@ def score_voice(got, want):
 
 def read_voices(partition):
     sc = converter.parse(str(partition))
-    voices = render.extract_voices(sc, trust_names=False)
+    # partition exacte (PDF lu directement, chant reconnu dans le répertoire) : rendue telle quelle, comme render.py
+    voices = render.extract_voices(sc, trust_names=render.is_exact(partition))
     # une note liée compte une fois, comme dans la vérité (make_corpus.four_parts : stripTies) ; accord vide : sauté
     return [[int(max(n.pitches, key=lambda q: q.ps).midi) for n in v.recurse().notes if n.pitches and not held(n)]
             for v in voices]
@@ -50,7 +51,7 @@ def held(n):
 
 def run_case(case: pathlib.Path, reuse: bool):
     src = next(p for p in case.iterdir() if p.name.startswith("source."))
-    part = next((p for p in case.glob("partition.*")), None)
+    part = next((p for p in (case / "partition.musicxml", case / "partition.mxl") if p.exists()), None)
     t0 = time.time()
     if not (reuse and part):
         r = subprocess.run([sys.executable, str(ENGINE / "omr.py"), str(src), str(case)], capture_output=True, text=True,
@@ -59,7 +60,7 @@ def run_case(case: pathlib.Path, reuse: bool):
         (case / "journal.txt").write_text("\n".join(l for l in (r.stdout + r.stderr).splitlines() if not l.startswith(("actif:", "progress:"))), encoding="utf-8")
         if r.returncode:
             return case.name, {"error": (r.stderr.strip().splitlines() or ["?"])[-1][:160]}
-        part = next((p for p in case.glob("partition.*")), None)
+        part = next((p for p in (case / "partition.musicxml", case / "partition.mxl") if p.exists()), None)
     try:
         voices = read_voices(part)
     except Exception as e:  # noqa: BLE001

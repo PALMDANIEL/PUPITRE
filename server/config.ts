@@ -82,7 +82,7 @@ if (!env.SOUNDFONT) {
 }
 
 /** Commande pour une étape du moteur (omr, render…). */
-export function engineCommand(step: 'omr' | 'render', args: string[]): [string, string[]] {
+export function engineCommand(step: 'omr' | 'render' | 'repertoire', args: string[]): [string, string[]] {
   return config.engineBin ? [config.engineBin, [step, ...args]] : [config.python, [path.join(config.engineDir, `${step}.py`), ...args]];
 }
 

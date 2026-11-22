@@ -972,13 +972,18 @@ def regroup_by_clef(parts):
             doubled += sum(1 for v in rows[k][i].voices if v.notes) >= 2
         got = {}
         gs = [k for k in singing if kinds[k][i] in ("G", None)]
-        for k in singing:
-            if kinds[k][i] == "F" and "Basse" not in got:
-                got["Basse"] = k
-            elif kinds[k][i] == "G8" and "Ténor" not in got:
-                got["Ténor"] = k
+        fs = [k for k in singing if kinds[k][i] == "F"]
+        g8 = [k for k in singing if kinds[k][i] == "G8"]
+        if g8:
+            got["Ténor"] = g8[0]
+        if len(fs) >= 2 and "Ténor" not in got:
+            got["Ténor"], got["Basse"] = fs[0], fs[1]  # ténor et basse tous deux en clé de fa, de haut en bas
+        elif fs:
+            got["Basse"] = fs[-1]
         for name, k in zip(("Soprano", "Alto", "Ténor"), gs):
             got.setdefault(name, k)
+        if set(singing) - set(got.values()):
+            return None  # une portée qui chante resterait sans voix : on ne regroupe pas d'après les clés
         if len(singing) >= 3:
             fours += 1
             typical += any(kinds[k][i] in ("F", "G8") for k in singing)
@@ -1279,6 +1284,22 @@ def sing_voices(voices, labels, tempo_qpm, a):
     return sung
 
 
+EXACT_TAG = "<!-- pupitre:exacte -->"  # écrit dans la partition : la marque voyage avec elle (téléphone → /api/recreer)
+
+
+def is_exact(src):
+    """Partition exacte (PDF gravé lu directement, chant reconnu dans le répertoire) : fichier « partition.exacte » à
+    côté, ou marque dans la partition elle-même."""
+    p = pathlib.Path(src)
+    if (p.parent / "partition.exacte").exists():
+        return True
+    try:
+        with open(p, "rb") as f:
+            return EXACT_TAG.encode() in f.read(4096)
+    except OSError:
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src"); ap.add_argument("out")
@@ -1296,7 +1317,9 @@ def main():
     out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
     score = converter.parse(a.src)
     tempo_qpm = a.tempo or detect_tempo(score)
-    voices = extract_voices(score, trust_names=not a.omr)
+    # partition exacte (PDF gravé lu directement, chant reconnu dans le répertoire) : voix prises telles quelles, sans
+    # les retouches d'une lecture d'image (octaves, places des voix), qui abîmaient le ténor et la basse de 6 chants sur 15
+    voices = extract_voices(score, trust_names=not a.omr or is_exact(a.src))
     if not voices:
         sys.exit("Aucune note n’a été reconnue dans la partition.")
 
