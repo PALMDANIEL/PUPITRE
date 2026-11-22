@@ -306,6 +306,8 @@ export class RemoteReader {
     if (correction && Object.keys(correction.aVerifier).length) {
       body.append('fiabilite', JSON.stringify({ moyenne: correction.moyenne ?? 1, a_verifier: correction.aVerifier, corrigee: true }));
     }
+    // partition corrigée : entièrement vérifiée, le serveur la range au répertoire de la chorale
+    if (correction) body.append('corrigee', '1');
     body.append('titre', src.title);
     body.append('tempo', String(opts.tempo));
     body.append('timbre', opts.timbre);

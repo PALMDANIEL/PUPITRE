@@ -129,10 +129,15 @@ export function repertoireDirs(owner: string | null): [string, string] {
 }
 
 /** pdf : le PDF gravé, dont le titre imprimé servira à reconnaître les photos (nom de fichier souvent sans rapport). */
-async function addToRepertoire(id: string, partition: string, folder: string, title: string, pdf: string) {
+/**
+ * Version exacte d'un chant ajoutée au répertoire de la chorale : PDF gravé lu directement (pdf : son titre imprimé), ou
+ * partition vérifiée et corrigée par le chef de chœur dans l'éditeur de notes. Ses copies photographiées seront
+ * ensuite reconnues et rendues exactes.
+ */
+export async function addToRepertoire(id: string, partition: string, folder: string, title: string, pdf?: string) {
   try {
     await fs.mkdir(folder, { recursive: true });
-    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title, '--pdf', pdf]);
+    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title, ...(pdf ? ['--pdf', pdf] : [])]);
     await run(cmd, args, { label: 'L’ajout au répertoire', timeoutMs: 120_000 });
   } catch (e) {
     console.error('Répertoire :', (e as Error).message); // la partition reste lue ; seul l'ajout manque

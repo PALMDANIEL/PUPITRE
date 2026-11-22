@@ -367,6 +367,31 @@ def replace(read_path, out, folders, page=None):
     return found
 
 
+INCOHERENT = float(os.environ.get("PUPITRE_REPERTOIRE_INCOHERENCE", "0.3"))
+
+
+def incoherence(path):
+    """Part des mesures où toutes les voix chantent mais ne durent pas le même temps (première et dernière mesures mises
+    à part : levée, fin) : signe sûr d'une note ou d'un rythme mal lu. Les mesures libres des psaumes (récitation)
+    durent le même temps dans toutes les voix et ne comptent pas."""
+    from music21 import converter
+    sc = converter.parse(str(path))
+    parts = [list(p.getElementsByClass("Measure")) for p in sc.parts]
+    if not parts:
+        return 1.0
+    n = max(len(p) for p in parts)
+    bad = tot = 0
+    for k in range(1, n - 1):
+        durs = set()
+        if not all(k < len(p) and p[k].notes for p in parts):
+            continue
+        for p in parts:
+            durs.add(round(float(sum(e.duration.quarterLength for e in p[k].notesAndRests)), 3))
+        tot += 1
+        bad += len(durs) > 1
+    return bad / tot if tot and bad >= 3 else 0.0  # une ou deux mesures (petite pièce) : pas un signe
+
+
 def main():
     if len(sys.argv) < 4:
         sys.exit(__doc__)
@@ -394,6 +419,12 @@ def main():
             pdf, rest = rest[i + 1], rest[:i] + rest[i + 2:]
         name = rest[0] if rest else src.stem
         title = rest[1] if len(rest) > 1 else None
+        # lecture d'un PDF gravé peu cohérente (mise en page que la lecture directe ne comprend pas encore) : pas une
+        # version exacte, elle ne doit pas remplacer la lecture des copies de ce chant
+        bad = incoherence(src)
+        if bad > INCOHERENT:
+            print(f"Partition incohérente ({bad:.0%} des mesures) : pas ajoutée au répertoire", file=sys.stderr)
+            return
         fp = fingerprint(src, title, pdf_title(pdf) if pdf else None)
         # même chant déjà présent sous un autre nom (PDF en double, chorale qui renvoie sa partition) : pas de doublon,
         # sinon les deux entrées se feraient concurrence et aucune ne serait reconnue
@@ -403,7 +434,11 @@ def main():
                 print(f"Déjà dans le répertoire : {x.stem}", file=sys.stderr)
                 return
         dst = folder / f"{name}.musicxml"
-        shutil.copy(src, dst)
+        if src.suffix.lower() == ".mxl":  # partition corrigée compressée (MuseScore) : rangée décompressée
+            from music21 import converter
+            converter.parse(str(src)).write("musicxml", fp=str(dst))
+        else:
+            shutil.copy(src, dst)
         (folder / f"{name}.json").write_text(json.dumps(fp), encoding="utf-8")
         print(f"Ajouté au répertoire : {name}", file=sys.stderr)
     else:

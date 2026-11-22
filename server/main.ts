@@ -4,9 +4,10 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { checkSetup, config } from './config';
-import { enqueue, recover, removeFromRepertoire, repertoireDirs } from './jobs';
+import { addToRepertoire, enqueue, recover, removeFromRepertoire, repertoireDirs } from './jobs';
 import { dirOf, initDb, isId, listMetas, patchMeta, readMeta, removeScore, writeMeta } from './store';
 import { BUSY, LANGUES, TIMBRES, UserError, type Langue, type ScoreMeta, type SourceKind, type Timbre, type Voyelle } from './types';
 import { buildPack, packFileName } from './pack';
@@ -431,6 +432,11 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
   } else {
     await fs.rm(fid, { force: true });
   }
+  // partition entièrement vérifiée par le chef de chœur : elle entre au répertoire de la chorale (à la place de la
+  // lecture), et toutes les copies de ce chant photographiées ensuite seront rendues exactes
+  if (!left || !Object.keys(left).length) {
+    void addToRepertoire(meta.id, path.join(dirOf(meta.id), partitionFile), repertoireDirs(meta.owner ?? null)[1], meta.title);
+  }
   const next = await patchMeta(meta.id, { partitionFile, corrected: true, status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: 'render' });
   res.status(202).json(next);
@@ -450,6 +456,18 @@ app.delete('/api/scores/:id', async (req, res) => {
  * Réponse en lignes JSON : {"status","progress"} au fil de la lecture, puis {"pack": base64} ou {"error"}.
  */
 /** Téléphone : recréer l'audio d'un chant enregistré (tempo, sonorité, voix chantées) à partir de sa partition. */
+async function correctedToRepertoire(partition: Buffer, title: string, owner: string) {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'pupitre-corrigee-'));
+  try {
+    const file = path.join(tmp, 'corrigee.musicxml');
+    await fs.writeFile(file, partition);
+    const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'chant';
+    await addToRepertoire(`tel-${slug}`, file, repertoireDirs(owner)[1], title);
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+}
+
 app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: 'pages', maxCount: 12 }]), async (req, res) => {
   const received = (req.files ?? {}) as Record<string, Express.Multer.File[]>;
   const file = received['file']?.[0];
@@ -484,6 +502,8 @@ app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: '
     const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e), pages, reliability);
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
+    // partition corrigée sur le téléphone et entièrement vérifiée : au répertoire de la chorale (comme sur l'ordinateur)
+    if (body.corrigee === '1' && !reliability && owner) void correctedToRepertoire(file!.buffer, title, owner);
     if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);
   } catch (e) {
     console.error('Recréation :', e, (e as { detail?: string }).detail ?? '');

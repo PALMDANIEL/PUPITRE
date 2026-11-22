@@ -22,12 +22,14 @@ print(re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:60])' "$title")
   if PYTHONHASHSEED=0 "$PY" "$REPO/engine/pdf_vectoriel.py" "$pdf" "$WORK/$name.musicxml" > /dev/null 2>&1; then
     out=$(PYTHONHASHSEED=0 "$PY" "$REPO/engine/repertoire.py" ajouter "$WORK/$name.musicxml" "$WORK/commun" "$name" "$title" --pdf "$pdf" 2>&1 || true)
     rm -f "$WORK/$name.musicxml"
-    if [[ "$out" == *"Déjà dans le répertoire"* ]]; then dup=$((dup + 1)); else n=$((n + 1)); fi
+    if [[ "$out" == *"Déjà dans le répertoire"* ]]; then dup=$((dup + 1))
+    elif [[ "$out" == *"incohérente"* ]]; then skip=$((skip + 1))
+    else n=$((n + 1)); fi
   else
     skip=$((skip + 1))  # scan, photo, ou police musicale illisible : pas une version exacte
   fi
 done
-echo "$n chant(s) lus exactement, $dup en double, $skip PDF laissé(s) de côté (scans ou polices illisibles)."
+echo "$n chant(s) lus exactement, $dup en double, $skip PDF laissé(s) de côté (scans, polices illisibles ou lecture incohérente)."
 (( n > 0 )) || { echo "Rien à envoyer."; exit 1; }
 [[ -n "${SANS_ENVOI:-}" ]] && { echo "Répertoire préparé (non envoyé) : $WORK/commun"; exit 0; }
 tar -C "$WORK" -cf - commun | ssh -o ConnectTimeout=20 ubuntu@102.204.24.173 '
