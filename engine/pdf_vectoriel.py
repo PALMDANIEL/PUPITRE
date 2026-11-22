@@ -9,7 +9,7 @@ ou soprano et alto en accords), les portées masquées d'un système reconnues �
   python3 pdf_vectoriel.py <partition.pdf> <sortie.musicxml>
       code de sortie 2 : PDF sans symboles SMuFL (scan, autre logiciel) : la lecture d'image prend le relais
 """
-import ctypes, os, statistics, sys
+import ctypes, io, os, statistics, sys
 from fractions import Fraction
 
 import pypdfium2 as pdfium
@@ -258,15 +258,19 @@ def paths(page):
         w, h = r - l, t - b
         if h < 1.2 and w > 30:
             hor.append((l, b, r, t))
-        elif w < 2.5 and h > 5:
-            ver.append((l, b, r, t))
+        elif (w < 2.5 and h > 5) or (THICK_BARS and w < 4.5 and h > 5 * w):
+            ver.append((l, b, r, t))  # 4,5 : barre épaisse de fin de partie (Toccata : 3 points)
         elif w > 2 and h < 14:
             # liaisons (courbes), ligatures, crochets de triolet ; une liaison n'est jamais une ligature
             # (une ligature est un quadrilatère ; une liaison, une courbe, ou une ligne brisée de nombreux points)
             nseg = raw.FPDFPath_CountSegments(o.raw)
             curved = nseg > 8 or any(raw.FPDFPathSegment_GetType(raw.FPDFPath_GetPathSegment(o.raw, k)) == raw.FPDF_SEGMENT_BEZIERTO
                                      for k in range(min(nseg, 200)))
-            shapes.append((l, b, r, t, curved))
+            # même tracé deux fois (remplissage puis contour) : une seule ligature
+            # (LilyPond : surface et contour arrondi, cadres décalés de 0,4 point)
+            if not (SAME_SHAPE and any(abs(q[0] - l) < 0.6 and abs(q[1] - b) < 0.6 and abs(q[2] - r) < 0.6 and abs(q[3] - t) < 0.6
+                                       for q in shapes[-6:])):
+                shapes.append((l, b, r, t, curved))
         if w > 30 and 8 < h < 60:
             blocks.append((l, b, r, t))
     if len(hor) < 5 and blocks:
@@ -325,6 +329,12 @@ def staves_of(hor):
 
 
 def systems_of(staves, ver):
+    if staves and FRAME:
+        # cadre de la page, traits de coupe : hors de la largeur des portées, ils reliaient tous les systèmes en un
+        sp = statistics.median(s[2] for s in staves)
+        x0, x1 = min(s[3] for s in staves) - sp, max(s[4] for s in staves) + sp
+        top, bottom = max(s[1] for s in staves) + 6 * sp, min(s[0] for s in staves) - 6 * sp
+        ver = [v for v in ver if x0 <= v[0] <= x1 and not (v[3] > top and v[1] < bottom)]
     groups = [[s] for s in staves]
     merged = True
     while merged:
@@ -351,7 +361,7 @@ def names_of(label):
 
 # --------------------------------------------------------------------------------------------- lecture d'une portée
 
-def read_staff(st, mine, ver, shapes, texts, all_staves, size):
+def read_staff(st, mine, ver, shapes, texts, all_staves, size, page_flags=None):
     y0, y1, sp, xl, xr = st
     mine.sort(key=lambda g: g["x"])
     heads = [g for g in mine if g["code"] in HEADS and g["size"] >= 0.8 * size]
@@ -423,8 +433,19 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
         up = [v for v in stems if abs(v[0] - h["right"]) < 0.3 * sp and abs(v[1] - h["y"]) < 0.6 * sp and v[3] > h["y"] + sp]
         down = [v for v in stems if abs(v[0] - h["left"]) < 0.3 * sp and abs(v[3] - h["y"]) < 0.6 * sp and v[1] < h["y"] - sp]
         notes.append(dict(x=h["x"], y=h["y"], left=h["left"], right=h["right"], midi=midi, step=step, octave=d // 7,
-                          alter=alter, base=HEADS[h["code"]], up=bool(up), down=bool(down),
+                          alter=alter, base=HEADS[h["code"]], hollow=h.get("hollow", False), up=bool(up), down=bool(down),
                           stem=(up or down or [None])[0], stem_down=down[0] if up and down else None, tie=False))
+    # accord de seconde : une tête est déportée de l'autre côté de la queue, juste à côté de sa voisine ; c'est le
+    # même temps (« Rendons gloire à Dieu » : mi bémol et ré de la dernière noire lus l'un après l'autre)
+    if SECONDS:
+        for n in sorted(notes, key=lambda n: n["x"]):
+            w = n["right"] - n["left"]
+            for m in notes:
+                # une seconde (pas un unisson : récitation des psaumes, brèves côte à côte), sur une seule queue
+                # (deux voix à queues opposées gardent chacune son temps : Psaume 70)
+                if m is not n and 0.75 * w < m["x"] - n["x"] < 1.15 * w and 0.35 * sp <= abs(m["y"] - n["y"]) <= 0.65 * sp \
+                        and (n["stem"] is None or m["stem"] is None or n["stem"] == m["stem"]):
+                    m["x"] = n["x"]
     # queue partagée par un accord : la tête du bout la porte, les autres au même x et sous la même queue aussi
     for n in notes:
         if n["stem"] is None:
@@ -434,13 +455,20 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
                     if s_[1] - 0.6 * sp <= n["y"] <= s_[3] + 0.6 * sp:
                         n["stem"], n["up"], n["down"] = s_, m["up"], m["down"]
                         break
+    # tête creuse reconnue par son dessin (glyphes.py) : blanche si elle a une queue, ronde sinon
+    for n in notes:
+        if n.get("hollow") and n["stem"] is None:
+            n["base"] = 4
+
     def stem_dur(n, s_, up):
         dur = Fraction(n["base"])
         if n["base"] == 1 and s_ is not None:
             tip = s_[3] if up else s_[1]
             sx = (s_[0] + s_[2]) / 2
             # crochet : son origine au bout de la queue (SMuFL) ou à la tête (polices Sonata), son bord au bout
-            flags = [g for g in mine if g["code"] in FLAGS and abs(g["x"] - sx) < 0.6 * sp
+            # crochets de toute la page : celui d'une queue qui descend loin sous la portée est plus près de la
+            # portée du dessous (« Devant toi » : croche de l'alto lue noire)
+            flags = [g for g in (page_flags if page_flags is not None else mine) if g["code"] in FLAGS and abs(g["x"] - sx) < 0.6 * sp
                      and min(abs(g["y"] - tip), abs(g["top"] - tip), abs(g["bottom"] - tip)) < 1.8 * sp]
             if flags:
                 dur = Fraction(1, 2 ** FLAGS[flags[0]["code"]])
@@ -449,18 +477,36 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
                 toward = 1 if not up else -1  # queue descendante : les ligatures suivantes sont au-dessus
                 beams = [b for b in shapes if not b[4] and b[0] - 0.4 <= sx <= b[2] + 0.4 and 0.35 * sp <= (b[3] - b[1]) < 3 * sp and (b[2] - b[0]) > 0.6 * sp
                          and b[1] - 0.6 * sp <= tip + (2.6 * sp if toward > 0 else 0) and b[3] + 0.6 * sp >= tip - (2.6 * sp if toward < 0 else 0)
-                         and not (b[1] > n["y"] - 0.3 * sp and b[3] < n["y"] + 0.3 * sp)]
+                         and not (b[1] > n["y"] - 0.3 * sp and b[3] < n["y"] + 0.3 * sp)
+                         # une ligature ne couvre pas sa propre tête (Finale : queue et ligne supplémentaire d'un tracé)
+                         and not (OWN_HEAD and b[0] <= (n["left"] + n["right"]) / 2 <= b[2] and b[1] <= n["y"] <= b[3])]
+                if beams and BEAM_PIECES:
+                    # ligature tracée en morceaux d'une queue à l'autre (Toccata) : à une queue du milieu, le morceau
+                    # de gauche et celui de droite sont la même ligature
+                    beams = [b for b in beams if not any(c is not b and abs(c[2] - b[0]) < 1.0 and abs(b[0] - sx) < 1.0
+                                                         and min(b[3], c[3]) - max(b[1], c[1]) > 0.5 * min(b[3] - b[1], c[3] - c[1])
+                                                         for c in beams)]
                 if beams:
                     # une ligature par niveau, chacune son tracé (penchée : son cadre est plus haut qu'elle, on ne
                     # mesure pas sa hauteur, on compte les tracés qui passent au bout de la queue)
                     dur = Fraction(1, 2 ** min(4, len(beams)))
         return dur
 
+    # chaque point de durée à une seule tête : la plus proche en hauteur parmi celles juste à sa gauche (deux voix
+    # pointées sur une portée : le point de l'alto comptait aussi pour la soprano, blanche lue doublement pointée)
+    owner = {}
+    for g in mine:
+        if g["code"] == DOT:
+            near = [n for n in notes if 0 < g["x"] - n["right"] < 1.6 * sp and abs(g["y"] - n["y"]) < 0.6 * sp]
+            if near:
+                owner[id(g)] = id(min(near, key=lambda n: (abs(g["y"] - n["y"]), g["x"] - n["right"])))
     for n in notes:
         dur = stem_dur(n, n["stem"], n["up"])
         # unisson à deux queues : chaque voix sa durée (noire du ténor, croche ligaturée de la basse : Psaume 118)
         dur_down = stem_dur(n, n["stem_down"], False) if n["stem_down"] is not None else None
-        dots = [g for g in mine if g["code"] == DOT and 0 < g["x"] - n["right"] < 1.6 * sp and abs(g["y"] - n["y"]) < 0.6 * sp]
+        dots = [g for g in mine if g["code"] == DOT and 0 < g["x"] - n["right"] < 1.6 * sp and abs(g["y"] - n["y"]) < 0.6 * sp
+                and (not DOT_OWNER or owner.get(id(g)) == id(n) or any(abs(m["x"] - n["x"]) < 0.5 and abs(m["y"] - n["y"]) < 0.05
+                                                                        and owner.get(id(g)) == id(m) for m in notes))]
         if dots:
             dur = dur * (Fraction(3, 2) if len(dots) == 1 else Fraction(7, 4))
             dur_down = dur_down and dur_down * (Fraction(3, 2) if len(dots) == 1 else Fraction(7, 4))
@@ -491,33 +537,96 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size):
     rests = []
     for g in mine:
         if g["code"] in RESTS:
-            dur = Fraction(RESTS[g["code"]]).limit_denominator(32)
+            code = g["code"]
+            if g.get("rect"):
+                # rectangle plein (glyphes.py) : la pause pend sous une ligne, la demi-pause est posée dessus
+                lines = [y0 + k * sp for k in range(5)]
+                code = 0xE4E3 if min(abs(g["top"] - y) for y in lines) < min(abs(g["bottom"] - y) for y in lines) else 0xE4E4
+            dur = Fraction(RESTS[code]).limit_denominator(32)
             if any(d["code"] == DOT and 0 < d["x"] - g["right"] < 1.6 * sp and abs(d["y"] - g["y"]) < 1.2 * sp for d in mine):
                 dur *= Fraction(3, 2)
-            rests.append(dict(x=g["x"], y=g["y"], dur=dur, whole=g["code"] == 0xE4E3))
+            rests.append(dict(x=g["x"], y=g["y"], dur=dur, whole=code == 0xE4E3))
     label = " ".join(w[0] for w in sorted(texts, key=lambda w: (-w[3], w[1]))
                      if w[2] < xl + 2 and y0 - 1.5 * sp <= w[3] <= y1 + 1.5 * sp)
     return dict(staff=st, sp=sp, notes=notes, rests=rests, cuts=cuts, clefs=clefs, fifths=fifths, time=time_sig,
                 names=names_of(label), mid=(y0 + y1) / 2)
 
 
-def read_pdf(path):
+def upright(path):
+    """Document dont les pages tournées (« A4 paysage » : /Rotate 90) sont remises droites, contenu compris : les
+    lignes de portée y redeviennent horizontales."""
     doc = pdfium.PdfDocument(str(path))
+    if all(p.get_rotation() % 360 == 0 for p in doc):
+        return doc
+    for page in doc:
+        r = page.get_rotation() % 360
+        if not r:
+            continue
+        x0, y0, x1, y1 = page.get_mediabox()
+        W, H = x1 - x0, y1 - y0
+        m = {90: (0, -1, 1, 0, -y0, W + x0), 180: (-1, 0, 0, -1, W + x0, H + y0), 270: (0, 1, -1, 0, H + y0, -x0)}[r]
+        for k in range(raw.FPDFPage_CountObjects(page.raw)):
+            raw.FPDFPageObj_Transform(raw.FPDFPage_GetObject(page.raw, k), *m)
+        nw, nh = (H, W) if r in (90, 270) else (W, H)
+        raw.FPDFPage_SetMediaBox(page.raw, 0, 0, nw, nh)
+        raw.FPDFPage_SetCropBox(page.raw, 0, 0, nw, nh)
+        page.set_rotation(0)
+        raw.FPDFPage_GenerateContent(page.raw)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return pdfium.PdfDocument(buf.getvalue())
+
+
+SHAPES = os.environ.get("PUPITRE_PDF_DESSINS", "1") != "0"
+
+
+def read_pdf(path):
+    doc = upright(path)
+    copy = None
     systems = []
     for i in range(len(doc)):
         page = doc[i]
         gl = glyphs(page)
-        if not any(g["code"] in HEADS for g in gl):
-            continue
         hor, ver, shapes = paths(page)
-        staves = staves_of(hor)
+        # portée : au moins 12 % de la largeur de la page (des traits courts parallèles, ligatures empilées, soulignés
+        # des paroles, faisaient de fausses portées : « Songo Soalla », portées dessinées en caractères)
+        wide = (lambda sts: [st for st in sts if st[4] - st[3] >= 0.12 * page.get_size()[0]]) if SHORT_STAVES else (lambda sts: sts)
+        staves = wide(staves_of(hor))
         seg_hor, seg_ver = segment_lines(page)
-        alt = staves_of(seg_hor)
+        alt = wide(staves_of(seg_hor))
         if len(alt) > len(staves):
             # portées tracées autrement (Sibelius, Finale, MuseScore 2) : barres de mesure peut-être aussi dans un
             # seul chemin avec d'autres traits
             staves = alt
             ver = ver + seg_ver
+            hor = seg_hor
+        if SHAPES and sum(1 for g in gl if g["code"] in HEADS) < 4:
+            # codes de la police inconnus ou recodés : symboles reconnus par leur dessin (glyphes.py)
+            import glyphes
+            if copy is None:
+                buf = io.BytesIO()
+                doc.save(buf)
+                copy = pdfium.PdfDocument(buf.getvalue())
+            sp0 = statistics.median(s[2] for s in staves) if staves else None
+            g2, h2, v2, b2 = glyphes.read_page(copy[i], sp0)
+            if sum(1 for g in g2 if g["code"] in HEADS) >= 4:
+                gl, ver, shapes = g2, ver + v2, shapes + b2
+                if h2:
+                    more = wide(staves_of(hor + h2))
+                    if len(more) > len(staves):
+                        staves = more
+        if not any(g["code"] in HEADS for g in gl):
+            continue
+        if PATH_DOTS and staves:
+            # points de durée tracés (petits disques) et non écrits avec la police (« JEM 677 »)
+            spm = statistics.median(s[2] for s in staves)
+            for o in page.get_objects():
+                if o.type != raw.FPDF_PAGEOBJ_PATH:
+                    continue
+                l, b, r, t = o.get_bounds()
+                if 0.25 * spm <= r - l <= 0.7 * spm and 0.25 * spm <= t - b <= 0.7 * spm and abs((r - l) - (t - b)) < 0.25 * spm \
+                        and not any(g["code"] == DOT and abs(g["x"] - l) < 0.3 * spm and abs(g["y"] - (b + t) / 2) < 0.3 * spm for g in gl):
+                    gl.append(dict(code=DOT, x=l, y=(b + t) / 2, left=l, right=r, bottom=b, top=t, size=t - b))
         texts = words(page)
         size = statistics.median([g["size"] for g in gl if g["code"] in HEADS])
         for group in systems_of(staves, ver):
@@ -528,7 +637,8 @@ def read_pdf(path):
                 # « Toussaint » : croches lues noires à 4 interlignes) ; chaque signe va à la portée la plus proche
                 mine = [g for g in gl if y0 - 6.5 * sp <= g["y"] <= y1 + 6.5 * sp and xl - 2 * sp <= g["x"] <= xr + sp
                         and min(staves, key=lambda s: abs((s[0] + s[1]) / 2 - g["y"])) is st]
-                content.append(read_staff(st, mine, ver, shapes, texts, staves, size))
+                content.append(read_staff(st, mine, ver, shapes, texts, staves, size,
+                                          [g for g in gl if g["code"] in FLAGS] if FLAGS_PAGE else None))
             # cinq traits parallèles sans clé, sans note ni silence (cadre, traits décoratifs) : pas une portée ; gardée,
             # elle prenait la place de la portée de fa (« Toussaint » : soprano lue sur la portée de fa, ténor et basse perdus)
             content = [c for c in content if c["notes"] or c["rests"] or c["clefs"]]
@@ -546,6 +656,39 @@ def chordal(s):
     return sum(1 for n in s["notes"] if any(m is not n and abs(m["x"] - n["x"]) < 1.0 for m in s["notes"])) >= 0.3 * max(1, len(s["notes"]))
 
 
+def two_voiced(s):
+    """Portée à deux voix : au moins un dixième de ses attaques sont des accords (ténor et basse souvent à l'unisson :
+    moins d'accords que la règle de chordal, mais jamais une mélodie seule)."""
+    xs = sorted(n["x"] for n in s["notes"])
+    onsets, chords, prev, size = 0, 0, None, 0
+    for x in xs + [None]:
+        if x is not None and prev is not None and abs(x - prev) < 1.0:
+            size += 1
+            continue
+        if prev is not None:
+            onsets += 1
+            chords += size >= 2
+        prev, size = x, 1
+    return chords >= max(2, 0.1 * onsets)
+
+
+VOICE_COUNT = os.environ.get("PUPITRE_VOIX_COMPTEES", "1") != "0"
+TENOR_8 = os.environ.get("PUPITRE_TENOR_SOL", "1") != "0"
+CHOIR_BELOW = os.environ.get("PUPITRE_CHOEUR_BAS", "1") != "0"
+VOICE_CLEFS = os.environ.get("PUPITRE_VOIX_CLES", "1") != "0"
+DOT_OWNER = os.environ.get("PUPITRE_POINT_UNIQUE", "1") != "0"
+FLAGS_PAGE = os.environ.get("PUPITRE_CROCHETS_PAGE", "1") != "0"
+THICK_BARS = os.environ.get("PUPITRE_BARRES_EPAISSES", "1") != "0"
+FRAME = os.environ.get("PUPITRE_CADRE", "1") != "0"
+OWN_HEAD = os.environ.get("PUPITRE_LIGATURE_TETE", "1") != "0"
+PATH_DOTS = os.environ.get("PUPITRE_POINTS_TRACES", "1") != "0"
+SAME_SHAPE = os.environ.get("PUPITRE_TRACES_DOUBLES", "1") != "0"
+BEAM_PIECES = os.environ.get("PUPITRE_LIGATURES_MORCEAUX", "1") != "0"
+SECONDS = os.environ.get("PUPITRE_SECONDES", "1") != "0"
+BAR_REST = os.environ.get("PUPITRE_PAUSE_MESURE", "1") != "0"
+SHORT_STAVES = os.environ.get("PUPITRE_PORTEES_COURTES", "1") != "0"
+
+
 def plan_of(system):
     k = len(system)
     if all(s["names"] for s in system) and len({n for s in system for n in s["names"]}) == sum(len(s["names"]) for s in system):
@@ -559,7 +702,47 @@ def plan_of(system):
             plan.append((s, names))
         return plan
     if k >= 4:
+        if CHOIR_BELOW and chordal(system[-2]) and chordal(system[-1]) and not any(chordal(s) for s in system[:-2]):
+            # mélodies (couplets, soliste) au-dessus d'un chœur écrit sur deux portées à deux voix
+            # (« Donne-moi seulement de t'aimer » : trois portées de couplets, puis S+A et T+B)
+            return [(system[-2], ["Soprano", "Alto"]), (system[-1], ["Ténor", "Basse"])]
         return [(s, [NAMES[i]]) for i, s in enumerate(system[-4:])]
+    if k == 3 and VOICE_COUNT:
+        # trois portées sans noms : voix comptées sur chaque portée (deux si elle porte des accords) ; quatre en tout
+        # → soprano, alto, ténor, basse dans l'ordre (« Devant toi » : S+A, ténor seul en clé de sol, basse)
+        counts = [2 if two_voiced(s) else 1 for s in system]
+        if sum(counts) == 4:
+            plan, names = [], list(NAMES)
+            for s, c in zip(system, counts):
+                plan.append((s, names[:c]))
+                names = names[c:]
+            return plan
+    if k in (2, 3) and VOICE_CLEFS:
+        counts = [2 if two_voiced(s) else 1 for s in system]
+        clefs_ = [s["clefs"][0][1] if s["clefs"] else ("G", 0) for s in system]
+        if k == 2 and counts == [2, 1] and clefs_[0][0] == "G" and clefs_[1][0] == "F":
+            # soprano et alto sur la portée de sol, basse seule sur la portée de fa : pas de ténor recopié
+            return [(system[0], ["Soprano", "Alto"]), (system[1], ["Basse"])]
+        if all(c == 1 for c in counts):
+            # une voix par portée : chaque portée reçoit un seul nom, d'après sa clé (une portée sans
+            # accords recopiée en soprano et alto, puis en ténor et basse : « Marie, tendresse dans nos vies »)
+            plan, high, low = [], ["Soprano", "Alto"], ["Ténor", "Basse"]
+            bass_left = sum(1 for s in system if s["clefs"] and s["clefs"][0][1][0] == "F")
+            for s, c in zip(system, counts):
+                cl = s["clefs"][0][1] if s["clefs"] else ("G", 0)
+                if cl[0] == "F":
+                    bass_left -= 1
+                    names = low[:] if c == 2 else (["Ténor"] if bass_left > 0 else ["Basse"])
+                    low = [n for n in low if n not in names]
+                elif cl == ("G", -1):
+                    names = ["Ténor"]
+                else:
+                    names = high[:c] if high else []
+                    high = high[c:]
+                names = [n for n in names if not any(n in q for _s, q in plan)]
+                if names:
+                    plan.append((s, names))
+            return plan
     if k in (2, 3):
         return [(system[-2], ["Soprano", "Alto"]), (system[-1], ["Ténor", "Basse"])]
     s = system[0]
@@ -672,11 +855,19 @@ def build(systems):
             for name in names:
                 seen.add(name)
                 cl = staff["clefs"][0][1] if staff["clefs"] else ("G", 0)
-                clefs.setdefault(name, cl)
+                # ténor seul sur une portée en clé de sol sans « 8 » : écrit une octave plus haut qu'il ne sonne
+                low = TENOR_8 and name == "Ténor" and len(names) == 1 and cl == ("G", 0)
+                clefs.setdefault(name, ("G", -1) if low else cl)
                 meas = [[] for _ in range(n_meas)]
                 for e in sorted(ev[name], key=lambda e: e[0]):
+                    if low and e[2]:
+                        e = (e[0], e[1], [dict(n_, midi=n_["midi"] - 12) for n_ in e[2]])
                     k = next((i for i, c in enumerate(cuts) if e[0] < c), n_meas - 1)
                     meas[min(k, n_meas - 1)].append(e)
+                if BAR_REST:
+                    # pause seule dans sa mesure : elle vaut la mesure, quelle que soit la mesure (2/4, 6/8…)
+                    meas = [[(m[0][0], bar, None)] if len(m) == 1 and m[0][2] is None and m[0][1] == 4 and bar != 4 else m
+                            for m in meas]
                 voices[name] += meas
         for name in NAMES:
             if name not in seen:
