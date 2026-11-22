@@ -38,7 +38,9 @@ def score_voice(got, want):
 def read_voices(partition):
     sc = converter.parse(str(partition))
     # partition exacte (PDF lu directement, chant reconnu dans le répertoire) : rendue telle quelle, comme render.py
-    voices = render.extract_voices(sc, trust_names=render.is_exact(partition))
+    # (moteur de référence plus ancien, sans render.is_exact : la marque à côté de la partition)
+    is_exact = getattr(render, "is_exact", lambda p: (pathlib.Path(p).parent / "partition.exacte").exists())
+    voices = render.extract_voices(sc, trust_names=is_exact(partition))
     # une note liée compte une fois, comme dans la vérité (make_corpus.four_parts : stripTies) ; accord vide : sauté
     return [[int(max(n.pitches, key=lambda q: q.ps).midi) for n in v.recurse().notes if n.pitches and not held(n)]
             for v in voices]
