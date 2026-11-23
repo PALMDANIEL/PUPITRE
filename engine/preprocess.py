@@ -1029,8 +1029,31 @@ def pdf_pages(pdf, tmp):
     pages = []
     for page in doc:
         img = page.render(scale=300 / 72, grayscale=True).to_numpy()
-        pages.append((img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), False))
+        img = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        pages.append((trim_blank(img) if BLANK_MARGINS else img, False))
     return pages
+
+
+BLANK_MARGINS = os.environ.get("PUPITRE_MARGES_BLANCHES", "1") != "0"
+NARROW = 0.65  # contenu plus étroit que cette part de la page (marges de blanc pur) : marges retirées
+
+
+def trim_blank(img):
+    """
+    Scan posé au milieu d'une page plus grande (portrait dans une page A4 couchée, « Vers toi, Seigneur ») : le PDF
+    entoure l'image de blanc pur. La page étant ensuite ramenée à 2480 px de large, la musique n'en occupait que la
+    moitié (interligne de 8 px : Audiveris refuse la page, « too low interline »). Les marges de blanc pur (fond du PDF,
+    jamais du papier scanné, qui a du grain) sont retirées quand le contenu tient dans moins de NARROW de la largeur ;
+    un peu de marge est gardée. Pages ordinaires (contenu sur 75 à 95 % de la largeur) : inchangées.
+    """
+    ink_cols = np.where(img.min(axis=0) < 250)[0]
+    ink_rows = np.where(img.min(axis=1) < 250)[0]
+    if not len(ink_cols) or (ink_cols[-1] - ink_cols[0] + 1) >= NARROW * img.shape[1]:
+        return img
+    pad = int(0.03 * (ink_cols[-1] - ink_cols[0] + 1))
+    x0, x1 = max(0, ink_cols[0] - pad), min(img.shape[1], ink_cols[-1] + 1 + pad)
+    y0, y1 = max(0, ink_rows[0] - pad), min(img.shape[0], ink_rows[-1] + 1 + pad)
+    return img[y0:y1, x0:x1]
 
 
 
