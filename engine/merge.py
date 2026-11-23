@@ -353,7 +353,7 @@ def fix_rare_clefs(raw):
                     or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
                 continue
             usual = [p for k, (_pg, st) in enumerate(raw) if k != j and i < len(st) and st[i]
-                     and _clef_key(_head_clef(st[i][0]))[:2] in COMMON_CLEFS
+                     and (_clef_key(_head_clef(st[i][0])) or ())[:2] in COMMON_CLEFS
                      for p in _octave_free(st[i])]
             if len(usual) >= 8:
                 centre = statistics.median(usual)
