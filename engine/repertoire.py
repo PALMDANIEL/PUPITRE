@@ -414,6 +414,37 @@ def incoherence(path):
     return bad / tot if tot and bad >= 3 else 0.0  # une ou deux mesures (petite pièce) : pas un signe
 
 
+def bar_mismatch(path):
+    """Part des mesures (de chaque voix, première et dernière à part) dont la durée n'est pas celle de la mesure."""
+    from music21 import converter
+    sc = converter.parse(str(path))
+    bad = tot = 0
+    for p in sc.parts:
+        ts = None
+        ms = list(p.getElementsByClass("Measure"))
+        for k, m in enumerate(ms):
+            ts = m.timeSignature or ts
+            if ts is None or k in (0, len(ms) - 1) or not m.notes:
+                continue
+            tot += 1
+            bad += abs(float(sum(e.duration.quarterLength for e in m.notesAndRests)) - ts.barDuration.quarterLength) > 1e-6
+    return bad / tot if tot else 0.0
+
+
+def unreliable(path):
+    """Raison de refuser une lecture comme version exacte, ou None : voix qui ne durent pas le même temps dans plus de
+    30 % des mesures ; ou, deux indices ensemble, plus de 20 % et plus de 15 % de mesures de durée fausse (« Cantate de
+    Noël » : 23 % et 20 %). Les psaumes (mesures libres, mais de même durée dans toutes les voix) passent."""
+    inc = incoherence(path)
+    if inc > INCOHERENT:
+        return f"{inc:.0%} des mesures incohérentes"
+    if inc > 0.2:
+        mis = bar_mismatch(path)
+        if mis > 0.15:
+            return f"{inc:.0%} des mesures incohérentes, {mis:.0%} de durée fausse"
+    return None
+
+
 def main():
     if len(sys.argv) < 4:
         sys.exit(__doc__)
@@ -443,9 +474,9 @@ def main():
         title = rest[1] if len(rest) > 1 else None
         # lecture d'un PDF gravé peu cohérente (mise en page que la lecture directe ne comprend pas encore) : pas une
         # version exacte, elle ne doit pas remplacer la lecture des copies de ce chant
-        bad = incoherence(src)
-        if bad > INCOHERENT:
-            print(f"Partition incohérente ({bad:.0%} des mesures) : pas ajoutée au répertoire", file=sys.stderr)
+        why = unreliable(src)
+        if why:
+            print(f"Partition incohérente ({why}) : pas ajoutée au répertoire", file=sys.stderr)
             return
         fp = fingerprint(src, title, pdf_title(pdf) if pdf else None)
         # même chant déjà présent sous un autre nom (PDF en double, chorale qui renvoie sa partition) : pas de doublon,
