@@ -201,6 +201,41 @@ STAFF_OPTIONS = [
 ]
 
 
+def _ending_numbers(m):
+    nums = list(dict.fromkeys(re.findall(r"\d+", m.group(2))))
+    return f'{m.group(1)}{", ".join(nums) or "1"}{m.group(3)}'
+
+
+def tidy_mxl(path: pathlib.Path):
+    """
+    Numéros des cases de reprise lus par Audiveris dans le texte de la case (« 1., 2., 3. ») : il écrit
+    number="1,,2,,3" ou "1,,1", que music21 refuse (ValueError : tout le mouvement était écarté, puis la partition
+    brute d'Audiveris rendue telle quelle, illisible au rendu ; recueils « Chants notés » : 2 chants sur 731).
+    Ramenés à « 1, 2, 3 » ; le reste du fichier n'est pas touché.
+    """
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            items = [(info, z.read(info.filename)) for info in z.infolist()]
+    except (OSError, zipfile.BadZipFile):
+        return
+    changed = False
+    out = []
+    for info, data in items:
+        if info.filename.endswith(".xml") and not info.filename.startswith("META-INF"):
+            text = data.decode("utf-8", errors="replace")
+            new = re.sub(r'(<ending\b[^>]*?\bnumber=")([^"]*)(")', _ending_numbers, text)
+            if new != text:
+                changed, data = True, new.encode("utf-8")
+        out.append((info, data))
+    if changed:
+        tmp = path.with_suffix(".tmp")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            for info, data in out:
+                z.writestr(info.filename, data)
+        tmp.replace(path)
+
+
 def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int, sheets: list[int] | None = None):
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -230,6 +265,8 @@ def audiveris(pdf: pathlib.Path, out: pathlib.Path, pages: int, sheets: list[int
     except OSError as e:
         print(f"Audiveris introuvable ou impossible à lancer ({AUDIVERIS}) : {e}", file=sys.stderr)
     found = movements(out)
+    for f in found:
+        tidy_mxl(f)
     if not found:
         print(f"Audiveris n'a rien produit pour {pdf.name} (code {getattr(proc, 'returncode', '?')}). Dernières lignes :", file=sys.stderr)
         print("\n".join(tail), file=sys.stderr)
