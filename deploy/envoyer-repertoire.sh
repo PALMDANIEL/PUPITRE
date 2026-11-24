@@ -9,6 +9,7 @@ SRC=${1:-$HOME/Downloads/PARTITION}
 REPO=${0:A:h:h}
 PY=$HOME/pupitre/engine/.venv/bin/python3
 WORK=$(mktemp -d)
+trap 'rm -rf "${WORK:?}"' EXIT  # dossier de travail effacé même si l'envoi échoue
 mkdir -p "$WORK/commun"
 n=0; skip=0; dup=0
 for pdf in "$SRC"/*.pdf(N); do
@@ -31,11 +32,12 @@ print(re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:60])' "$title")
 done
 echo "$n chant(s) lus exactement, $dup en double, $skip PDF laissé(s) de côté (scans, polices illisibles ou lecture incohérente)."
 (( n > 0 )) || { echo "Rien à envoyer."; exit 1; }
-[[ -n "${SANS_ENVOI:-}" ]] && { echo "Répertoire préparé (non envoyé) : $WORK/commun"; exit 0; }
-tar -C "$WORK" -cf - commun | ssh -o ConnectTimeout=20 ubuntu@102.204.24.173 '
+[[ -n "${SANS_ENVOI:-}" ]] && { trap - EXIT; echo "Répertoire préparé (non envoyé) : $WORK/commun"; exit 0; }
+# sans les attributs étendus du Mac (com.apple.provenance…) : docker cp refuse de les recopier
+# (« lsetxattr … operation not supported ») et l'envoi s'arrête
+COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$WORK" -cf - commun | ssh -o ConnectTimeout=20 ubuntu@102.204.24.173 '
   set -e
   c=$(sudo docker ps --filter "label=com.docker.compose.service=pupitre" --format "{{.Names}}" | head -1)
   sudo docker exec "$c" mkdir -p /data/repertoire
   sudo docker cp - "$c":/data/repertoire
   echo "Répertoire commun du serveur : $(sudo docker exec "$c" sh -c "ls /data/repertoire/commun/*.musicxml | wc -l") chant(s)."'
-rm -r "${WORK:?}"
