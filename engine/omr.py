@@ -435,10 +435,43 @@ def read_voices(work: pathlib.Path, voix: pathlib.Path, layout: str, key: int, t
                     print(f"Lecture par portées peu fiable ({exact:.0%} des mesures justes) : écartée", file=sys.stderr)
                     target.unlink(missing_ok=True)
                     return None
+                thin = single_line_staff(target) if min_exact and layout == "grand" else None
+                if thin is not None:
+                    # deux voix sur une portée (S+A, T+B) : homr ne lit qu'un rythme par portée ; quand les voix ne vont
+                    # pas ensemble (basse en croches sous un ténor en noires), il en fait une seule ligne qui prend des
+                    # notes à l'une et à l'autre, aux durées justes (exactitude 0,88) : la voix perdue ne se voit pas
+                    # autrement (recueils, bwv337 fermée tachée : 0 % dans les quatre voix ; Psaume 84 photo, voix
+                    # en accords à 87 et 68 % : gardée)
+                    print(f"Lecture par portées : portée {thin[0] + 1} lue comme une seule ligne ({thin[1]:.0%} "
+                          "d'accords), écartée", file=sys.stderr)
+                    target.unlink(missing_ok=True)
+                    return None
                 return target
             target.unlink(missing_ok=True)
     except Exception as e:  # noqa: BLE001 : Audiveris prend le relais
         print(f"Lecture par portées impossible : {e}", file=sys.stderr)
+    return None
+
+
+CHORDS_MIN = float(os.environ.get("PUPITRE_ACCORDS_PORTEE", "0.3"))  # deux voix par portée : part d'accords exigée
+
+
+def single_line_staff(partition):
+    """Portée d'une lecture à deux voix par portée (S+A, T+B) lue comme une seule ligne : moins de CHORDS_MIN de ses
+    notes en accords (sur 12 notes au moins). Rend (indice de la portée, part d'accords), ou None."""
+    if CHORDS_MIN <= 0:
+        return None
+    try:
+        from music21 import chord, converter
+        for i, part in enumerate(converter.parse(str(partition)).parts):
+            notes = list(part.recurse().notes)
+            if len(notes) < 12:
+                continue
+            ratio = sum(1 for n in notes if isinstance(n, chord.Chord)) / len(notes)
+            if ratio < CHORDS_MIN:
+                return i, ratio
+    except Exception:  # noqa: BLE001 : lecture gardée
+        return None
     return None
 
 
