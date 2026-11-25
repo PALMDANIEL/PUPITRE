@@ -22,12 +22,8 @@ print(re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:60])' "$title")
   while [[ -e "$WORK/commun/$name.musicxml" ]]; do k=$((k + 1)); name="$base-$k"; done
   if PYTHONHASHSEED=0 "$PY" "$REPO/engine/pdf_vectoriel.py" "$pdf" "$WORK/$name.musicxml" > /dev/null 2>&1; then
     out=$(PYTHONHASHSEED=0 "$PY" "$REPO/engine/repertoire.py" ajouter "$WORK/$name.musicxml" "$WORK/commun" "$name" "$title" --pdf "$pdf" 2>&1 || true)
-    if [[ "$out" == *"aux voix de durées différentes"* ]]; then
-      # une à trois mesures aux voix de durées différentes : gardé dans la bibliothèque d'AIT (bien meilleur que la lecture
-      # d'une photo pour les chorales), signalé à revoir ; la règle stricte vaut pour les ajouts automatiques des chorales
-      out=$(PUPITRE_REPERTOIRE_PDF_STRICT=0 PYTHONHASHSEED=0 "$PY" "$REPO/engine/repertoire.py" ajouter "$WORK/$name.musicxml" "$WORK/commun" "$name" "$title" --pdf "$pdf" 2>&1 || true)
-      [[ "$out" == *"Ajouté"* ]] && review+=("$name")
-    fi
+    # une à trois mesures aux voix de durées différentes : gardé (bien meilleur que la lecture d'une photo), « à revoir »
+    [[ "$out" == *"à revoir"* ]] && review+=("$name")
     rm -f "$WORK/$name.musicxml"
     if [[ "$out" == *"Déjà dans le répertoire"* ]]; then dup=$((dup + 1))
     elif [[ "$out" == *"incohérente"* ]]; then skip=$((skip + 1))

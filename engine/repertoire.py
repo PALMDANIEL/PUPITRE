@@ -419,7 +419,26 @@ def incoherence(path):
     return bad / tot if tot and bad >= 3 else 0.0  # une ou deux mesures (petite pièce) : pas un signe
 
 
-STRICT_PDF = os.environ.get("PUPITRE_REPERTOIRE_PDF_STRICT", "1") != "0"
+# PDF lu directement et ajouté sans vérification : une à trois mesures aux voix de durées différentes ne l'écartent pas
+# (les chorales n'ont souvent personne pour valider ; une référence presque juste vaut bien mieux que la lecture d'une
+# photo) ; l'entrée est marquée « a_revoir » pour AIT. PUPITRE_REPERTOIRE_PDF_STRICT=1 : écartée.
+STRICT_PDF = os.environ.get("PUPITRE_REPERTOIRE_PDF_STRICT", "0") == "1"
+CHORDY = float(os.environ.get("PUPITRE_REPERTOIRE_ACCORDS", "0.3"))
+
+
+def chordy_voice(path):
+    """Voix qui chante en accords (deux notes ou plus à la fois) dans plus de CHORDY de ses notes : réduction pour piano,
+    ou deux voix restées ensemble (« Joie de Noël » : chœur et piano mêlés, 52 % ; « Sanctus Segda » : ténor et basse
+    sur une même voix, 90 %) : pas une référence voix par voix. Rend (voix, part d'accords) ou None."""
+    from music21 import chord, converter
+    for part in converter.parse(str(path)).parts:
+        notes = list(part.recurse().notes)
+        if len(notes) < 8:
+            continue
+        r = sum(1 for n in notes if isinstance(n, chord.Chord) and len(n.pitches) >= 2) / len(notes)
+        if r > CHORDY:
+            return part.partName or "?", r
+    return None
 
 
 def incoherent_measures(path):
@@ -501,12 +520,17 @@ def main():
         # lecture d'un PDF gravé peu cohérente (mise en page que la lecture directe ne comprend pas encore) : pas une
         # version exacte, elle ne doit pas remplacer la lecture des copies de ce chant
         why = None if verified else unreliable(src)
-        if why is None and not verified and pdf and STRICT_PDF:
-            # PDF lu directement, ajouté sans vérification : aucune mesure incohérente admise (une ou deux mesures aux
-            # durées fausses suffisent à rendre fausses toutes les copies de ce chant ; le chef de chœur peut la valider)
+        review = None
+        if why is None and not verified:
+            cv = chordy_voice(src)
+            if cv:
+                why = f"voix « {cv[0]} » en accords dans {cv[1]:.0%} de ses notes"
+        if why is None and not verified and pdf:
             k = incoherent_measures(src)
             if k:
-                why = f"{k} mesure{'s' if k > 1 else ''} aux voix de durées différentes"
+                review = f"{k} mesure{'s' if k > 1 else ''} aux voix de durées différentes"
+                if STRICT_PDF:
+                    why = review
         if why:
             print(f"Partition incohérente ({why}) : pas ajoutée au répertoire", file=sys.stderr)
             return
@@ -524,8 +548,10 @@ def main():
             converter.parse(str(src)).write("musicxml", fp=str(dst))
         else:
             shutil.copy(src, dst)
+        if review:
+            fp["a_revoir"] = review  # pour AIT : entrée presque juste, à revoir
         (folder / f"{name}.json").write_text(json.dumps(fp), encoding="utf-8")
-        print(f"Ajouté au répertoire : {name}", file=sys.stderr)
+        print(f"Ajouté au répertoire : {name}" + (f" (à revoir : {review})" if review else ""), file=sys.stderr)
     else:
         sys.exit(__doc__)
 
