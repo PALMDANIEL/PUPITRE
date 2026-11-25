@@ -36,11 +36,16 @@ echo "$n chant(s) lus exactement, $dup en double, $skip PDF laissé(s) de côté
 (( ${#review} )) && echo "À revoir par AIT (une à trois mesures aux voix de durées différentes) : ${review[*]}"
 (( n > 0 )) || { echo "Rien à envoyer."; exit 1; }
 [[ -n "${SANS_ENVOI:-}" ]] && { trap - EXIT; echo "Répertoire préparé (non envoyé) : $WORK/commun"; exit 0; }
+# le nouveau répertoire remplace l'ancien (gardé dans commun-ancien sur le serveur) : docker cp ajoute sans retirer, un
+# chant retiré (Joie de Noël, Sanctus Segda : voix en accords) serait resté
+mv "$WORK/commun" "$WORK/commun-nouveau"
 # sans les attributs étendus du Mac (com.apple.provenance…) : docker cp refuse de les recopier
 # (« lsetxattr … operation not supported ») et l'envoi s'arrête
-COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$WORK" -cf - commun | ssh -o ConnectTimeout=20 ubuntu@102.204.24.173 '
+COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$WORK" -cf - commun-nouveau | ssh -o ConnectTimeout=20 ubuntu@102.204.24.173 '
   set -e
   c=$(sudo docker ps --filter "label=com.docker.compose.service=pupitre" --format "{{.Names}}" | head -1)
   sudo docker exec "$c" mkdir -p /data/repertoire
+  sudo docker exec "$c" rm -rf /data/repertoire/commun-nouveau
   sudo docker cp - "$c":/data/repertoire
-  echo "Répertoire commun du serveur : $(sudo docker exec "$c" sh -c "ls /data/repertoire/commun/*.musicxml | wc -l") chant(s)."'
+  sudo docker exec "$c" sh -c "cd /data/repertoire && rm -rf commun-ancien && { [ ! -d commun ] || mv commun commun-ancien; } && mv commun-nouveau commun"
+  echo "Répertoire commun du serveur : $(sudo docker exec "$c" sh -c "ls /data/repertoire/commun/*.musicxml | wc -l") chant(s) (ancien gardé dans commun-ancien)."'
