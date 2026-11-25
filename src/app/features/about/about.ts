@@ -166,9 +166,9 @@ export class About {
   private readonly router = inject(Router);
   private taps: number[] = [];
 
-  /** Accès caché à l'Espace AIT (avant l'import de la clé) : 7 touches sur le logo en moins de 4 secondes. */
+  /** Accès caché à l'Espace AIT (avant l'import de la clé) : 7 touches sur le logo en moins de 4 secondes, dans
+   * l'application comme sur le site ouvert dans le navigateur. */
   protected secretTap() {
-    if (!this.player) return;
     const now = Date.now();
     this.taps = [...this.taps.filter((t) => now - t < 4000), now];
     if (this.taps.length >= 7) { this.taps = []; void this.router.navigate(['/ait']); }
