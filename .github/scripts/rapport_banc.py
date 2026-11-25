@@ -21,11 +21,12 @@ def load(root):
             if not tf.exists():
                 continue
             truth = json.loads(tf.read_text(encoding="utf-8"))
-            total = sum(len(truth.get(n, [])) for n in NAMES)  # mélodie seule (recueils) : la soprano
+            names = [n for n in truth if not n.startswith("_")]  # S, A, T, B ; mélodie seule ; chant + chœur
+            total = sum(len(truth[n]) for n in names)
             if "error" in r:
                 out[moteur][case] = (0.0, total, False, r["error"])
                 continue
-            good = sum((r["acc"].get(n) or [0])[0] * len(truth.get(n, [])) for n in NAMES)
+            good = sum((r["acc"].get(n) or [0])[0] * len(truth[n]) for n in names)
             out[moteur][case] = (good, total, r.get("voices") == 4, None)
     return out
 

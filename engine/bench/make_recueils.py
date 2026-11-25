@@ -29,7 +29,8 @@ BENCH = {"bwv269", "bwv347", "bwv153.1", "bwv86.6", "bwv267", "bwv281", "bwv40.6
 NAMES = ["Soprano", "Alto", "Ténor", "Basse"]
 WIDTH = 1405          # page A4 à 170 points par pouce (recueils scannés)
 MAX_MEASURES = 24     # chants des recueils : 18 mesures en médiane
-LAYOUTS = {"melodie": 0.50, "fermee": 0.32, "chantchoeur": 0.10, "ouverte": 0.08}
+LAYOUTS = {"melodie": 0.28, "fermee": 0.16, "chantchoeur": 0.06, "ouverte": 0.04, "mixte": 0.46}
+FONTS = ["Leipzig", "Bravura", "Gootville", "Leland"]  # polices de musique de Verovio
 
 FR_ROOTS = {"C": "DO", "C#": "DO#", "D-": "RÉb", "D": "RÉ", "D#": "RÉ#", "E-": "MIb", "E": "MI", "F": "FA", "F#": "FA#",
             "G-": "SOLb", "G": "SOL", "G#": "SOL#", "A-": "LAb", "A": "LA", "A#": "LA#", "B-": "SIb", "B": "SI"}
@@ -218,7 +219,7 @@ def staff_of(voices, cl, name, stems):
         else:
             for el in ms[0].getElementsByClass(meter.TimeSignature):
                 m.insert(0, copy.deepcopy(el))
-        for el in ms[0].getElementsByClass((expressions.TextExpression, tempo.MetronomeMark)):
+        for el in ms[0].getElementsByClass((expressions.TextExpression, tempo.MetronomeMark, layout.SystemLayout)):
             m.insert(el.offset, copy.deepcopy(el))
         if len(voices) == 1:
             for el in ms[0].notesAndRests:
@@ -265,21 +266,70 @@ def build(kind, parts, rng):
         staves = [staff_of([chant], clef.TrebleClef(), "Chant", ["up"]),
                   staff_of([s, a], clef.TrebleClef(), "Chœur", ["up", "down"]),
                   staff_of([t, b], clef.BassClef(), "", ["up", "down"])]
+        answer = {"Chant": answer["Soprano"], **answer}
     return staves, answer
+
+
+def part_of(measures, name=""):
+    p = stream.Part()
+    p.partName = name
+    for k, m in enumerate(measures, 1):
+        m.number = k
+        if k > 1:  # clé, armure et indication seulement au début de la partie
+            for el in list(m.getElementsByClass((clef.Clef, key.KeySignature, meter.TimeSignature))):
+                m.remove(el)
+        p.append(m)
+    return p
+
+
+def build_mixte(parts, melody, rng):
+    """Refrain en chœur (S+A / T+B) et couplets en mélodie seule (plusieurs couplets), comme la moitié des chants des
+    recueils : des systèmes de deux portées, puis d'une (ou l'inverse). Les deux parties sont gravées à part et
+    posées l'une sous l'autre sur la page. Bonne réponse : la mélodie des couplets dans la voix du haut (le moteur y
+    verse le soliste), les autres voix seulement au refrain."""
+    refrain = [list(p.getElementsByClass(stream.Measure)) for p in parts]
+    couplet = list(melody.getElementsByClass(stream.Measure))
+    r_n = min(len(refrain[0]), rng.randint(4, 10))
+    c_n = min(len(couplet), rng.randint(4, 10))
+    s, a, t, b = (part_of([copy.deepcopy(m) for m in ms[:r_n]]) for ms in refrain)
+    solo = part_of([copy.deepcopy(m) for m in couplet[:c_n]])
+    first = refrain[0][0]
+    for part, src in ((s, refrain[0]), (a, refrain[1]), (t, refrain[2]), (b, refrain[3]), (solo, couplet)):
+        m1 = part.getElementsByClass(stream.Measure).first()
+        for el in src[0].getElementsByClass((key.KeySignature, meter.TimeSignature)):
+            if not m1.getElementsByClass(type(el)):
+                m1.insert(0, copy.deepcopy(el))
+    add_lyrics(s, rng.randint(1, 2), rng)
+    add_lyrics(solo, rng.randint(2, 4), rng)
+    add_chord_names(s, [s, a, t, b], rng)
+    add_chord_names(solo, [solo, simple_harmony(solo, rng)], rng)
+    for part, label in ((s, "REFRAIN"), (solo, rng.choice(["COUPLETS", "STROPHES", "SOLISTE"]))):
+        te = expressions.TextExpression(label)
+        te.placement = "above"
+        te.style.fontWeight = "bold"
+        part.getElementsByClass(stream.Measure).first().insert(0, te)
+    answer = truth([s, a, t, b], NAMES)
+    mel = truth([solo], ["x"])["x"]
+    refrain_first = rng.random() < 0.6
+    answer["Soprano"] = (answer["Soprano"] + mel) if refrain_first else (mel + answer["Soprano"])
+    choir = [staff_of([s, a], clef.TrebleClef(), "", ["up", "down"]), staff_of([t, b], clef.BassClef(), "", ["up", "down"])]
+    verse = [staff_of([solo], clef.TrebleClef(), "", ["up"])]
+    return ([choir, verse] if refrain_first else [verse, choir]), answer
 
 
 def score_of(staves, title, rng):
     sc = stream.Score()
-    md = metadata.Metadata()
-    md.title = f"{title}   {rng.choice('ABCDEKP')} {rng.randint(10, 299)}" + (f"-{rng.randint(1, 3)}" if rng.random() < 0.3 else "")
-    md.composer = f"Musique : {rng.choice(NAMES_POOL)}"
-    md.lyricist = f"Texte : {rng.choice(NAMES_POOL)}"
-    sc.insert(0, md)
-    first = staves[0].getElementsByClass(stream.Measure).first()
-    te = expressions.TextExpression(rng.choice(TEMPI))
-    te.placement = "above"
-    te.style.fontWeight = "bold"
-    first.insert(0, te)
+    if title:
+        md = metadata.Metadata()
+        md.title = f"{title}   {rng.choice('ABCDEKP')} {rng.randint(10, 299)}" + (f"-{rng.randint(1, 3)}" if rng.random() < 0.3 else "")
+        md.composer = f"Musique : {rng.choice(NAMES_POOL)}"
+        md.lyricist = f"Texte : {rng.choice(NAMES_POOL)}"
+        sc.insert(0, md)
+        first = staves[0].getElementsByClass(stream.Measure).first()
+        te = expressions.TextExpression(rng.choice(TEMPI))
+        te.placement = "above"
+        te.style.fontWeight = "bold"
+        first.insert(0, te)
     for st in staves:
         sc.insert(0, st)
     if len(staves) > 1:
@@ -288,19 +338,39 @@ def score_of(staves, title, rng):
 
 
 # ---------------------------------------------------------------------------------------------------- image
-def engrave(sc, xml_path, scale):
+def look(rng):
+    """Police et épaisseurs d'une page (les mêmes pour toutes ses parties)."""
+    return {"font": rng.choice(FONTS), "staffLineWidth": rng.uniform(0.17, 0.28), "stemWidth": rng.uniform(0.18, 0.3),
+            "barLineWidth": rng.uniform(0.22, 0.42), "ledgerLineThickness": 0.3}
+
+
+def engrave(sc, xml_path, scale, style, fit=False, header=True):
     sc.write("musicxml", fp=str(xml_path))
     tk = verovio.toolkit()
-    tk.setOptions({"pageWidth": 2100, "pageHeight": 2970, "scale": scale, "adjustPageHeight": False,
-                   "footer": "none", "header": "auto", "breaks": "auto", "lyricSize": 4.0, "spacingSystem": 10,
-                   "pageMarginLeft": 100, "pageMarginRight": 100, "pageMarginTop": 80,
-                   "staffLineWidth": 0.26, "stemWidth": 0.26, "barLineWidth": 0.42, "ledgerLineThickness": 0.3})
+    tk.setOptions({"pageWidth": 2100, "pageHeight": 2970, "scale": scale, "adjustPageHeight": fit,
+                   "footer": "none", "header": "auto" if header else "none", "breaks": "auto", "lyricSize": 4.0,
+                   "spacingSystem": 10, "pageMarginLeft": 100, "pageMarginRight": 100,
+                   "pageMarginTop": 80 if header else 20, "pageMarginBottom": 20 if fit else 80, **style})
     tk.loadFile(str(xml_path))
     pages = []
     for i in range(1, tk.getPageCount() + 1):
         png = cairosvg.svg2png(bytestring=tk.renderToSVG(i).encode(), output_width=2 * WIDTH, background_color="white")
         pages.append(cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE))
     return pages
+
+
+def stack(images, width):
+    """Parties gravées à part posées l'une sous l'autre sur une page A4."""
+    height = int(width * 297 / 210)
+    page = np.full((height, width), 255, np.uint8)
+    y = 0
+    for img in images:
+        h = min(img.shape[0], height - y)
+        if h <= 0:
+            return None
+        page[y:y + h] = img[:h]
+        y += h
+    return page if y < height else None
 
 
 def as_scan(img, rng):
@@ -341,15 +411,15 @@ def main():
     scale = 32
     if "--echelle" in args:
         i = args.index("--echelle"); scale = int(args[i + 1]); args = args[:i] + args[i + 2:]
-    part, parts = 0, 1
+    shard, shards = 0, 1
     if "--part" in args:  # « --part 2/4 » : 3e quart des œuvres (plusieurs fabrications en parallèle)
-        i = args.index("--part"); part, parts = map(int, args[i + 1].split("/")); args = args[:i] + args[i + 2:]
+        i = args.index("--part"); shard, shards = map(int, args[i + 1].split("/")); args = args[:i] + args[i + 2:]
     out = pathlib.Path(args[0])
     count = int(args[1]) if len(args) > 1 else 20
     rng = random.Random(seed)
     out.mkdir(parents=True, exist_ok=True)
-    choral, folk = bach_chorales(random.Random(seed), part, parts), folk_melodies(random.Random(seed + 1), part, parts)
-    rng = random.Random(seed * 1009 + part)
+    choral, folk = bach_chorales(random.Random(seed), shard, shards), folk_melodies(random.Random(seed + 1), shard, shards)
+    rng = random.Random(seed * 1009 + shard)
     weights = [LAYOUTS[k] for k in kinds]
     manifest = []
     made = 0
@@ -364,14 +434,58 @@ def main():
             parts = parts[:1]  # mélodie d'un choral : la voix de soprano seule
         if kind != "melodie" and len(parts) != 4:
             continue
-        set_time_symbol(parts, rng)
+        melody = None
+        if kind == "mixte":
+            want = next(iter(parts[0].recurse().getElementsByClass(meter.TimeSignature)), None)
+            for _ in range(6):
+                try:
+                    _n2, p2, _s2 = next(choral)
+                except StopIteration:
+                    break
+                ts2 = next(iter(p2[0].recurse().getElementsByClass(meter.TimeSignature)), None)
+                if want is not None and ts2 is not None and ts2.ratioString == want.ratioString:
+                    melody = trim([copy.deepcopy(p2[0])], rng)[0]
+                    try:  # couplets transposés dans l'armure du refrain (même armure, comme dans les recueils)
+                        from music21 import interval
+                        ks1 = next(iter(parts[0].recurse().getElementsByClass(key.KeySignature)), key.KeySignature(0))
+                        ks2 = next(iter(melody.recurse().getElementsByClass(key.KeySignature)), key.KeySignature(0))
+                        iv = interval.Interval(ks2.asKey("major").tonic, ks1.asKey("major").tonic)
+                        if iv.semitones > 6:  # le plus court chemin : jamais plus d'une quarte augmentée
+                            iv = interval.Interval("-" + iv.complement.name)
+                        elif iv.semitones < -6:
+                            iv = interval.Interval(iv.complement.name)
+                        melody = melody.transpose(iv)
+                        for ks in melody.recurse().getElementsByClass(key.KeySignature):
+                            ks.sharps = ks1.sharps
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break
+            if melody is None:
+                continue
+        set_time_symbol(parts + ([melody] if melody is not None else []), rng)
         try:
-            staves, answer = build(kind, parts, rng)
-            sc = score_of(staves, rng.choice(["Seigneur, nous chantons", "Peuple de Dieu", "Viens, Esprit",
-                                              "Ô Marie", "Pain de vie", "Joie du ciel", "Vers toi", "Lumière"]), rng)
+            if kind == "mixte":
+                sections, answer = build_mixte(parts, melody, rng)
+            else:
+                staves, answer = build(kind, parts, rng)
+                sections = [staves]
+            title = rng.choice(["Seigneur, nous chantons", "Peuple de Dieu", "Viens, Esprit", "Ô Marie", "Pain de vie",
+                                "Joie du ciel", "Vers toi", "Lumière"])
             case = out / f"{name}-{kind}"
             case.mkdir(parents=True, exist_ok=True)
-            pages = engrave(sc, case / "gravure.musicxml", scale)
+            style = look(rng)
+            if len(sections) == 1:
+                pages = engrave(score_of(sections[0], title, rng), case / "gravure.musicxml", scale, style)
+            else:
+                images = []
+                for k, staves in enumerate(sections):
+                    sub = engrave(score_of(staves, title if k == 0 else None, rng), case / f"gravure-{k + 1}.musicxml",
+                                  scale, style, fit=True, header=(k == 0))
+                    if len(sub) != 1:
+                        raise ValueError("partie sur plusieurs pages")
+                    images.append(sub[0])
+                page = stack(images, images[0].shape[1])
+                pages = [page] if page is not None else []
         except Exception as e:  # noqa: BLE001
             print(f"écarté {name} ({kind}) : {type(e).__name__}: {e}", flush=True)
             continue
@@ -382,13 +496,13 @@ def main():
             continue
         cv2.imwrite(str(case / "source.png"), as_scan(pages[0], rng))
         ts = next(iter(parts[0].recurse().getElementsByClass(meter.TimeSignature)), None)
-        answer["_mesures"] = len(staves[0].getElementsByClass(stream.Measure))
+        answer["_mesures"] = sum(len(st[0].getElementsByClass(stream.Measure)) for st in sections)
         answer["_indication"] = (ts.ratioString + (f" {ts.symbol}" if ts.symbol else "")) if ts else None
         (case / "truth.json").write_text(json.dumps(answer), encoding="utf-8")
         manifest.append(dict(cas=case.name, mise=kind, **src))
         made += 1
         print(case.name, flush=True)
-    name = "manifeste.json" if parts == 1 else f"manifeste-{part + 1}.json"
+    name = "manifeste.json" if shards == 1 else f"manifeste-{shard + 1}.json"
     (out / name).write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
 

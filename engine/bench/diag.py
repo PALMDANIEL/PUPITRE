@@ -109,9 +109,12 @@ def main(corpus, filt="", *rest):
             print(f"{case.name:32} séparation impossible : {e}")
             continue
         fams, per = collections.Counter(), []
-        melody = [k for k in truth if not k.startswith("_")] == ["Soprano"]
-        for i, name in enumerate(NAMES):
-            got = (voices[0] if voices and i == 0 else []) if melody else (voices[i] if len(voices) == 4 else [])
+        wanted = [k for k in truth if not k.startswith("_")]
+        melody = wanted == ["Soprano"]
+        standard = set(wanted) <= set(NAMES)
+        for i, name in enumerate(NAMES if standard else wanted):
+            got = (voices[0] if voices and i == 0 else []) if melody else \
+                (voices[i] if i < len(voices) and len(voices) == (4 if standard else len(wanted)) else [])
             if name not in truth:
                 continue  # voix absente de la bonne réponse
             c = collections.Counter(family(op, d) for op, d in align(got, truth[name]))
