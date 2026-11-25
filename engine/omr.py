@@ -1092,12 +1092,66 @@ def main(src, work, layout=None, stage1=False):
         third.unlink(missing_ok=True)
     if BUDGET is None or time.monotonic() - _T0 + 60 < BUDGET:
         target = reread_verses(pages_dir, work, target)
+    mark_systems(pages_dir, target)
     target = recognize(work, target)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
 
 
 EXACT_MARK = "partition.exacte"  # partition exacte (PDF gravé lu directement, chant reconnu) : rendue sans retouches
+
+
+def mark_systems(pages_dir: pathlib.Path, partition):
+    """
+    Disposition des systèmes vue sur l'image (portées et mesures de chaque système, page après page), écrite dans la
+    partition (<!-- pupitre:systemes 2/4,2/5,1/3 --> : elle voyage avec elle, comme la marque de partition exacte).
+    render.py y distingue une page mêlée (refrain en chœur, couplets sur une portée : chantés par le soliste) d'une
+    ligne seule à l'intérieur du chœur (chantée à l'unisson).
+    """
+    if partition is None or not pathlib.Path(partition).exists():
+        return
+    try:
+        import cv2
+        import imgio
+        import pupitres
+        cells = []  # « portées/mesures » de chaque système (mesures : barres vues sur l'image)
+        for pf in sorted(pathlib.Path(pages_dir).glob("page-*.png")):
+            bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
+            staves = [(*s, "vue") for s in pupitres.find_staves(bw)]
+            for g in pupitres.system_indexes(bw, staves, dashed=pupitres._dashed()):
+                group = [staves[i] for i in g]
+                try:
+                    bars = len(pupitres.bar_lines(bw, group))
+                except Exception:  # noqa: BLE001
+                    bars = 0
+                cells.append(f"{len(group)}/{bars}")
+    except Exception as e:  # noqa: BLE001 : sans disposition, la lecture reste
+        print(f"Disposition des systèmes non lue ({type(e).__name__})", file=sys.stderr)
+        return
+    if not cells:
+        return
+    tag = f"<!-- pupitre:systemes {','.join(cells)} -->"
+
+    def tagged(text):
+        if "pupitre:systemes" in text[:4096]:
+            return text
+        head, sep, rest = text.partition("?>")
+        return f"{head}{sep}\n{tag}{rest}" if sep and head.lstrip().startswith("<?xml") else f"{tag}\n{text}"
+
+    partition = pathlib.Path(partition)
+    if partition.suffix == ".mxl":
+        import zipfile
+        with zipfile.ZipFile(partition) as z:
+            items = [(i, z.read(i.filename)) for i in z.infolist()]
+        tmp = partition.with_suffix(".tmp")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            for info, data in items:
+                if info.filename.endswith(".xml") and not info.filename.startswith("META-INF"):
+                    data = tagged(data.decode("utf-8", errors="replace")).encode("utf-8")
+                z.writestr(info.filename, data)
+        tmp.replace(partition)
+    else:
+        partition.write_text(tagged(partition.read_text(encoding="utf-8")), encoding="utf-8")
 
 
 def mark_exact(work: pathlib.Path, partition: pathlib.Path, how: str):

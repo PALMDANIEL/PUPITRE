@@ -242,9 +242,10 @@ def split_staff(part):
 
 SOLO_SYSTEMS = os.environ.get("PUPITRE_SYSTEMES_SOLO", "1") == "1"
 SOLO_RUN = int(os.environ.get("PUPITRE_SOLO_MESURES", "4"))  # mesures de suite chantées par une seule portée
+SOLOIST = os.environ.get("PUPITRE_COUPLETS_SOLISTE", "1") == "1"  # page mêlée : ligne seule sans accord = soliste
 
 
-def solo_systems(parts):
+def solo_systems(parts, soloist=False, systems=None):
     """
     Système d'une seule portée entre des systèmes en chœur (couplet en mélodie seule après un refrain sur S+A / T+B :
     la moitié des chants des recueils mêlent ainsi les mises en page). Audiveris range cette portée dans l'une des
@@ -302,24 +303,93 @@ def solo_systems(parts):
             for x in range(k, j):
                 keep[x] = True
         k = j
+    # page mêlée (systèmes d'une portée vus sur l'image, omr.mark_systems) : une ligne seule sans accord y est un
+    # couplet du soliste, chanté à la voix du haut seulement (« Toussaint », Psaume 22 des chorales : l'alto se tait)
+    runs, k = [], 0
+    while k < n:
+        if not keep[k]:
+            k += 1
+            continue
+        j = k
+        while j < n and keep[j]:
+            j += 1
+        runs.append((k, j))
+        k = j
+    single = single_staff_measures(rows[0], n, systems) if soloist else set()
     done = 0
-    for k in range(n):
-        if not keep[k] or solo[k][0] == 0:
-            continue  # déjà dans la partie du haut : la soprano et l'alto la chantent à l'unisson, comme avant
-        i = solo[k][0]
-        m = rows[i][k]
-        sung = [v for v in m.voices if v.notes] if m.voices else [m]
-        line = [copy.deepcopy(el) for el in sung[0].notesAndRests]
-        dur = max((float(el.offset + el.duration.quarterLength) for el in line), default=0.0)
-        # la mesure du haut reçoit la mélodie ; celle d'où elle vient (ténor, basse) se tait
-        for target in (rows[0][k], m):
-            for el in list(target.notesAndRests) + list(target.voices):
-                target.remove(el)
-        for el in line:
-            rows[0][k].insert(el.offset, el)
-        m.insert(0, note.Rest(quarterLength=dur or 4.0))
-        done += 1
+    for a, b in runs:
+        chords = any(isinstance(el, chord.Chord) for x in range(a, b) for el in rows[solo[x][0]][x].recurse().notes)
+        # soliste : toute la ligne dans des systèmes d'une seule portée (« Toussaint », psaumes) ; une ligne seule sur
+        # la portée des femmes pendant que celle des hommes montre des pauses (« Un signe grandiose ») se chante à
+        # l'unisson, même si sa fin tombe dans un dernier système d'une portée
+        mute_alto = soloist and not chords and all(x in single for x in range(a, b))
+        for k in range(a, b):
+            i = solo[k][0]
+            if i == 0 and not mute_alto:
+                continue  # déjà dans la partie du haut : la soprano et l'alto la chantent à l'unisson, comme avant
+            m = rows[i][k]
+            sung = [v for v in m.voices if v.notes] if m.voices else [m]
+            line = [copy.deepcopy(el) for el in sung[0].notesAndRests]
+            dur = max((float(el.offset + el.duration.quarterLength) for el in line), default=0.0)
+            # la mesure du haut reçoit la mélodie ; celle d'où elle vient (ténor, basse) se tait
+            for target in {id(rows[0][k]): rows[0][k], id(m): m}.values():
+                for el in list(target.notesAndRests) + list(target.voices):
+                    target.remove(el)
+            top = rows[0][k]
+            if mute_alto:
+                v1, v2 = stream.Voice(id="1"), stream.Voice(id="2")
+                for el in line:
+                    v1.insert(el.offset, el)
+                at = 0.0
+                for q in _plain_lengths(dur or 4.0):  # silence caché de l'alto, en durées simples
+                    r = note.Rest(quarterLength=q)
+                    r.style.hideObjectOnPrint = True
+                    v2.insert(at, r)
+                    at += q
+                top.insert(0, v1)
+                top.insert(0, v2)
+            else:
+                for el in line:
+                    top.insert(el.offset, el)
+            if i != 0:
+                m.insert(0, note.Rest(quarterLength=dur or 4.0))
+            done += 1
     return done
+
+
+def single_staff_measures(top_row, n, systems):
+    """Mesures (indices) des systèmes d'une seule portée. Débuts de système écrits par Audiveris s'ils sont autant que
+    les systèmes vus sur l'image ; sinon mesures comptées sur les barres de l'image, si leur total est celui de la
+    lecture (à une mesure près). Sinon : aucune (inconnu, l'alto n'est pas rendu muet)."""
+    if not systems:
+        return set()
+    starts = [k for k in range(n) if any(sl.isNew for sl in top_row[k].getElementsByClass(layout.SystemLayout))]
+    if not starts or starts[0] != 0:
+        starts = [0] + starts
+    if len(starts) == len(systems):
+        bounds = starts + [n]
+    else:
+        counts = [m for _s, m in systems]
+        if not all(counts) or abs(sum(counts) - n) > 1:
+            return set()
+        bounds = [0]
+        for c in counts:
+            bounds.append(min(n, bounds[-1] + c))
+        bounds[-1] = n
+    out = set()
+    for (st, _m), a, b in zip(systems, bounds, bounds[1:]):
+        if st == 1:
+            out.update(range(a, b))
+    return out
+
+
+def _plain_lengths(length):
+    out = []
+    for q in (8.0, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.75, 0.5, 0.25):
+        while length >= q - 1e-6:
+            out.append(q)
+            length -= q
+    return out
 
 
 def flatten_voices(part):
@@ -920,6 +990,52 @@ def content_length(m):
     return max((el.offset + el.quarterLength for el in m.notesAndRests), default=0.0)
 
 
+INFER_TS = os.environ.get("PUPITRE_INDICATION_DEDUITE", "1") == "1"
+TS_BY_LENGTH = {4.0: "4/4", 2.0: "2/4", 6.0: "6/4", 1.5: "3/8", 4.5: "9/8", 5.0: "5/4", 2.5: "5/8", 3.5: "7/8", 1.0: "1/4"}
+
+
+def infer_time_signature(score):
+    """
+    Indication de mesure oubliée par la lecture (le « C » des recueils, petites portées : Audiveris ne le lit pas ; sur
+    les copies au style des recueils, les 16 indications perdues sur 117 étaient des « C ») : sans elle, align_measures
+    supposait 4 temps et complétait chaque mesure d'un 3/4 par un silence d'un temps (rythme faux à l'écoute, notes
+    justes). Déduite de la durée de la plupart des mesures (première et dernière à part : levée, fin) ; 3 temps : 6/8
+    si les notes commencent plus souvent au milieu de la mesure (1,5) qu'au 2e ou 3e temps, sinon 3/4. Posée au début
+    de chaque partie. Rend l'indication posée, ou None (indication lue, ou mesures sans majorité nette).
+    """
+    if not INFER_TS or any(score.recurse().getElementsByClass(meter.TimeSignature)):
+        return None
+    lengths, onsets = [], {1.0: 0, 1.5: 0, 2.0: 0}
+    for p in score.parts:
+        ms = list(p.getElementsByClass(stream.Measure))
+        for m in ms[1:-1]:
+            flat = m.flatten()
+            if not flat.notes:
+                continue
+            lengths.append(round(max((float(el.offset + el.quarterLength) for el in flat.notesAndRests), default=0.0), 3))
+            for n in flat.notes:
+                o = round(float(n.offset), 3)
+                if o in onsets:
+                    onsets[o] += 1
+    if len(lengths) < 3:
+        return None
+    bar = statistics.mode(lengths)
+    if lengths.count(bar) < 0.5 * len(lengths):
+        return None
+    if bar == 3.0:
+        ratio = "6/8" if onsets[1.5] > onsets[1.0] + onsets[2.0] else "3/4"
+    else:
+        ratio = TS_BY_LENGTH.get(bar)
+    if ratio is None:
+        return None
+    for p in score.parts:
+        first = p.getElementsByClass(stream.Measure).first()
+        if first is not None:
+            ts = meter.TimeSignature(ratio)
+            first.insert(0, ts)
+    return ratio
+
+
 def align_measures(voices):
     """Même durée pour chaque mesure dans toutes les voix, sinon les pistes se décalent à l'écoute.
     Mesure trop courte (silence oublié) : complétée par un silence ; trop longue (point ou crochet mal lu) :
@@ -1106,18 +1222,23 @@ def regroup_by_clef(parts):
     return out
 
 
-def extract_voices(score, trust_names=True):
+def extract_voices(score, trust_names=True, systems=None):
     """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
     c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
     Pour un fichier MusicXML ou MIDI (hauteurs exactes, ordre des pistes parfois quelconque), on trie par hauteur."""
     drop_chord_symbols(score)
     if not trust_names:
         harmonize_keys(score)
+        guessed = infer_time_signature(score)
+        if guessed:
+            print(f"Indication de mesure déduite de la durée des mesures : {guessed}", file=sys.stderr)
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
     if not trust_names:
-        moved = solo_systems(sung)
+        sizes = [st for st, _m in systems] if systems else []
+        mixed = bool(sizes) and 1 in sizes and max(sizes) > 1  # page mêlée : couplets d'une portée
+        moved = solo_systems(sung, soloist=mixed and SOLOIST, systems=systems if mixed else None)
         if moved:
             print(f"Systèmes d'une seule portée : {moved} mesures de mélodie à la voix du haut", file=sys.stderr)
             sung = [p for p in sung if p.recurse().notes]
@@ -1382,6 +1503,33 @@ def sing_voices(voices, labels, tempo_qpm, a):
 EXACT_TAG = "<!-- pupitre:exacte -->"  # écrit dans la partition : la marque voyage avec elle (téléphone → /api/recreer)
 
 
+SYSTEMS_TAG = re.compile(rb"pupitre:systemes ([0-9,/]+)")
+
+
+def page_systems(src):
+    """Disposition des systèmes de la page (omr.mark_systems) : [(portées, mesures vues)], ou None."""
+    p = pathlib.Path(src)
+    try:
+        if p.suffix == ".mxl":
+            with zipfile.ZipFile(p) as z:
+                name = next(n for n in z.namelist() if n.endswith(".xml") and not n.startswith("META-INF"))
+                head = z.read(name)[:8192]
+        else:
+            with open(p, "rb") as f:
+                head = f.read(8192)
+    except (OSError, StopIteration, zipfile.BadZipFile):
+        return None
+    m = SYSTEMS_TAG.search(head)
+    if not m:
+        return None
+    out = []
+    for cell in m.group(1).decode().split(","):
+        if cell:
+            a, _s, b = cell.partition("/")
+            out.append((int(a), int(b) if b else 0))
+    return out
+
+
 def is_exact(src):
     """Partition exacte (PDF gravé lu directement, chant reconnu dans le répertoire) : fichier « partition.exacte » à
     côté, ou marque dans la partition elle-même."""
@@ -1414,7 +1562,7 @@ def main():
     tempo_qpm = a.tempo or detect_tempo(score)
     # partition exacte (PDF gravé lu directement, chant reconnu dans le répertoire) : voix prises telles quelles, sans
     # les retouches d'une lecture d'image (octaves, places des voix), qui abîmaient le ténor et la basse de 6 chants sur 15
-    voices = extract_voices(score, trust_names=not a.omr or is_exact(a.src))
+    voices = extract_voices(score, trust_names=not a.omr or is_exact(a.src), systems=page_systems(a.src))
     if not voices:
         sys.exit("Aucune note n’a été reconnue dans la partition.")
 
