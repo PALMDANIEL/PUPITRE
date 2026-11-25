@@ -16,6 +16,7 @@ import difflib
 import json
 import os
 import pathlib
+import statistics
 import sys
 
 import cv2
@@ -27,6 +28,10 @@ ENABLED = os.environ.get("PUPITRE_COUPLETS", "1") != "0"
 AGREE = float(os.environ.get("PUPITRE_COUPLETS_ACCORD", "0.6"))  # part des notes d'Audiveris que homr doit retrouver
 KEEP_MUTE = os.environ.get("PUPITRE_COUPLETS_MUETS", "1") != "0"  # alto muet aussi sous une ligne d'Audiveris gardée
 RELOCATE = os.environ.get("PUPITRE_COUPLETS_HAUT", "1") != "0"  # couplets écrits dans la portée du haut du refrain
+# page entièrement en mélodie seule (180 chants des recueils, aucun système du chœur) : chaque ligne relue par homr
+# aussi, et prise à la place de celle d'Audiveris si elle en retrouve les notes (Audiveris perd des mesures entières :
+# 12 mélodies du banc sur 40 en ont perdu, lues de 14 à 77 %)
+MELODY_PAGES = os.environ.get("PUPITRE_MELODIES_HOMR", "1") != "0"
 
 
 def layout(pages_dir: pathlib.Path):
@@ -47,7 +52,8 @@ def prepare(pages_dir: pathlib.Path, folder: pathlib.Path):
     """
     systems = layout(pages_dir)
     sizes = [len(s) for _pf, s in systems]
-    if not sizes or max(sizes) < 2 or sizes[-1] != 1:
+    melody = MELODY_PAGES and bool(sizes) and max(sizes) == 1  # page de mélodie seule : toutes ses lignes
+    if not sizes or (not melody and (max(sizes) < 2 or sizes[-1] != 1)):
         return None
     tail = len(sizes)
     while tail and sizes[tail - 1] == 1:
@@ -64,7 +70,7 @@ def prepare(pages_dir: pathlib.Path, folder: pathlib.Path):
         name = f"couplet-{k + 1:02d}.png"
         imgio.imwrite(str(folder / name), bw[y0:y1])
         voix.append([{"image": name, "T": t - y0, "B": b - y0}])
-    (folder / "portees.json").write_text(json.dumps({"voix": voix, "passes": 1}), encoding="utf-8")
+    (folder / "portees.json").write_text(json.dumps({"voix": voix, "passes": 1, "tout": melody}), encoding="utf-8")
     return systems[tail:]
 
 
@@ -218,6 +224,8 @@ def apply(partition, folder: pathlib.Path, out) -> int:
             return 0
         sc = converter.parse(str(f))
         lines.append([m for p in sc.parts[:1] for m in p.getElementsByClass(stream.Measure)])
+    if spec.get("tout"):
+        return apply_melody(partition, lines, out)
     score = converter.parse(str(partition))
     import arbitre
     arbitre.drop_chord_symbols(score)
@@ -281,6 +289,118 @@ def apply(partition, folder: pathlib.Path, out) -> int:
     # sans makeNotation : music21 coupait les mesures de récitation (plus longues que la mesure écrite) par des
     # liaisons, et plantait (KeyError) ou tournait sans fin sur une copie usée
     score.write("musicxml", fp=str(out), makeNotation=False)
+    return taken
+
+
+def apply_melody(partition, lines, out) -> int:
+    """
+    Page de mélodie seule : chaque ligne (système d'une portée) relue par homr remplace celle d'Audiveris quand elle en
+    retrouve les notes (AGREE) ; elle apporte alors les mesures qu'Audiveris a perdues ou vidées. Lignes rangées par
+    les débuts de système d'Audiveris (autant que de lignes vues sur l'image), sinon par le nombre de mesures de homr
+    s'il est celui d'Audiveris ; sinon rien. Paroles d'Audiveris reportées sur les notes de même hauteur, ligne par
+    ligne. Une seule partie écrite (la mélodie). Rend le nombre de lignes reprises.
+    """
+    from music21 import converter, layout as m21layout, note, stream
+    import arbitre
+    score = converter.parse(str(partition))
+    arbitre.drop_chord_symbols(score)
+    parts = list(score.parts)
+    rows = [list(p.getElementsByClass(stream.Measure)) for p in parts]
+    total = max((len(r) for r in rows), default=0)
+    if not total or not lines:
+        return 0
+
+    def cell(i):  # mesure chantée : Audiveris range parfois une ligne dans une autre partie
+        for r in rows:
+            if i < len(r) and _sounding(r[i]):
+                return r[i]
+        return rows[0][i] if i < len(rows[0]) else None
+
+    starts = [i for i, m in enumerate(rows[0]) if any(sl.isNew for sl in m.getElementsByClass(m21layout.SystemLayout))]
+    if not starts or starts[0] != 0:
+        starts = [0] + starts
+    if len(starts) != len(lines):
+        if sum(len(l) for l in lines) != total:
+            print(f"Mélodie : {len(lines)} lignes sur l'image, {len(starts)} systèmes et {total} mesures lus, "
+                  "pas de reprise", file=sys.stderr)
+            return 0
+        starts, at = [], 0
+        for l in lines:
+            starts.append(at)
+            at += len(l)
+    bounds = starts + [total]
+    first = rows[0][0]
+    ks = _keysig(parts[0], first)
+    out_measures, taken = [], 0
+    from music21 import clef as m21clef
+    for k, line in enumerate(lines):
+        aud = [m for m in (cell(i) for i in range(bounds[k], bounds[k + 1])) if m is not None]
+        # clé de sol « 8 » lue par Audiveris sur une ligne de mélodie (jamais dans une mélodie de recueil) : sa ligne
+        # est une octave trop bas ; comparée à homr une octave plus haut (« Ô Marie » : homr juste, Audiveris décalé)
+        # clé de la ligne : celle de sa 1re mesure d'abord (getContextByClass ne voit pas la clé de la mesure même)
+        c = None
+        if aud:
+            own = [x for x in aud[0].getElementsByClass(m21clef.Clef) if x.offset == 0]
+            c = own[0] if own else aud[0].getContextByClass(m21clef.Clef)
+        shift = -(getattr(c, "octaveChange", 0) or 0) if getattr(c, "sign", "G") == "G" else 0
+        a_deg = [(st, o + shift) for st, o in _degrees(aud)]
+        h_deg = _degrees(line)
+        common = sum(b.size for b in difflib.SequenceMatcher(a=a_deg, b=h_deg, autojunk=False).get_matching_blocks())
+        accept = bool(line) and (not a_deg or common >= AGREE * len(a_deg))
+        # ligne de homr décalée : sa hauteur médiane doit rester à moins d'une quarte de celle d'Audiveris
+        mids = [statistics.median([p.midi for m in ms for n in _sounding(m) for p in n.pitches] or [0]) for ms in (aud, line)]
+        if accept and a_deg and abs(mids[0] + 12 * shift - mids[1]) > 5:
+            accept = False
+        if not accept:
+            kept = [copy.deepcopy(m) for m in aud]
+            if kept and c is not None and not [x for x in kept[0].getElementsByClass(m21clef.Clef) if x.offset == 0]:
+                kept[0].insert(0, copy.deepcopy(c))  # la clé de la ligne voyage avec elle (octave corrigée au rendu)
+            out_measures += kept
+            continue
+        old = [n for m in aud for n in _sounding(m)]
+        built = []
+        for j, hm in enumerate(line):
+            m = stream.Measure()
+            if j == 0:
+                m.insert(0, m21clef.TrebleClef())  # homr lit la ligne en clé de sol
+            for t, el in _from_homr(hm, ks, []):
+                m.insert(t, el)
+            built.append(m)
+        # paroles d'Audiveris reportées sur la ligne de homr (notes de même hauteur, dans l'ordre)
+        new = [n for m in built for n in m.notes]
+        top = lambda x: max(p.midi for p in x.pitches)  # noqa: E731
+        sm = difflib.SequenceMatcher(a=[top(o) for o in old], b=[top(n) for n in new], autojunk=False)
+        for tag, a1, a2, b1, b2 in sm.get_opcodes():
+            if tag in ("equal", "replace"):
+                for o, n in zip(old[a1:a2], new[b1:b2]):
+                    if o.lyrics:
+                        n.lyrics = copy.deepcopy(o.lyrics)
+        out_measures += built
+        taken += 1
+    if not taken:
+        return 0
+    part = stream.Part()
+    part.partName = parts[0].partName
+    from music21 import clef, meter
+    for k, m in enumerate(out_measures, 1):
+        m.number = k
+        for el in list(m.getElementsByClass((m21layout.SystemLayout, m21layout.StaffLayout))):
+            m.remove(el)
+        if k == 1:
+            if not m.getElementsByClass(clef.Clef):
+                m.insert(0, clef.TrebleClef())
+            ts = next(iter(score.recurse().getElementsByClass(meter.TimeSignature)), None)
+            for el in (ks, ts):
+                if el is not None and not m.getElementsByClass(type(el)):
+                    m.insert(0, copy.deepcopy(el))
+        part.append(m)
+    result = stream.Score()
+    if score.metadata is not None:
+        result.insert(0, copy.deepcopy(score.metadata))
+    result.insert(0, part)
+    result.write("musicxml", fp=str(out), makeNotation=False)
+    print(f"Mélodie relue par homr : {taken} lignes sur {len(lines)} ({len(out_measures)} mesures, "
+          f"{total} lues par Audiveris)", file=sys.stderr)
     return taken
 
 
