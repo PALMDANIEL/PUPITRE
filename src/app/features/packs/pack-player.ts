@@ -84,11 +84,11 @@ export class PackPlayer {
    * Notes corrigées sur le téléphone : le serveur AIT recrée le chant à partir de la partition corrigée, avec la même
    * sonorité et le même tempo, et il remplace celui du téléphone (comme une nouvelle sonorité).
    */
-  protected readonly saveNotes = (file: File, aVerifier: Record<string, number>) => void this.correctNotes(file, aVerifier);
+  protected readonly saveNotes = (file: File, aVerifier: Record<string, number>, whole: boolean) => void this.correctNotes(file, aVerifier, whole);
 
   protected readonly fixing = signal<string | null>(null);
 
-  private async correctNotes(file: File, aVerifier: Record<string, number>) {
+  private async correctNotes(file: File, aVerifier: Record<string, number>, whole = false) {
     const m = this.score()?.manifest;
     if (!m) return;
     const step = (pct: number) => {
@@ -98,7 +98,7 @@ export class PackPlayer {
     this.busy.set(true); this.failure.set(null); step(0);
     try {
       const fresh = await this.remote.recreate(this.id(), { tempo: m.tempo, timbre: m.timbre, langue: m.langue, voyelle: m.voyelle },
-        step, { file, aVerifier, moyenne: m.fiabilite?.moyenne });
+        step, { file, aVerifier, moyenne: m.fiabilite?.moyenne, verifiee: whole });
       this.score.set(await this.packs.open(fresh));
       this.fixing.set('Correction enregistrée : l’audio du chant est recréé.');
     } catch (e) {

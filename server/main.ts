@@ -426,15 +426,16 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
     const raw = JSON.parse(String(req.body?.a_verifier ?? 'null')) as Record<string, unknown> | null;
     if (raw && typeof raw === 'object') left = Object.fromEntries(Object.entries(raw).filter((e): e is [string, number] => /^\d{1,5}$/.test(e[0]) && typeof e[1] === 'number'));
   } catch { left = null; }
-  if (left && Object.keys(left).length) {
-    const old = JSON.parse(await fs.readFile(fid, 'utf8').catch(() => '{}')) as Record<string, unknown>;
-    await fs.writeFile(fid, JSON.stringify({ ...old, a_verifier: left, corrigee: true }));
-  } else {
-    await fs.rm(fid, { force: true });
-  }
-  // partition entièrement vérifiée par le chef de chœur : elle entre au répertoire de la chorale (à la place de la
+  // vérifiée en entier : déclaré par le chef de chœur (case de l'éditeur), et plus aucune mesure orange. Une lecture
+  // sans mesure signalée n'est pas vérifiée pour autant : les mesures ne sont signalées que si deux lecteurs ont été
+  // comparés (sans cette déclaration, une lecture jamais contrôlée entrait au répertoire à la 1re correction)
+  const whole = req.body?.verifiee === '1' && !(left && Object.keys(left).length);
+  const old = JSON.parse(await fs.readFile(fid, 'utf8').catch(() => '{}')) as Record<string, unknown>;
+  await fs.writeFile(fid, JSON.stringify({ passes: 1, moyenne: 1, mesures: 0, ...old, ...(whole ? { moyenne: 1 } : {}),
+    a_verifier: left ?? {}, corrigee: true, verifiee: whole }));
+  // partition vérifiée en entier par le chef de chœur : elle entre au répertoire de la chorale (à la place de la
   // lecture), et toutes les copies de ce chant photographiées ensuite seront rendues exactes
-  if (!left || !Object.keys(left).length) {
+  if (whole) {
     void addToRepertoire(meta.id, path.join(dirOf(meta.id), partitionFile), repertoireDirs(meta.owner ?? null)[1], meta.title);
   }
   const next = await patchMeta(meta.id, { partitionFile, corrected: true, status: 'queued', progress: 0, error: null });
@@ -489,9 +490,13 @@ app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: '
   }
   // fiabilité de la lecture (téléphone : transmise d'une requête à l'autre) : vérifiée avant d'être gardée
   let reliability: string | undefined;
+  let left = 0;
   try {
     const r = typeof body.fiabilite === 'string' ? JSON.parse(body.fiabilite) as Record<string, unknown> : null;
-    if (r && typeof r.moyenne === 'number' && r.a_verifier && typeof r.a_verifier === 'object') reliability = JSON.stringify(r).slice(0, 20_000);
+    if (r && typeof r.moyenne === 'number' && r.a_verifier && typeof r.a_verifier === 'object') {
+      reliability = JSON.stringify(r).slice(0, 20_000);
+      left = Object.keys(r.a_verifier as object).length;
+    }
   } catch { /* ignorée */ }
   res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -502,8 +507,9 @@ app.post('/api/recreer', upload.fields([{ name: 'file', maxCount: 1 }, { name: '
     const pack = await recreateDirect(file!.buffer, title, { tempo, timbre, langue, paroles, voyelle }, (e) => send(e), pages, reliability);
     send({ status: 'ready', progress: 100, title, pack: pack.toString('base64') });
     const owner = ownerOf(res);
-    // partition corrigée sur le téléphone et entièrement vérifiée : au répertoire de la chorale (comme sur l'ordinateur)
-    if (body.corrigee === '1' && !reliability && owner) {
+    // partition corrigée sur le téléphone et vérifiée en entier (déclaré par le chef de chœur, plus aucune mesure
+    // orange) : au répertoire de la chorale, comme sur l'ordinateur
+    if (body.corrigee === '1' && body.verifiee === '1' && left === 0 && owner) {
       void correctedToRepertoire(file!.buffer, title, owner).catch((e) => console.error('Répertoire :', (e as Error).message));
     }
     if (owner) void admin.event(owner, timbre === 'chant' ? 'voix-chantees' : 'recreation', { title, timbre }).catch(() => undefined);

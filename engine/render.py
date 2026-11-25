@@ -1663,6 +1663,7 @@ def main():
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
         **({"rebuilt": "reconstituee.musicxml"} if rebuilt else {}),
         **({"fiabilite": reliability} if reliability else {}),
+        **({"exacte": True} if is_exact(a.src) else {}),  # PDF gravé lu directement, chant reconnu au répertoire
         **({"langue": a.langue} if a.timbre == "chant" else {}),
         **({"voyelle": a.voyelle} if a.timbre == "reel" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),

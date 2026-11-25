@@ -52,13 +52,22 @@ const PICK_COLOR = '#0B7285';
           <p>Touchez une note de la partition pour la corriger. Les notes en orange sont celles dont la lecture est douteuse :
             comparez-les au scan d’origine.</p>
         }
-        @if (edits() || verified().size) {
-          <div class="save">
+        <div class="save">
+          @if (edits() || verified().size) {
             <span>{{ edits() }} note{{ edits() > 1 ? 's' : '' }} corrigée{{ edits() > 1 ? 's' : '' }}@if (verified().size) { · {{ verified().size }} mesure{{ verified().size > 1 ? 's' : '' }} vérifiée{{ verified().size > 1 ? 's' : '' }} }</span>
+          }
+          @if (remaining() === 0) {
+            <label class="whole"><input type="checkbox" [checked]="whole()" (change)="whole.set($any($event.target).checked)">
+              <span>Toute la partition est vérifiée : chaque voix, notes et rythmes, écoutée du début à la fin.
+                Elle servira de référence : les copies de ce chant photographiées ensuite seront rendues exactes.</span></label>
+          } @else {
+            <span class="left">Encore {{ remaining() }} mesure{{ remaining() > 1 ? 's' : '' }} en orange à vérifier avant de pouvoir valider la partition.</span>
+          }
+          @if (edits() || verified().size || whole()) {
             <button type="button" class="btn quiet" (click)="cancelEdits()">Annuler</button>
-            <button type="button" class="btn" (click)="saveEdits()">Enregistrer et recréer l’audio</button>
-          </div>
-        }
+            <button type="button" class="btn" (click)="saveEdits()">{{ edits() ? 'Enregistrer et recréer l’audio' : whole() ? 'Valider la partition' : 'Enregistrer' }}</button>
+          }
+        </div>
       </div>
     }
     <div class="sheet" [hidden]="view() !== 'score'" [class.editing]="editing()">
@@ -95,6 +104,9 @@ const PICK_COLOR = '#0B7285';
     .editbar .keys .ok { border-color: #2F9E6B; color: #2F9E6B; }
     .editbar .save { padding-top: .5rem; border-top: 1px solid var(--hair); }
     .editbar .save span { font-size: .88rem; color: var(--ink); margin-right: auto; }
+    .editbar .save .whole { display: flex; gap: .5rem; align-items: flex-start; flex: 1 1 22rem; cursor: pointer; }
+    .editbar .save .whole span { margin: 0; }
+    .editbar .save .left { color: var(--ink-soft); }
     .sheet.editing :is(.vf-stavenote, .vf-note) { cursor: pointer; }
     .scan img { display: block; width: 100%; height: auto; border-radius: 6px; }
     .scan img + img { margin-top: 1.5rem; }
@@ -106,7 +118,8 @@ export class ScoreViewer {
    * Téléphone (chants en pack, sans ScoreStore) : enregistrement d'une correction, fait par la page du lecteur
    * (le serveur AIT recrée l'audio). Absent : correction impossible (téléphone non relié au serveur).
    */
-  readonly saveCorrection = input<((file: File, aVerifier: Record<string, number>) => void) | null>(null);
+  /** whole : le chef de chœur a vérifié toute la partition (elle entre alors au répertoire de la chorale) */
+  readonly saveCorrection = input<((file: File, aVerifier: Record<string, number>, whole: boolean) => void) | null>(null);
   /** Téléphone : où en est l'enregistrement de la correction (recréation en ligne), affiché près de la partition */
   readonly correctionStatus = input<string | null>(null);
   private readonly engine = inject(AudioEngine);
@@ -192,6 +205,11 @@ export class ScoreViewer {
   protected readonly picked = signal<{ key: string; label: string; voice: string; measure: number } | null>(null);
   protected readonly edits = signal(0);
   protected readonly verified = signal<Set<number>>(new Set());
+  /** Partition vérifiée en entier, déclarée par le chef de chœur : une lecture sans mesure orange n'est pas vérifiée
+   * pour autant (mesures signalées seulement quand deux lecteurs ont été comparés) */
+  protected readonly whole = signal(false);
+  protected readonly remaining = computed(() => Object.keys(this.score().manifest?.fiabilite?.a_verifier ?? {})
+    .filter((m) => Number(m) > 0 && !this.verified().has(Number(m))).length);
   protected canEdit() {
     const s = this.score();
     return (!!this.store || !!this.saveCorrection()) && !!s.manifest?.rebuilt && s.status === 'ready';
@@ -208,6 +226,7 @@ export class ScoreViewer {
     this.edited.clear();
     this.edits.set(0);
     this.verified.set(new Set());
+    this.whole.set(false);
     this.picked.set(null);
   }
   protected cancelEdits() {
@@ -233,9 +252,10 @@ export class ScoreViewer {
     const file = new File([xml], 'corrigee.musicxml', { type: 'application/vnd.recordare.musicxml+xml' });
     const left = Object.fromEntries(Object.entries(this.score().manifest?.fiabilite?.a_verifier ?? {})
       .filter(([m]) => !this.verified().has(Number(m))));
+    const whole = this.whole() && !Object.keys(left).length;
     this.editing.set(false);
-    if (save) save(file, left);
-    else void this.store!.uploadCorrection(file, left);
+    if (save) save(file, left, whole);
+    else void this.store!.uploadCorrection(file, left, whole);
   }
 
   private async redraw() {

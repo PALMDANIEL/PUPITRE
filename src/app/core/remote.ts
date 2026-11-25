@@ -294,7 +294,7 @@ export class RemoteReader {
    */
   async recreate(packId: string, opts: { tempo: number; timbre: Timbre; langue?: Langue; paroles?: Record<string, string>; voyelle?: Voyelle },
                  onProgress: (pct: number) => void,
-                 correction?: { file: Blob; aVerifier: Record<string, number>; moyenne?: number }): Promise<string> {
+                 correction?: { file: Blob; aVerifier: Record<string, number>; moyenne?: number; verifiee?: boolean }): Promise<string> {
     const s = this.settings();
     if (!s.url || !s.code) throw new RemoteError('Indiquez d’abord le serveur et le code de votre chorale dans les réglages.');
     const src = await this.packs.scoreFile(packId);
@@ -303,11 +303,15 @@ export class RemoteReader {
     body.append('file', correction
       ? new File([correction.file], 'corrigee.musicxml')
       : new File([src.file], src.name.endsWith('.musicxml') ? src.name : 'score.musicxml'));
-    if (correction && Object.keys(correction.aVerifier).length) {
-      body.append('fiabilite', JSON.stringify({ moyenne: correction.moyenne ?? 1, a_verifier: correction.aVerifier, corrigee: true }));
+    // partition corrigée : vérifiée en entier (déclaré par le chef de chœur, plus aucune mesure orange), le serveur la
+    // range au répertoire de la chorale ; sinon elle reste une lecture corrigée, mesures orange gardées
+    const whole = !!correction?.verifiee && !Object.keys(correction.aVerifier).length;
+    if (correction) {
+      body.append('fiabilite', JSON.stringify({ passes: 1, mesures: 0, moyenne: whole ? 1 : correction.moyenne ?? 1,
+        a_verifier: correction.aVerifier, corrigee: true, verifiee: whole }));
+      body.append('corrigee', '1');
+      if (whole) body.append('verifiee', '1');
     }
-    // partition corrigée : entièrement vérifiée, le serveur la range au répertoire de la chorale
-    if (correction) body.append('corrigee', '1');
     body.append('titre', src.title);
     body.append('tempo', String(opts.tempo));
     body.append('timbre', opts.timbre);

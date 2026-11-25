@@ -33,10 +33,26 @@ interface Step { key: ScoreStatus; label: string }
         }
       </header>
 
-      @if (s.manifest?.fiabilite; as f) {
+      @if (s.manifest?.fiabilite?.verifiee) {
+        <section class="reliability glass good" aria-label="Partition vérifiée">
+          <p class="score"><b>Vérifiée</b></p>
+          <p>Le chef de chœur a vérifié toute la partition : elle sert de référence pour ce chant, et les copies de ce
+            chant photographiées ensuite seront rendues exactes.</p>
+        </section>
+      } @else if (s.manifest?.exacte) {
+        <section class="reliability glass good" aria-label="Partition exacte">
+          <p class="score"><b>Exacte</b></p>
+          <p>Partition exacte : PDF gravé lu directement, ou chant reconnu dans le répertoire vérifié.</p>
+        </section>
+      } @else if (s.manifest?.fiabilite; as f) {
         <section class="reliability glass" [class.good]="doubtful(f).length === 0" aria-label="Fiabilité de la lecture">
           <p class="score"><b>{{ percent(f.moyenne) }} %</b> <span>de fiabilité</span></p>
-          @if (f.lecteurs) {
+          @if (f.corrigee) {
+            <p>Partition corrigée, pas encore validée en entier.
+              @if (doubtful(f).length) { Restent à vérifier : {{ doubtful(f).length === 1 ? 'la mesure' : 'les mesures' }} <b>{{ doubtful(f).join(', ') }}</b>. }
+              Quand tout le chant est vérifié, cochez « Toute la partition est vérifiée » dans « Corriger des notes » :
+              elle deviendra la référence pour ce chant.</p>
+          } @else if (f.lecteurs) {
             <p>La partition a été lue par deux lecteurs indépendants et comparée mesure par mesure ;
               @if (f.arbitrees) { {{ f.arbitrees }} {{ f.arbitrees === 1 ? 'passage où ils divergeaient a été tranché' : 'passages où ils divergeaient ont été tranchés' }} d’après la cohérence du rythme. }
               @if (doubtful(f).length) {
@@ -51,6 +67,12 @@ interface Step { key: ScoreStatus; label: string }
           } @else {
             <p>La lecture a été faite {{ f.passes }} fois et toutes les passes s’accordent sur chaque mesure.</p>
           }
+        </section>
+      } @else if (s.manifest && canReread(s)) {
+        <section class="reliability glass" aria-label="Lecture non contrôlée">
+          <p>Cette lecture n’a pas pu être comparée à une seconde lecture : aucune mesure n’est signalée, mais rien n’est
+            garanti. Écoutez chaque voix en suivant le scan, corrigez dans « Corriger des notes », puis cochez « Toute la
+            partition est vérifiée » : elle deviendra la référence pour ce chant.</p>
         </section>
       }
 

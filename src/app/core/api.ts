@@ -15,10 +15,13 @@ export const BUSY: ScoreStatus[] = ['queued', 'preprocessing', 'recognizing', 'r
 export interface VoiceInfo { id: string; name: string; stem: string; practice: string; notes: number; range: [string, string]; lyrics?: string; sung?: number }
 /** Fiabilité de la lecture : vote entre plusieurs passes ; a_verifier = numéros de mesure → part des passes d'accord */
 /** lecteurs : double lecture (Audiveris et homr) arbitrée mesure par mesure ; arbitrees : portées-mesures reprises de homr */
-export interface Fiabilite { passes: number; moyenne: number; mesures: number; a_verifier: Record<string, number>; lecteurs?: string[]; arbitrees?: number }
+/** corrigee : partition corrigée dans l'éditeur ; verifiee : vérifiée en entier par le chef de chœur (référence du chant) */
+export interface Fiabilite { passes: number; moyenne: number; mesures: number; a_verifier: Record<string, number>; lecteurs?: string[]; arbitrees?: number; corrigee?: boolean; verifiee?: boolean }
 
 export interface Manifest {
   fiabilite?: Fiabilite;
+  /** partition exacte : PDF gravé lu directement, ou chant reconnu dans le répertoire vérifié */
+  exacte?: boolean;
   tempo: number; timbre: Timbre; tutti: string; score: string; rebuilt?: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }
@@ -94,11 +97,13 @@ export class ScoresApi {
   /** Relire les notes (photo, PDF), en annonçant ou non la disposition des voix */
   reread(id: string, disposition: Disposition | null) { return this.http.post<ScoreMeta>(`/api/scores/${id}/relire`, { disposition }); }
   retry(id: string) { return this.http.post<ScoreMeta>(`/api/scores/${id}/retry`, {}); }
-  /** Partition corrigée ; aVerifier : mesures encore à vérifier (éditeur de notes), gardées en orange */
-  correct(id: string, file: File, aVerifier?: Record<string, number>) {
+  /** Partition corrigée ; aVerifier : mesures encore à vérifier (éditeur de notes), gardées en orange ; whole :
+   * partition vérifiée en entier par le chef de chœur (elle entre au répertoire de la chorale) */
+  correct(id: string, file: File, aVerifier?: Record<string, number>, whole = false) {
     const body = new FormData();
     body.append('file', file);
     if (aVerifier) body.append('a_verifier', JSON.stringify(aVerifier));
+    if (whole) body.append('verifiee', '1');
     return this.http.put<ScoreMeta>(`/api/scores/${id}/partition`, body);
   }
   remove(id: string) { return this.http.delete<void>(`/api/scores/${id}`); }
