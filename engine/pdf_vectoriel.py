@@ -528,6 +528,37 @@ def read_staff(st, mine, ver, shapes, texts, all_staves, size, page_flags=None):
                     n["dur"] = n["dur"] * Fraction(2 if k == 3 else 4, k)
                     if "dur_down" in n:
                         n["dur_down"] = n["dur_down"] * Fraction(2 if k == 3 else 4, k)
+    if TEXT_TUPLETS:
+        # triolet dont le « 3 » est écrit en police de texte (italique de MuseScore) et non en symbole musical : trois
+        # croches ligaturées du côté de leurs queues, le chiffre au bout (Psaume 22 « Le Seigneur est mon berger » m. 2 :
+        # triolet de l'alto compté en croches, 2,5 temps pour 2)
+        glyph_3 = [g for g in mine if g["code"] in TUPLET]
+        for w in texts:
+            if w[0] != "3":
+                continue
+            cx, cy = (w[1] + w[2]) / 2, w[3]
+            if not (xl - sp <= cx <= xr + sp and min(y0, y1) - 5 * sp <= cy <= max(y0, y1) + 5 * sp):
+                continue
+            if any(abs(g["x"] - cx) < 1.5 * sp and abs(g["y"] - cy) < 1.5 * sp for g in glyph_3):
+                continue
+            near = [n for n in notes if abs(n["x"] - cx) < 3.5 * sp and n["dur"] <= Fraction(1, 2)]
+            for side in ("down", "up"):
+                cand = [n for n in near if (n["down"] and not n["up"] if side == "down" else n["up"] and not n["down"])]
+                if not cand:
+                    continue
+                if side == "down" and not cy < min(n["y"] for n in cand) - 0.5 * sp:
+                    continue
+                if side == "up" and not cy > max(n["y"] for n in cand) + 0.5 * sp:
+                    continue
+                xs = sorted(sorted({round(n["x"], 1) for n in cand}, key=lambda x: abs(x - cx))[:3])
+                if len(xs) < 3 or not (xs[0] - sp <= cx <= xs[-1] + sp):
+                    continue
+                for n in cand:
+                    if round(n["x"], 1) in xs:
+                        n["dur"] = n["dur"] * Fraction(2, 3)
+                        if "dur_down" in n:
+                            n["dur_down"] = n["dur_down"] * Fraction(2, 3)
+                break
     # liaisons de prolongation
     for k, n in enumerate(notes):
         for m in notes[k + 1:]:
@@ -764,6 +795,7 @@ def plan_of(system):
 
 HOLD = os.environ.get("PUPITRE_UNISSON_TENUE", "1") != "0"
 STEMLESS = os.environ.get("PUPITRE_RONDES_VOIX", "1") != "0"  # ronde seule : à quelle voix ?
+TEXT_TUPLETS = os.environ.get("PUPITRE_TRIOLETS_TEXTE", "1") != "0"  # « 3 » de triolet en police de texte
 
 
 def split_voices(staff, names, cuts=()):
