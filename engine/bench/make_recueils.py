@@ -460,6 +460,14 @@ def main():
                         melody = melody.transpose(iv)
                         for ks in melody.recurse().getElementsByClass(key.KeySignature):
                             ks.sharps = ks1.sharps
+                        # tessiture d'une mélodie de recueil (médiane vers mi4 à la4) : une octave plus bas ou plus
+                        # haut si la transposition l'en a sortie (sinon le moteur la ramène, à raison)
+                        import statistics
+                        med = statistics.median(n.pitch.midi for n in melody.recurse().notes if n.isNote)
+                        if med > 73:
+                            melody = melody.transpose(-12)
+                        elif med < 60:
+                            melody = melody.transpose(12)
                     except Exception:  # noqa: BLE001
                         pass
                     break

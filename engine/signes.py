@@ -449,9 +449,29 @@ def _tie_arc(img_sym, a, b):
         rows = np.arange(cols.shape[0])[:, None]
         centre = (cols * rows).sum(0)[inked] / np.maximum(1, cols.sum(0)[inked])
         smooth = np.median(np.abs(np.diff(centre))) <= 1.5 if len(centre) > 2 else False
-        if thin.mean() >= 0.8 and smooth:
+        if thin.mean() >= 0.8 and smooth and (not CURVED_TIES or _bulges(centre, sp, above=lo < y)):
             return True
     return False
+
+
+# Une liaison se bombe : au-dessus des notes vers le haut, au-dessous vers le bas. Sans cette condition, un filet de
+# ligne de portée (scan à 170 points par pouce : ligne épaisse ou un peu penchée, mal écartée à ±1 pixel de sa
+# place calculée) passait pour une liaison entre deux notes répétées : 1 151 liaisons lues pour 113 gravées sur les
+# copies au style des recueils, 17 071 sur les 731 chants des recueils (syllabes fusionnées en notes tenues).
+CURVED_TIES = os.environ.get("PUPITRE_LIAISONS_COURBES", "1") == "1"
+TIE_BULGE = float(os.environ.get("PUPITRE_LIAISONS_BOMBEMENT", "0.15"))  # en interlignes
+
+
+def _bulges(centre, sp, above):
+    """Le milieu du trait est plus loin des têtes que ses bouts (d'au moins TIE_BULGE interligne)."""
+    n = len(centre)
+    if n < 6:
+        return False
+    k = max(1, n // 6)
+    ends = (float(np.mean(centre[:k])) + float(np.mean(centre[-k:]))) / 2
+    mid = float(np.mean(centre[n // 2 - k: n // 2 + k + 1]))
+    bulge = (ends - mid) if above else (mid - ends)  # rangées : 0 en haut
+    return bulge >= TIE_BULGE * sp
 
 
 def read_ties(notes, img):
