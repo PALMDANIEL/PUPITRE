@@ -52,6 +52,12 @@ jobs:
           python make_corpus.py "$RUNNER_TEMP/copies/base" 6
           python make_usees.py "$RUNNER_TEMP/copies/usees" 6
           python make_reels.py "$RUNNER_TEMP/copies/reels" 6
+          # copies dans le style des recueils (musique du domaine public gravée et scannée comme eux) : « [recueils: 120] »
+          n=$(printf '%s' "$MESSAGE" | sed -n 's/.*\[recueils: *\([0-9]*\) *\].*/\1/p' | head -1)
+          if [ -n "$n" ]; then
+            for k in 0 1 2 3; do python make_recueils.py "$RUNNER_TEMP/copies/recueils" $(( (n + 3) / 4 )) --part $k/4 & done
+            wait
+          fi
           find "$RUNNER_TEMP/copies" -name _gravure -prune -exec rm -rf {} +
           ls "$RUNNER_TEMP/copies"/* | head -200
       - uses: actions/upload-artifact@v4

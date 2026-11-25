@@ -58,6 +58,8 @@ def detail(part, truth):
         notes = [(int(max(n.pitches, key=lambda q: q.ps).midi), n.measureNumber) for n in v.recurse().notes
                  if n.pitches and not run_bench.held(n)]
         got = [m for m, _b in notes]
+        if NAMES[k] not in truth:
+            continue
         want = truth[NAMES[k]]
         out = []
         for op, d, i, j in align(got, want, where=True):
@@ -107,8 +109,9 @@ def main(corpus, filt="", *rest):
             print(f"{case.name:32} séparation impossible : {e}")
             continue
         fams, per = collections.Counter(), []
+        melody = [k for k in truth if not k.startswith("_")] == ["Soprano"]
         for i, name in enumerate(NAMES):
-            got = voices[i] if len(voices) == 4 else []
+            got = (voices[0] if voices and i == 0 else []) if melody else (voices[i] if len(voices) == 4 else [])
             if name not in truth:
                 continue  # voix absente de la bonne réponse
             c = collections.Counter(family(op, d) for op, d in align(got, truth[name]))

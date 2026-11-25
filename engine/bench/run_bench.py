@@ -74,8 +74,12 @@ def run_case(case: pathlib.Path, reuse: bool):
     if truth_file.exists():
         truth = json.loads(truth_file.read_text(encoding="utf-8"))
         res["acc"] = {}
+        melody = [k for k in truth if not k.startswith("_")] == ["Soprano"]
         for i, name in enumerate(NAMES):
-            got = voices[i] if i < len(voices) and len(voices) == 4 else []
+            if melody:  # mélodie seule (copies des recueils) : la voix du haut, quel que soit le nombre de voix lues
+                got = voices[0] if (i == 0 and voices) else []
+            else:
+                got = voices[i] if i < len(voices) and len(voices) == 4 else []
             res["acc"][name] = score_voice(got, truth.get(name, []))  # voix absente de la bonne réponse : non comptée
     return case.name, res
 

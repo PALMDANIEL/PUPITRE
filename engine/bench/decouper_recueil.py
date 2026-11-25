@@ -19,9 +19,16 @@ import numpy as np  # noqa: E402
 
 TITLE_RATIO = 1.3    # hauteur d'un titre / hauteur médiane des lignes de texte (paroles)
 _OCR = None
+# Cote du répertoire liturgique imprimée au bout du titre : « A 108 », « A 109-1 », « E 127 », « ZL 22-1 », « B 36-92-2 »
+COTE = re.compile(r"(?:^|\s)([A-Z]{1,3})\s?(\d{2,3})(?:\s?[-–]\s?\d{1,3}){0,3}\s*$")
+# Nom d'accord seul sur sa ligne (« sib », « Mim », « LA7 », « FA#7 dim. ») : jamais un titre
+CHORD = re.compile(r"^(do|r[ée]|mi|fa|sol|la|si|[A-G])\s*(b|#|♯|♭)?\s*(m|min|maj|dim|aug|sus)?\.?\s*\d*\s*(maj|dim)?\.?$", re.I)
 
 
-def ocr(gray):
+def ocr(gray, cache=None):
+    """Lignes de texte de la page (RapidOCR), gardées dans cache (JSON) : un nouveau découpage ne relit pas les pages."""
+    if cache is not None and cache.exists():
+        return json.loads(cache.read_text(encoding="utf-8"))
     global _OCR
     if _OCR is None:
         from rapidocr_onnxruntime import RapidOCR
@@ -31,7 +38,11 @@ def ocr(gray):
     for box, text, conf in res or []:
         ys = [p[1] for p in box]
         xs = [p[0] for p in box]
-        out.append(dict(text=text.strip(), y0=min(ys), y1=max(ys), x0=min(xs), x1=max(xs), h=max(ys) - min(ys), conf=conf))
+        out.append(dict(text=text.strip(), y0=float(min(ys)), y1=float(max(ys)), x0=float(min(xs)), x1=float(max(xs)),
+                        h=float(max(ys) - min(ys)), conf=float(conf)))
+    if cache is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     return out
 
 
@@ -55,25 +66,44 @@ CREDITS = ("edition", "texte", "musique", "paroles", "harm", "disque", "copyrigh
 
 
 def titles_on(lines, systems, sp, height, width):
-    """Lignes de titre : centrées, plus hautes que les paroles, sans syllabes coupées (« be-nis-sons » : paroles), ni
-    mention d'auteur ou d'éditeur, hors des systèmes et du pied de page. (Les indications de mouvement, « Sans presser,
-    bien balancé », sont aussi grandes mais au début du système, pas au milieu.)"""
+    """Lignes de titre : plus hautes que les paroles, sans syllabes coupées (« be-nis-sons » : paroles), ni mention
+    d'auteur ou d'éditeur, ni nom d'accord seul (« sib », « Mim »), hors des systèmes et du pied de page ; centrées, ou
+    terminées par la cote du chant (« Comme l'enfant reçoit le pain A 109-1 » : titre poussé à droite par sa cote,
+    manqué tant que seuls les titres centrés comptaient). La cote peut être lue à part sur la même ligne. (Les
+    indications de mouvement, « Sans presser, bien balancé », sont aussi grandes mais au début du système.)"""
     letters = [ln for ln in lines if sum(ch.isalpha() for ch in ln["text"]) >= 3]
     if not letters:
         return []
     usual = statistics.median(ln["h"] for ln in letters)
+    cotes = [ln for ln in lines if COTE.search(ln["text"]) and len(ln["text"]) <= 12]
     out = []
     for ln in letters:
         cy = (ln["y0"] + ln["y1"]) / 2
-        cx = (ln["x0"] + ln["x1"]) / 2 / width
         text = ln["text"].lower()
-        if ln["h"] < TITLE_RATIO * usual or cy > 0.95 * height or abs(cx - 0.5) > 0.07 \
-                or (ln["x1"] - ln["x0"]) > 0.6 * width or len(re.findall(r"\w-\s*\w", text)) >= 2 \
+        if ln["h"] < TITLE_RATIO * usual or cy > 0.95 * height or (ln["x1"] - ln["x0"]) > 0.75 * width \
+                or len(re.findall(r"\w-\s*\w", text)) >= 2 or CHORD.match(ln["text"].strip()) \
                 or any(w in unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode() for w in CREDITS):
             continue
         if any(top - 0.5 * sp <= cy <= bottom + 0.5 * sp for top, bottom in systems):
             continue
-        out.append(ln)
+        # cote au bout de la ligne, ou lue à part à la même hauteur : la ligne est un titre, centrée ou non ; le centre
+        # se juge sur le titre seul (sans la cote)
+        x0, x1 = ln["x0"], ln["x1"]
+        m = COTE.search(ln["text"])
+        if m:
+            x1 = x0 + (x1 - x0) * m.start() / max(len(ln["text"]), 1)
+        beside = any(c is not ln and abs((c["y0"] + c["y1"]) / 2 - cy) < 0.5 * ln["h"] and c["x0"] > ln["x1"] - 5
+                     for c in cotes)
+        coted = bool(m) or beside
+        cx = (x0 + x1) / 2 / width
+        words = len(re.findall(r"[^\W\d_]{2,}", ln["text"]))
+        if coted and abs(cx - 0.5) <= 0.25 and (x1 - x0) <= 0.6 * width:
+            out.append(ln)
+        elif abs(cx - 0.5) <= 0.07 and (ln["x1"] - ln["x0"]) <= 0.6 * width \
+                and (words >= 2 or (re.match(r"[A-ZÀ-Ý]", ln["text"].strip()) and sum(ch.isalpha() for ch in ln["text"]) >= 4)):
+            # un seul mot : titre s'il commence par une capitale (« Rassemblement », « Pain ») ; « fants » (bout de
+            # « enfants » en gros caractères) n'en est pas un
+            out.append(ln)
     return sorted(out, key=lambda ln: ln["y0"])
 
 
@@ -100,7 +130,7 @@ def split(pages_dir, out, books=None, span=None):
         if not systems:
             cur = None  # page de texte (préface, table) : le chant en cours s'arrête
             continue
-        titles = titles_on(ocr(gray), systems, sp, gray.shape[0], gray.shape[1])
+        titles = titles_on(ocr(gray, out / "_ocr" / f"{f.stem}.json"), systems, sp, gray.shape[0], gray.shape[1])
         # morceaux de la page : avant le 1er titre (suite du chant en cours), puis un morceau par titre
         cuts = []
         prev_bottom = 0.0
