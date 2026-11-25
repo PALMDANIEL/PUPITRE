@@ -620,7 +620,7 @@ def _extra_variants(side_dir: pathlib.Path, voix: pathlib.Path, key, time_sig, m
 TAIL = os.environ.get("PUPITRE_COUPLETS_GARDES", "1") != "0"  # psaume : couplets d'Audiveris gardés sous le refrain de homr
 
 
-def image_systems(pages_dir: pathlib.Path):
+def system_cells(pages_dir: pathlib.Path):
     """Portées et mesures (barres vues sur l'image) de chaque système, page après page : [(portées, mesures)]."""
     import cv2
     import imgio
@@ -651,7 +651,7 @@ def tail_cut(pages_dir: pathlib.Path, reading):
         return None
     try:
         from music21 import converter, layout as m21layout, stream
-        sizes = [st for st, _b in image_systems(pages_dir)]
+        sizes = [st for st, _b in system_cells(pages_dir)]
         if not sizes or max(sizes) < 2 or sizes[-1] != 1:
             return None
         head = len(sizes)
@@ -1295,7 +1295,7 @@ def mark_systems(pages_dir: pathlib.Path, partition, tail=None):
     if partition is None or not pathlib.Path(partition).exists():
         return
     try:
-        cells = [f"{st}/{bars}" for st, bars in image_systems(pages_dir)]  # mesures : barres vues sur l'image
+        cells = [f"{st}/{bars}" for st, bars in system_cells(pages_dir)]  # mesures : barres vues sur l'image
     except Exception as e:  # noqa: BLE001 : sans disposition, la lecture reste
         print(f"Disposition des systèmes non lue ({type(e).__name__})", file=sys.stderr)
         return
