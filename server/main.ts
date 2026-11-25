@@ -436,7 +436,7 @@ app.put('/api/scores/:id/partition', upload.single('file'), async (req, res) => 
   // partition vérifiée en entier par le chef de chœur : elle entre au répertoire de la chorale (à la place de la
   // lecture), et toutes les copies de ce chant photographiées ensuite seront rendues exactes
   if (whole) {
-    void addToRepertoire(meta.id, path.join(dirOf(meta.id), partitionFile), repertoireDirs(meta.owner ?? null)[1], meta.title);
+    void addToRepertoire(meta.id, path.join(dirOf(meta.id), partitionFile), repertoireDirs(meta.owner ?? null)[1], meta.title, undefined, true);
   }
   const next = await patchMeta(meta.id, { partitionFile, corrected: true, status: 'queued', progress: 0, error: null });
   enqueue({ id: meta.id, kind: 'render' });
@@ -463,7 +463,7 @@ async function correctedToRepertoire(partition: Buffer, title: string, owner: st
     const file = path.join(tmp, 'corrigee.musicxml');
     await fs.writeFile(file, partition);
     const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'chant';
-    await addToRepertoire(`tel-${slug}`, file, repertoireDirs(owner)[1], title);
+    await addToRepertoire(`tel-${slug}`, file, repertoireDirs(owner)[1], title, undefined, true);
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

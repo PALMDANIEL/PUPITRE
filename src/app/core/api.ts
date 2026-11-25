@@ -20,8 +20,8 @@ export interface Fiabilite { passes: number; moyenne: number; mesures: number; a
 
 export interface Manifest {
   fiabilite?: Fiabilite;
-  /** partition exacte : PDF gravé lu directement, ou chant reconnu dans le répertoire vérifié */
-  exacte?: boolean;
+  /** partition exacte : « pdf » (PDF gravé lu directement), « repertoire » (chant reconnu), « exacte » (autre) */
+  exacte?: string;
   tempo: number; timbre: Timbre; tutti: string; score: string; rebuilt?: string; langue?: Langue; voyelle?: Voyelle;
   measures: number; timeSignature: string | null; key: string; voices: VoiceInfo[];
 }

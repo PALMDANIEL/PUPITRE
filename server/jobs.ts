@@ -134,10 +134,10 @@ export function repertoireDirs(owner: string | null): [string, string] {
  * partition vérifiée et corrigée par le chef de chœur dans l'éditeur de notes. Ses copies photographiées seront
  * ensuite reconnues et rendues exactes.
  */
-export async function addToRepertoire(id: string, partition: string, folder: string, title: string, pdf?: string) {
+export async function addToRepertoire(id: string, partition: string, folder: string, title: string, pdf?: string, verified = false) {
   try {
     await fs.mkdir(folder, { recursive: true });
-    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title, ...(pdf ? ['--pdf', pdf] : [])]);
+    const [cmd, args] = engineCommand('repertoire', ['ajouter', partition, folder, id, title, ...(pdf ? ['--pdf', pdf] : []), ...(verified ? ['--verifiee'] : [])]);
     await run(cmd, args, { label: 'L’ajout au répertoire', timeoutMs: 120_000 });
   } catch (e) {
     console.error('Répertoire :', (e as Error).message); // la partition reste lue ; seul l'ajout manque

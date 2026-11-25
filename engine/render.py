@@ -1477,6 +1477,19 @@ def export_musicxml(src: pathlib.Path, dst: pathlib.Path, score):
         shutil.copy(src, dst)
 
 
+REBUILT_GRID = os.environ.get("PUPITRE_RECONSTITUEE_GRILLE", "1") != "0"
+
+
+def _off_grid(part):
+    """Une note ou un silence dont la durée n'est ni en doubles croches ni en triolets."""
+    from fractions import Fraction
+    for n in part.recurse().notesAndRests:
+        q = Fraction(n.quarterLength).limit_denominator(1000)
+        if (q * 12).denominator != 1 and (q * 16).denominator != 1:
+            return True
+    return False
+
+
 def export_rebuilt(voices, labels, dst: pathlib.Path) -> bool:
     """Partition reconstituée : une portée par voix, nommée, dans la bonne octave et la bonne clé, avec ses paroles
     (les corrections de la lecture y sont appliquées). Facultative : en cas d'échec, l'audio n'en dépend pas."""
@@ -1498,6 +1511,16 @@ def export_rebuilt(voices, labels, dst: pathlib.Path) -> bool:
                 c = clef.TrebleClef()
             if ms:
                 ms[0].insert(0, c)
+            if REBUILT_GRID and _off_grid(p):
+                # durées impossibles à écrire simplement (mesure mal lue : 8/17 de noire…) : écrites en n-olets de 17 que
+                # l'affichage (OSMD) refuse, la partition ne s'affichait pas et l'éditeur de notes restait inaccessible
+                # (26 lectures sur 104 des chorales) ; arrondies à la double croche ou au triolet pour l'affichage
+                from music21 import duration as m21duration
+                p.quantize((4, 3), processOffsets=True, processDurations=True, inPlace=True, recurse=True)
+                for n in list(p.recurse().notesAndRests):
+                    if not n.duration.isGrace:
+                        # durée refaite d'après sa valeur arrondie : music21 gardait sinon l'ancien n-olet de 17
+                        n.duration = m21duration.Duration(n.quarterLength or 0.25)
             sc.insert(0, p)
         sc.write("musicxml", fp=str(dst))
         return True
@@ -1593,6 +1616,16 @@ def page_systems(src):
     return out
 
 
+def exact_how(src):
+    """Origine d'une partition exacte : « pdf » (PDF gravé lu directement : notes sûres, un rythme peut rester faux),
+    « repertoire » (chant reconnu : version de référence), sinon « exacte » (marque dans le fichier seulement)."""
+    try:
+        how = (pathlib.Path(src).parent / "partition.exacte").read_text(encoding="utf-8").strip()
+    except OSError:
+        how = ""
+    return "repertoire" if how.startswith("repertoire") else "pdf" if how.startswith("pdf") else "exacte"
+
+
 def is_exact(src):
     """Partition exacte (PDF gravé lu directement, chant reconnu dans le répertoire) : fichier « partition.exacte » à
     côté, ou marque dans la partition elle-même."""
@@ -1681,7 +1714,7 @@ def main():
         "tempo": tempo_qpm, "timbre": a.timbre, "tutti": tutti, "score": "score.musicxml",
         **({"rebuilt": "reconstituee.musicxml"} if rebuilt else {}),
         **({"fiabilite": reliability} if reliability else {}),
-        **({"exacte": True} if is_exact(a.src) else {}),  # PDF gravé lu directement, chant reconnu au répertoire
+        **({"exacte": exact_how(a.src)} if is_exact(a.src) else {}),  # « pdf » (PDF gravé lu directement), « repertoire »
         **({"langue": a.langue} if a.timbre == "chant" else {}),
         **({"voyelle": a.voyelle} if a.timbre == "reel" else {}),
         "measures": len(score.parts[0].getElementsByClass(stream.Measure)),

@@ -39,14 +39,24 @@ interface Step { key: ScoreStatus; label: string }
           <p>Le chef de chœur a vérifié toute la partition : elle sert de référence pour ce chant, et les copies de ce
             chant photographiées ensuite seront rendues exactes.</p>
         </section>
+      } @else if (s.manifest?.exacte === 'pdf') {
+        <section class="reliability glass good" aria-label="PDF gravé lu directement">
+          <p class="score"><b>PDF</b></p>
+          <p>Lue directement dans le PDF gravé, sans reconnaissance d’image : les notes sont sûres, mais un rythme peut rester
+            faux si la mise en page est inhabituelle. Vérifiez-la une fois et cochez « Toute la partition est vérifiée »
+            dans « Corriger des notes » pour en faire la référence du chant.</p>
+        </section>
       } @else if (s.manifest?.exacte) {
-        <section class="reliability glass good" aria-label="Partition exacte">
-          <p class="score"><b>Exacte</b></p>
-          <p>Partition exacte : PDF gravé lu directement, ou chant reconnu dans le répertoire vérifié.</p>
+        <section class="reliability glass good" aria-label="Partition de référence">
+          <p class="score"><b>Référence</b></p>
+          <p>Chant reconnu dans le répertoire : sa version de référence (vérifiée par un chef de chœur, ou lue directement
+            dans un PDF gravé) remplace la lecture de la copie.</p>
         </section>
       } @else if (s.manifest?.fiabilite; as f) {
         <section class="reliability glass" [class.good]="doubtful(f).length === 0" aria-label="Fiabilité de la lecture">
-          <p class="score"><b>{{ percent(f.moyenne) }} %</b> <span>de fiabilité</span></p>
+          @if (f.lecteurs || f.passes > 1) {
+            <p class="score"><b>{{ percent(f.moyenne) }} %</b> <span>de fiabilité</span></p>
+          }
           @if (f.corrigee) {
             <p>Partition corrigée, pas encore validée en entier.
               @if (doubtful(f).length) { Restent à vérifier : {{ doubtful(f).length === 1 ? 'la mesure' : 'les mesures' }} <b>{{ doubtful(f).join(', ') }}</b>. }

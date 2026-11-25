@@ -338,6 +338,7 @@ export class Mixer {
     const file = input.files?.[0];
     input.value = '';
     if (file) void this.store?.uploadCorrection(file, undefined, this.wholeUpload());
+    this.wholeUpload.set(false);
   }
   /** Téléphone : message pendant la préparation d'un fichier à enregistrer. */
   protected readonly saving = signal<string | null>(null);

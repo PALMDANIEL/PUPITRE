@@ -419,6 +419,25 @@ def incoherence(path):
     return bad / tot if tot and bad >= 3 else 0.0  # une ou deux mesures (petite pièce) : pas un signe
 
 
+STRICT_PDF = os.environ.get("PUPITRE_REPERTOIRE_PDF_STRICT", "1") != "0"
+
+
+def incoherent_measures(path):
+    """Nombre de mesures (première et dernière à part) où toutes les voix chantent sans durer le même temps."""
+    from music21 import converter
+    parts = [list(p.getElementsByClass("Measure")) for p in converter.parse(str(path)).parts]
+    if not parts:
+        return 0
+    n = max(len(p) for p in parts)
+    bad = 0
+    for k in range(1, n - 1):
+        if not all(k < len(p) and p[k].notes for p in parts):
+            continue
+        durs = {round(float(sum(e.duration.quarterLength for e in p[k].notesAndRests)), 3) for p in parts}
+        bad += len(durs) > 1
+    return bad
+
+
 def bar_mismatch(path):
     """Part des mesures (de chaque voix, première et dernière à part) dont la durée n'est pas celle de la mesure."""
     from music21 import converter
@@ -475,11 +494,19 @@ def main():
         if "--pdf" in rest:
             i = rest.index("--pdf")
             pdf, rest = rest[i + 1], rest[:i] + rest[i + 2:]
+        verified = "--verifiee" in rest  # vérifiée en entier par le chef de chœur : sa parole fait foi
+        rest = [r for r in rest if r != "--verifiee"]
         name = rest[0] if rest else src.stem
         title = rest[1] if len(rest) > 1 else None
         # lecture d'un PDF gravé peu cohérente (mise en page que la lecture directe ne comprend pas encore) : pas une
         # version exacte, elle ne doit pas remplacer la lecture des copies de ce chant
-        why = unreliable(src)
+        why = None if verified else unreliable(src)
+        if why is None and not verified and pdf and STRICT_PDF:
+            # PDF lu directement, ajouté sans vérification : aucune mesure incohérente admise (une ou deux mesures aux
+            # durées fausses suffisent à rendre fausses toutes les copies de ce chant ; le chef de chœur peut la valider)
+            k = incoherent_measures(src)
+            if k:
+                why = f"{k} mesure{'s' if k > 1 else ''} aux voix de durées différentes"
         if why:
             print(f"Partition incohérente ({why}) : pas ajoutée au répertoire", file=sys.stderr)
             return
