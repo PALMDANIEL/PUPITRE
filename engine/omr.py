@@ -199,6 +199,13 @@ STAFF_OPTIONS = [
     "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.maxRightIndentation=200",
     "-option", "org.audiveris.omr.sheet.grid.LinesRetriever.minStaffLength=10",
 ]
+# Système en retrait (nouvelle partie d'un chant : refrain, couplet ; fréquent dans les recueils) : Audiveris y
+# commençait un nouveau mouvement, sans indication de mesure (« No target duration for measures… please check time
+# signatures ») ; il vidait alors les mesures dont le rythme ne tombait pas juste (copie au style des recueils : 4
+# mesures sur 17 lues vides). En essai (PUPITRE_SANS_RETRAIT=1 : le retrait n'ouvre plus de mouvement) : sur 45 vrais
+# chants des recueils, retraits 34 → 0, mais 3 % de notes chantées en moins ; à mesurer sur les bancs.
+if os.environ.get("PUPITRE_SANS_RETRAIT", "0") == "1":
+    STAFF_OPTIONS += ["-option", "org.audiveris.omr.sheet.SystemManager.minIndentation=1000"]
 
 
 def _ending_numbers(m):

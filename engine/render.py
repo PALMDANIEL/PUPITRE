@@ -1229,12 +1229,50 @@ def regroup_by_clef(parts):
     return out
 
 
+UNPITCHED = os.environ.get("PUPITRE_SANS_HAUTEUR", "1") == "1"
+
+
+def unpitched_to_notes(score):
+    """
+    Portée de chœur lue en percussion (clé de sol mal reconnue sur une petite portée) : notes « sans hauteur » ; leur
+    place sur la portée (display-step, display-octave) reste lue, comme en clé de sol : elles redeviennent des notes à
+    cette place (l'armure est appliquée ensuite par harmonize_keys). Vrais recueils : 2 chants sur 728. Rend le nombre
+    de notes rendues à leur hauteur.
+    """
+    if not UNPITCHED:
+        return 0
+    from music21 import percussion
+    perc = getattr(percussion, "PercussionChord", None)
+    kinds = (note.Unpitched, perc) if perc is not None else (note.Unpitched,)
+    done = 0
+    for el in list(score.recurse().getElementsByClass(kinds)):
+        try:
+            if perc is not None and isinstance(el, perc):
+                heads = [n for n in el.notes if isinstance(n, note.Unpitched)]
+                new = chord.Chord([pitch.Pitch(f"{n.displayStep}{n.displayOctave}") for n in heads])
+            else:
+                new = note.Note(f"{el.displayStep}{el.displayOctave}")
+        except Exception:  # noqa: BLE001
+            continue
+        new.duration = copy.deepcopy(el.duration)
+        new.lyrics = list(el.lyrics)
+        if el.tie is not None:
+            new.tie = copy.deepcopy(el.tie)
+        site = el.activeSite
+        if site is None:
+            continue
+        site.replace(el, new)
+        done += 1
+    return done
+
+
 def extract_voices(score, trust_names=True, systems=None):
     """Les voix dans l'ordre de la page (portées de haut en bas, hampes en haut avant hampes en bas) :
     c'est ainsi qu'un chœur est écrit, et cet ordre ne dépend pas des erreurs d'octave de la lecture.
     Pour un fichier MusicXML ou MIDI (hauteurs exactes, ordre des pistes parfois quelconque), on trie par hauteur."""
     drop_chord_symbols(score)
     if not trust_names:
+        unpitched_to_notes(score)
         harmonize_keys(score)
         guessed = infer_time_signature(score)
         if guessed:

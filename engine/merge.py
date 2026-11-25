@@ -333,6 +333,9 @@ def _octave_free(staff):
     return [p - shift for p in _pitches(staff)]
 
 
+SOLO_TOP = os.environ.get("PUPITRE_CLE_COUPLET", "1") == "1"  # fix_rare_clefs : portée seule comparée au haut
+
+
 def fix_rare_clefs(raw):
     """
     Clé de tête lue en une clé qu'un chœur n'emploie pas (fa 3e ligne, ut 3e ligne… : sur petites portées, Audiveris
@@ -352,9 +355,18 @@ def fix_rare_clefs(raw):
             if read is None or _clef_key(read)[:2] in COMMON_CLEFS or len(here) < 4 \
                     or any(m.getElementsByClass(clef.Clef) for m in staff[1:]):
                 continue
-            usual = [p for k, (_pg, st) in enumerate(raw) if k != j and i < len(st) and st[i]
-                     and (_clef_key(_head_clef(st[i][0])) or ())[:2] in COMMON_CLEFS
-                     for p in _octave_free(st[i])]
+            # système d'une seule portée qui chante (couplet en mélodie seule) sur une page où les autres systèmes en
+            # ont plusieurs : c'est la mélodie, comparée à la portée du haut des autres systèmes, même si Audiveris
+            # l'a rangée plus bas (clé de sol des couplets lue en clé d'ut, comparée à la portée des hommes : la
+            # lecture fausse paraissait plausible, ténor et basse chantaient le couplet une neuvième trop bas)
+            ref = i
+            if SOLO_TOP and sum(1 for st in staves if st and _pitches(st)) == 1 and \
+                    any(sum(1 for st in other if st and _pitches(st)) >= 2 for _pg, other in raw):
+                ref = 0
+            usual = [p for k, (_pg, st) in enumerate(raw) if k != j and ref < len(st) and st[ref]
+                     and (_clef_key(_head_clef(st[ref][0])) or ())[:2] in COMMON_CLEFS
+                     and sum(1 for x in st if x and _pitches(x)) >= (2 if ref != i else 0)
+                     for p in _octave_free(st[ref])]
             if len(usual) >= 8:
                 centre = statistics.median(usual)
             elif len(staves) in CENTRES:

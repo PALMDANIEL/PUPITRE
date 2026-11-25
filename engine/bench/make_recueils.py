@@ -383,9 +383,8 @@ def as_scan(img, rng):
     penchée, seuillé en noir et blanc par le scanner (seuil variable), petites taches."""
     ink = 255 - img
     k = rng.choice([0, 0, 1, 2])
-    if k:
-        ker = np.ones((k + 1, k + 1), np.uint8)
-        ink = cv2.dilate(ink, ker) if rng.random() < 0.6 else cv2.erode(ink, np.ones((2, 2), np.uint8))
+    if k:  # encre qui bave (jamais amincie : les traits fins cassaient en pointillés, ce que les vrais scans n'ont pas)
+        ink = cv2.dilate(ink, np.ones((k + 1, k + 1), np.uint8))
     img = 255 - ink
     img = cv2.resize(img, (WIDTH, int(img.shape[0] * WIDTH / img.shape[1])), interpolation=cv2.INTER_AREA)
     h, w = img.shape
