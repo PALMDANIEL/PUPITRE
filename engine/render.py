@@ -245,6 +245,9 @@ SOLO_RUN = int(os.environ.get("PUPITRE_SOLO_MESURES", "4"))  # mesures de suite 
 SOLOIST = os.environ.get("PUPITRE_COUPLETS_SOLISTE", "1") == "1"  # page mêlée : ligne seule sans accord = soliste
 
 
+SOLO_CHORDS = float(os.environ.get("PUPITRE_SOLISTE_ACCORDS", "0.15"))  # part d'accords tolérée dans la ligne d'un soliste
+
+
 def solo_systems(parts, soloist=False, systems=None):
     """
     Système d'une seule portée entre des systèmes en chœur (couplet en mélodie seule après un refrain sur S+A / T+B :
@@ -318,7 +321,10 @@ def solo_systems(parts, soloist=False, systems=None):
     single = single_staff_measures(rows[0], n, systems) if soloist else set()
     done = 0
     for a, b in runs:
-        chords = any(isinstance(el, chord.Chord) for x in range(a, b) for el in rows[solo[x][0]][x].recurse().notes)
+        # ligne à deux voix (soprano et alto sur la portée du couplet) : des accords tout du long ; un accord isolé est un
+        # signe mal lu (recueils, bwv72.6 mêlée : un accord sur 57 notes, l'alto chantait tout le couplet du soliste)
+        sung_els = [el for x in range(a, b) for el in rows[solo[x][0]][x].recurse().notes]
+        chords = sum(isinstance(el, chord.Chord) for el in sung_els) > SOLO_CHORDS * max(1, len(sung_els))
         # soliste : toute la ligne dans des systèmes d'une seule portée (« Toussaint », psaumes) ; une ligne seule sur
         # la portée des femmes pendant que celle des hommes montre des pauses (« Un signe grandiose ») se chante à
         # l'unisson, même si sa fin tombe dans un dernier système d'une portée

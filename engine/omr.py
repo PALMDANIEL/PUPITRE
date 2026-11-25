@@ -691,15 +691,25 @@ def with_tail(head, reading, cut: int, out: pathlib.Path):
         h = converter.parse(str(head))
         a = converter.parse(str(reading))
         hp, ap = list(h.parts), list(a.parts)
-        if len(hp) != len(ap):
+        if len(hp) > len(ap) or not hp:
             print(f"Couplets d'Audiveris non repris : {len(ap)} parties contre {len(hp)}", file=sys.stderr)
             return None
         sizes = {len(list(p.getElementsByClass(stream.Measure))) for p in hp}
         if len(sizes) != 1:
             return None
         start = sizes.pop()
-        for p_h, p_a in zip(hp, ap):
-            rows = list(p_a.getElementsByClass(stream.Measure))
+        rows_a = [list(p.getElementsByClass(stream.Measure)) for p in ap]
+        # couplets rangés par Audiveris dans une partie de plus (sa portée seule : Psaume 22, 3 parties contre 2) : ils
+        # vont à la partie du haut, celle de la mélodie (render.solo_systems les y aurait remontés)
+        extra = rows_a[len(hp):]
+        for j, p_h in enumerate(hp):
+            rows = list(rows_a[j])
+            if j == 0 and extra:
+                for k in range(cut, len(rows)):
+                    if not rows[k].recurse().notes:
+                        src = next((r[k] for r in extra if k < len(r) and r[k].recurse().notes), None)
+                        if src is not None:
+                            rows[k] = src
             have = list(p_h.getElementsByClass(stream.Measure))
             number = have[-1].number if have and have[-1].number else len(have)
             for k, m in enumerate(rows[cut:]):
@@ -716,7 +726,7 @@ def with_tail(head, reading, cut: int, out: pathlib.Path):
         tmp = out.with_name(out.stem + "-tmp.musicxml")
         h.write("musicxml", fp=str(tmp), makeNotation=False)
         tmp.replace(out)
-        print(f"Couplets d'Audiveris gardés sous le refrain de homr : {len(rows) - cut} mesures", file=sys.stderr)
+        print(f"Couplets d'Audiveris gardés sous le refrain de homr : {len(rows_a[0]) - cut} mesures", file=sys.stderr)
         return start
     except Exception as e:  # noqa: BLE001
         print(f"Couplets d'Audiveris non repris ({type(e).__name__}: {e})", file=sys.stderr)
