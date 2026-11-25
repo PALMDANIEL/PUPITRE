@@ -5,7 +5,10 @@ music21 (jamais ceux du banc d'essai), gravés par Verovio (positions exactes de
 taches), noircis comme les pages du moteur, puis découpés exactement comme signes.read_signs : de 2,8 interlignes à gauche
 du bord gauche de la tête jusqu'à elle, 2,2 interlignes au-dessus et au-dessous.
 
-Usage : bench-venv/bin/python make_signes.py <sortie.npz> [nombre_de_chorals] [--usees] [--moteur]
+Usage : bench-venv/bin/python make_signes.py <sortie.npz> [nombre_de_chorals] [--usees] [--moteur] [--recueils]
+--recueils : pages au style des recueils « Chants notés » (make_recueils.py) : polices Leipzig, Bravura, Gootville,
+Leland ; gravées à 170 points par pouce (interligne ≈ 10 px), scannées en noir et blanc (encre qui bave, léger flou,
+seuil variable, petites taches ; sans rotation : positions exactes), agrandies à 2480 px et nettoyées par le moteur.
 --moteur : pages abîmées en gris (photo nette, WhatsApp, sombre, floue, photocopie, copie usée), puis passées par le
 nettoyage du moteur lui-même (preprocess : renforcement du flou, seuillage par crêtes, lignes recousues, taches ôtées),
 comme les pages que lit signes.py : le reconnaisseur apprend sur les mêmes images qu'en usage réel (un dièse empâté
@@ -26,6 +29,7 @@ LABELS = {"E262": 1, "E261": 2, "E260": 3}  # dièse, bécarre, bémol ; 0 : rie
 PATCH_W, PATCH_H = 16, 26
 WORN = "--usees" in sys.argv  # seulement des copies usées (complément du jeu d'exemples)
 ENGINE = "--moteur" in sys.argv  # pages passées par le nettoyage du moteur
+RECUEILS = "--recueils" in sys.argv  # pages au style des recueils (polices variées, scan noir et blanc à 170 dpi)
 SVG = "{http://www.w3.org/2000/svg}"
 XLINK = "{http://www.w3.org/1999/xlink}href"
 
@@ -193,6 +197,9 @@ def main(out, count):
     if ENGINE:  # encore d'autres
         works = works[100:] + works[:100]
         rng = np.random.default_rng(13)
+    if RECUEILS:  # et d'autres encore, avec plus de signes
+        works = works[300:] + works[:300]
+        rng = np.random.default_rng(17)
     X, Y, G = [], [], []  # G : numéro du choral (pour séparer apprentissage et contrôle)
     done = 0
     shard = os.environ.get("SHARD")  # « i/n » : seulement les chorals i, i+n, i+2n… (plusieurs processus à la fois)
@@ -207,7 +214,7 @@ def main(out, count):
             continue
         if not parts:
             continue
-        if ENGINE:
+        if ENGINE or RECUEILS:
             add_signs(parts, rng)
         for layout in ("ouverte", "fermee"):
             sc = mc.open_score(parts) if layout == "ouverte" else mc.closed_score(parts)
@@ -217,11 +224,15 @@ def main(out, count):
                     sc.write("musicxml", fp=str(xml))
                 except Exception:  # noqa: BLE001
                     continue
-                for scale in ((30, 40, 50) if ENGINE else (36, 45, 54)):
+                for scale in ((30, 40, 50) if ENGINE else (28, 32, 36) if RECUEILS else (36, 45, 54)):
                     tk = verovio.toolkit()
                     grow = 45 / scale if ENGINE else 1.0  # --moteur : petites portées comme un recueil serré
-                    tk.setOptions({"pageWidth": int(2100 * grow), "pageHeight": int(2970 * grow), "scale": scale,
-                                   "adjustPageHeight": False, "footer": "none", "header": "auto", "breaks": "auto"})
+                    opts = {"pageWidth": int(2100 * grow), "pageHeight": int(2970 * grow), "scale": scale,
+                            "adjustPageHeight": False, "footer": "none", "header": "auto", "breaks": "auto"}
+                    if RECUEILS:
+                        opts.update(font=str(rng.choice(["Leipzig", "Bravura", "Gootville", "Leland"])),
+                                    staffLineWidth=float(rng.uniform(0.21, 0.28)), stemWidth=float(rng.uniform(0.18, 0.3)))
+                    tk.setOptions(opts)
                     if not tk.loadFile(str(xml)):
                         continue
                     svg = tk.renderToSVG(1)
@@ -230,8 +241,10 @@ def main(out, count):
                     notes, k = notes_of(svg, 2480)
                     sp = 180 * k  # interligne : 180 unités de Verovio
                     starts = staff_starts(img, sp)
-                    for rep in range(2 if ENGINE else 3):
-                        if ENGINE:
+                    for rep in range(2 if ENGINE or RECUEILS else 3):
+                        if RECUEILS:
+                            page = recueil_page(img, rng)
+                        elif ENGINE:
                             page, _kind = engine_page(img, rng)
                         else:
                             page = degrade(img, rng, WORN) if rep or WORN else np.where(img < 128, 0, 255).astype(np.uint8)
@@ -247,6 +260,30 @@ def main(out, count):
         done += 1
         print(f"{done}/{count} {pathlib.Path(str(w)).name} : {len(X)} exemples, signes {sum(1 for v in Y if v)}", flush=True)
     np.savez_compressed(out, X=np.array(X, np.float32), Y=np.array(Y, np.int8), G=np.array(G, np.int16))
+
+
+def recueil_page(img, rng):
+    """Page de 2480 px gravée, ramenée à 170 points par pouce et scannée comme un recueil (make_recueils.as_scan, sans
+    rotation), puis agrandie à 2480 px et nettoyée par le moteur (positions des têtes inchangées)."""
+    import preprocess
+    width = 1405
+    u = rng.uniform
+    ink = 255 - img
+    k = int(rng.choice([0, 0, 1, 2]))
+    if k:
+        ink = cv2.dilate(ink, np.ones((k + 1, k + 1), np.uint8))
+    small = cv2.resize(255 - ink, (width, int(img.shape[0] * width / img.shape[1])), interpolation=cv2.INTER_AREA)
+    g = cv2.GaussianBlur(small.astype(np.float32), (0, 0), u(0.35, 0.9)) + rng.normal(0, u(4, 14), small.shape)
+    if rng.random() < 0.8:
+        g = np.where(g < u(150, 200), 0, 255).astype(np.float32)
+    h, w = g.shape
+    for _ in range(int(rng.integers(50, 600))):
+        cv2.circle(g, (int(rng.integers(0, w)), int(rng.integers(0, h))), int(rng.integers(1, 3)),
+                   0 if rng.random() < 0.7 else 255, -1)
+    g = np.clip(g, 0, 255).astype(np.uint8)
+    gray = cv2.resize(g, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_CUBIC)
+    page, _aud = preprocess.clean_page(gray, False)
+    return preprocess.repair_staff_lines(page)
 
 
 def add_signs(parts, rng, p=0.16):
@@ -280,5 +317,5 @@ def staff_starts(img, sp):
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if a not in ("--usees", "--moteur")]
+    args = [a for a in sys.argv[1:] if a not in ("--usees", "--moteur", "--recueils")]
     main(args[0], int(args[1]) if len(args) > 1 else 60)

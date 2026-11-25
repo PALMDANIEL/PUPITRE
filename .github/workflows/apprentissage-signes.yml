@@ -1,0 +1,72 @@
+# Apprentissage du reconnaisseur d'altérations (engine/modeles/signes.npz) sur les serveurs de GitHub : exemples
+# fabriqués à partir de chorals de Bach du domaine public (corpus de music21, jamais ceux du banc), gravés par Verovio
+# et abîmés (photos, copies usées, scans au style des recueils), puis petit réseau appris en numpy (train_signes.py).
+# Lancement : envoi sur une branche apprentissage/… ; le modèle appris est rendu en artefact « signes », à essayer sur
+# le banc d'essai avant de remplacer engine/modeles/signes.npz. Rien n'est publié.
+name: Apprentissage des altérations
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['apprentissage/**']
+
+permissions:
+  contents: read
+
+jobs:
+  exemples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jeu: [base, usees, recueils]
+        part: [0, 1, 2, 3]
+    name: exemples ${{ matrix.jeu }} ${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exemples
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends libcairo2 > /dev/null
+          pip install --quiet verovio==6.3.0 CairoSVG==2.9.1 music21==10.5.0 numpy==2.5.3 opencv-python-headless==4.14.0.94 pillow==12.3.0
+          cd engine/bench
+          case "${{ matrix.jeu }}" in
+            base) n=30; opt="" ;;
+            usees) n=15; opt="--usees" ;;
+            recueils) n=30; opt="--recueils" ;;
+          esac
+          SHARD="${{ matrix.part }}/4" python make_signes.py "$RUNNER_TEMP/${{ matrix.jeu }}-${{ matrix.part }}.npz" $n $opt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exemples-${{ matrix.jeu }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/${{ matrix.jeu }}-${{ matrix.part }}.npz
+
+  apprentissage:
+    needs: exemples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          path: exemples
+          pattern: exemples-*
+          merge-multiple: true
+      - name: Apprentissage
+        shell: bash
+        run: |
+          pip install --quiet numpy==2.5.3
+          ls -la exemples
+          python engine/bench/train_signes.py exemples/*.npz "$RUNNER_TEMP/signes.npz" 2>&1 | tee "$RUNNER_TEMP/apprentissage.txt"
+          tail -15 "$RUNNER_TEMP/apprentissage.txt" | sed 's/^/::notice title=Apprentissage::/'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signes
+          path: |
+            ${{ runner.temp }}/signes.npz
+            ${{ runner.temp }}/apprentissage.txt
