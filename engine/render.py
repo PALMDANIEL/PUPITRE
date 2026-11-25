@@ -920,7 +920,10 @@ def shift_octaves(obj, octaves):
                 p.octave = (p.octave if p.octave is not None else 4) + octaves
 
 
-def fix_octaves(voice, center=None):
+TOP_PLAIN_G = os.environ.get("PUPITRE_SOL_HAUT", "1") == "1"  # voix du haut : la clé de sol sans 8 l'emporte
+
+
+def fix_octaves(voice, center=None, top=False):
     """Erreurs d'octave de la lecture optique, corrigées comme le ferait un chef de chœur :
     - toute la voix hors de sa tessiture (clé de sol du ténor lue sans le « 8 ») -> ramenée d'une octave ;
     - une mesure isolée à plus d'une sixte du reste de la voix (fausse indication 8va, clé mal lue) -> idem."""
@@ -946,6 +949,10 @@ def fix_octaves(voice, center=None):
     for _a, _b, oc, ps_ in segs:
         weight[oc] = weight.get(oc, 0) + len(ps_)
     usual = max(weight, key=weight.get) if weight else 0
+    # voix du haut ou mélodie seule : la clé de sol sans 8 est la sienne ; un système lu « avec un 8 » (photo, copie
+    # au style des recueils : 18 notes contre 17) l'emportait, et le reste de la mélodie descendait d'une octave
+    if top and TOP_PLAIN_G and 0 in weight and usual != 0:
+        usual = 0
     for a, b, oc, seg in segs:
         k = usual - oc
         rest = [p for m in measures[:a] + measures[b:] for p in pitches_of(m)]
@@ -1281,7 +1288,7 @@ def extract_voices(score, trust_names=True, systems=None):
                         print(f"Voix {i + 1} : nom lu « {v.partName} » écarté (tessiture de sa place)", file=sys.stderr)
                         v.partName = ""
         for i, v in enumerate(voices):
-            fix_octaves(v, named.get((v.partName or "").split(" ")[0]) or (centers[i] if centers else None))
+            fix_octaves(v, named.get((v.partName or "").split(" ")[0]) or (centers[i] if centers else None), top=i == 0)
     satb = ("Soprano", "Alto", "Ténor", "Basse")
     if len(voices) == 4 and all(not clean_name(v.partName) or v.partName == n for v, n in zip(voices, satb)):
         for v, n in zip(voices, satb):  # quatre voix dans l'ordre de la page : celles sans nom le prennent de leur place

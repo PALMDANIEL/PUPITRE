@@ -343,7 +343,9 @@ def score_of(staves, title, rng):
 # ---------------------------------------------------------------------------------------------------- image
 def look(rng):
     """Police et épaisseurs d'une page (les mêmes pour toutes ses parties)."""
-    return {"font": rng.choice(FONTS), "staffLineWidth": rng.uniform(0.17, 0.28), "stemWidth": rng.uniform(0.18, 0.3),
+    # lignes de portée d'au moins 0,21 : plus minces, le seuillage les rendait pointillées (« Ô Marie », 17 %), ce
+    # que les vrais scans des recueils ne montrent pas (lignes continues)
+    return {"font": rng.choice(FONTS), "staffLineWidth": rng.uniform(0.21, 0.28), "stemWidth": rng.uniform(0.18, 0.3),
             "barLineWidth": rng.uniform(0.22, 0.42), "ledgerLineThickness": 0.3}
 
 
