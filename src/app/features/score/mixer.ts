@@ -162,12 +162,16 @@ import { saveFile } from '../../core/save-file';
             <input class="visually-hidden" type="file" accept=".musicxml,.mxl,.xml" [disabled]="busy()" (change)="correct($event)">
           </label>
         </div>
+        <label class="whole"><input type="checkbox" [checked]="wholeUpload()" (change)="wholeUpload.set($any($event.target).checked)">
+          <span>Cette version corrigée est vérifiée en entier (chaque voix, notes et rythmes) : elle servira de référence
+            pour ce chant, et les copies photographiées ensuite seront rendues exactes.</span></label>
         @if (score().corrected) { <p class="hint">L’audio actuel vient de votre version corrigée.</p> }
       </details>
       }
     </section>
   `,
   styles: [`
+    .whole { display: flex; gap: .5rem; align-items: flex-start; margin-top: .6rem; font-size: .88rem; color: var(--ink-soft); cursor: pointer; }
     :host { display: block; }
     .mixer { display: grid; gap: 1.25rem; padding: 1.35rem; }
     .label { font-size: .7rem; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--accent-2); margin-bottom: .6rem; }
@@ -266,6 +270,8 @@ export class Mixer {
   protected readonly langues = LANGUES;
   /** Paroles modifiées dans l'éditeur (par voix) ; les autres viennent de la partition. */
   protected readonly edits = signal<Record<string, string>>({});
+  /** Version corrigée (MuseScore) déclarée vérifiée en entier par le chef de chœur : elle entre au répertoire */
+  protected readonly wholeUpload = signal(false);
   protected readonly color = voiceColor;
   protected readonly url = fileUrl;
   private readonly key = computed(() => `${this.score().id}:${this.score().revision}`);
@@ -331,7 +337,7 @@ export class Mixer {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) void this.store?.uploadCorrection(file);
+    if (file) void this.store?.uploadCorrection(file, undefined, this.wholeUpload());
   }
   /** Téléphone : message pendant la préparation d'un fichier à enregistrer. */
   protected readonly saving = signal<string | null>(null);
