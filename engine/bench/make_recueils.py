@@ -285,8 +285,9 @@ def part_of(measures, name=""):
 def build_mixte(parts, melody, rng):
     """Refrain en chœur (S+A / T+B) et couplets en mélodie seule (plusieurs couplets), comme la moitié des chants des
     recueils : des systèmes de deux portées, puis d'une (ou l'inverse). Les deux parties sont gravées à part et
-    posées l'une sous l'autre sur la page. Bonne réponse : la mélodie des couplets dans la voix du haut (le moteur y
-    verse le soliste), les autres voix seulement au refrain."""
+    posées l'une sous l'autre sur la page. Bonne réponse : la mélodie des couplets chantée par la soprano et l'alto à
+    l'unisson (ligne seule sur la portée des femmes, comme dans les partitions des chorales), le ténor et la basse
+    seulement au refrain."""
     refrain = [list(p.getElementsByClass(stream.Measure)) for p in parts]
     couplet = list(melody.getElementsByClass(stream.Measure))
     r_n = min(len(refrain[0]), rng.randint(4, 10))
@@ -311,7 +312,9 @@ def build_mixte(parts, melody, rng):
     answer = truth([s, a, t, b], NAMES)
     mel = truth([solo], ["x"])["x"]
     refrain_first = rng.random() < 0.6
-    answer["Soprano"] = (answer["Soprano"] + mel) if refrain_first else (mel + answer["Soprano"])
+    # mélodie seule en clé de sol : soprano et alto à l'unisson (convention des partitions des chorales)
+    for v in ("Soprano", "Alto"):
+        answer[v] = (answer[v] + mel) if refrain_first else (mel + answer[v])
     choir = [staff_of([s, a], clef.TrebleClef(), "", ["up", "down"]), staff_of([t, b], clef.BassClef(), "", ["up", "down"])]
     verse = [staff_of([solo], clef.TrebleClef(), "", ["up"])]
     return ([choir, verse] if refrain_first else [verse, choir]), answer

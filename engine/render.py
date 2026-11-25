@@ -5,7 +5,7 @@ Usage : python3 render.py <partition.mxl|.musicxml> <dossier_sortie> [--tempo 72
 """
 import argparse, copy, json, os, pathlib, re, shutil, statistics, subprocess, sys, zipfile
 from fractions import Fraction
-from music21 import converter, chord, clef, harmony, instrument, key, meter, note, pitch, stream, tempo as m21tempo
+from music21 import converter, chord, clef, harmony, instrument, key, layout, meter, note, pitch, stream, tempo as m21tempo
 from music21.common.numberTools import opFrac
 import coherence
 
@@ -238,6 +238,88 @@ def split_staff(part):
     keep_highest_or_lowest(top, max)
     keep_highest_or_lowest(bottom, min)
     return [top, bottom]
+
+
+SOLO_SYSTEMS = os.environ.get("PUPITRE_SYSTEMES_SOLO", "1") == "1"
+SOLO_RUN = int(os.environ.get("PUPITRE_SOLO_MESURES", "4"))  # mesures de suite chantées par une seule portée
+
+
+def solo_systems(parts):
+    """
+    Système d'une seule portée entre des systèmes en chœur (couplet en mélodie seule après un refrain sur S+A / T+B :
+    la moitié des chants des recueils mêlent ainsi les mises en page). Audiveris range cette portée dans l'une des
+    parties, souvent celle du bas : la mélodie passait au ténor ou à la basse (clé de sol puis de fa dans la même
+    partie), ou à la soprano et à l'alto à l'unisson (vrais recueils : alto presque entièrement recopié sur la
+    soprano dans 13 % des lectures à quatre voix). Au moins SOLO_RUN mesures de suite chantées par une seule partie,
+    en clé de sol, à une seule voix (ou dès la 1re si Audiveris a marqué les autres portées non imprimées,
+    staff-details print-object="no" ; les lectures assemblées de plusieurs images ne le marquent presque jamais) :
+    la mélodie va à la partie du haut (soprano et alto à l'unisson, comme une ligne seule sur la portée des femmes
+    dans les partitions des chorales) ; la partie d'où elle vient se tait. Essayé et écarté : alto muet pendant la
+    mélodie (soliste seul) — les partitions des chorales la font chanter à l'unisson (Psaume 85, Psaume 24, « Un signe
+    grandiose » : alto 100 → 67 %). Moins de SOLO_RUN mesures : passage du chœur où les autres voix se taisent un
+    instant, laissé comme avant. Rend le nombre de mesures déplacées.
+    """
+    if not SOLO_SYSTEMS or len(parts) < 2:
+        return 0
+    rows = [list(p.getElementsByClass(stream.Measure)) for p in parts]
+    n = min(len(r) for r in rows)
+    hidden = [False] * len(parts)
+    clefs = [None] * len(parts)
+    solo = []  # (mesure, partie qui chante seule, portées absentes marquées)
+    for k in range(n):
+        for i, r in enumerate(rows):
+            for sl in r[k].getElementsByClass(layout.StaffLayout):
+                if sl.hidden is not None:
+                    hidden[i] = bool(sl.hidden)
+            head = [c for c in r[k].getElementsByClass(clef.Clef) if c.offset == 0]
+            if head:
+                clefs[i] = head[0]
+        sounding = [i for i, r in enumerate(rows) if r[k].recurse().notes]
+        if len(sounding) != 1:
+            solo.append(None)
+            continue
+        i = sounding[0]
+        m = rows[i][k]
+        c = clefs[i]
+        sung = [v for v in m.voices if v.notes] if m.voices else [m]
+        if c is None or c.sign != "G" or (c.octaveChange or 0) != 0 or len(sung) != 1:
+            solo.append(None)
+            continue
+        marked = sum(1 for j in range(len(parts)) if not hidden[j]) == 1
+        solo.append((i, marked))
+    # une suite d'au moins SOLO_RUN mesures (couplet, soliste) ; plus court, c'est un passage du chœur où les autres
+    # voix se taisent un instant (laissé comme avant) ; portées absentes marquées par Audiveris : dès la 1re mesure
+    keep = [False] * n
+    k = 0
+    while k < n:
+        if solo[k] is None:
+            k += 1
+            continue
+        j = k
+        while j < n and solo[j] is not None:
+            j += 1
+        if j - k >= SOLO_RUN or any(solo[x][1] for x in range(k, j)):
+            for x in range(k, j):
+                keep[x] = True
+        k = j
+    done = 0
+    for k in range(n):
+        if not keep[k] or solo[k][0] == 0:
+            continue  # déjà dans la partie du haut : la soprano et l'alto la chantent à l'unisson, comme avant
+        i = solo[k][0]
+        m = rows[i][k]
+        sung = [v for v in m.voices if v.notes] if m.voices else [m]
+        line = [copy.deepcopy(el) for el in sung[0].notesAndRests]
+        dur = max((float(el.offset + el.duration.quarterLength) for el in line), default=0.0)
+        # la mesure du haut reçoit la mélodie ; celle d'où elle vient (ténor, basse) se tait
+        for target in (rows[0][k], m):
+            for el in list(target.notesAndRests) + list(target.voices):
+                target.remove(el)
+        for el in line:
+            rows[0][k].insert(el.offset, el)
+        m.insert(0, note.Rest(quarterLength=dur or 4.0))
+        done += 1
+    return done
 
 
 def flatten_voices(part):
@@ -1034,6 +1116,11 @@ def extract_voices(score, trust_names=True):
     sung = [p for p in score.parts if p.recurse().notes and not is_accompaniment(p, trust_names)]
     if not sung:
         sung = [p for p in score.parts if p.recurse().notes]
+    if not trust_names:
+        moved = solo_systems(sung)
+        if moved:
+            print(f"Systèmes d'une seule portée : {moved} mesures de mélodie à la voix du haut", file=sys.stderr)
+            sung = [p for p in sung if p.recurse().notes]
     by_clef = regroup_by_clef(sung) if BY_CLEF and not trust_names else None
     if by_clef is not None:
         sung = by_clef
