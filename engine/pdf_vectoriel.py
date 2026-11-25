@@ -763,12 +763,26 @@ def plan_of(system):
 
 
 HOLD = os.environ.get("PUPITRE_UNISSON_TENUE", "1") != "0"
+STEMLESS = os.environ.get("PUPITRE_RONDES_VOIX", "1") != "0"  # ronde seule : à quelle voix ?
 
 
 def split_voices(staff, names, cuts=()):
     """Événements de chaque voix de la portée, triés par x : (x, durée, [notes] ou None pour un silence).
     cuts : barres de mesure du système (abscisses), pour suivre le temps de chaque voix dans la mesure."""
     notes = sorted(staff["notes"], key=lambda n: (round(n["x"], 1), -n["midi"]))
+    if STEMLESS and len(names) == 2:
+        # unisson de deux voix en rondes (ou brèves) : le graveur dessine les deux têtes côte à côte ; une seule note
+        # chantée par les deux voix (« Avec toi Seigneur » m. 28, Psaume 84 m. 13 : ténor et basse comptés 8 temps
+        # au lieu de 4, 18 au lieu de 10)
+        kept = []
+        for n in notes:
+            twin = next((k for k in kept if k["midi"] == n["midi"] and k["dur"] == n["dur"]
+                         and not (k["up"] or k["down"] or n["up"] or n["down"])
+                         and 0 < n["x"] - k["x"] < 2.5 * staff["sp"]
+                         and not any(k["x"] < c < n["x"] for c in cuts)), None)
+            if twin is None:
+                kept.append(n)
+        notes = kept
     onsets = []
     for n in notes:
         if onsets and abs(onsets[-1][0]["x"] - n["x"]) < 1.0:
@@ -815,12 +829,33 @@ def split_voices(staff, names, cuts=()):
         if not two_stems or (len(g) >= 2 and (not ups or not downs)) or (not ups and not downs):
             srt = sorted(g, key=lambda n: -n["midi"])
             hi, lo = [srt[0]], [srt[-1]]
+            if STEMLESS and two_stems and len(g) == 1 and not ups and not downs:
+                # tête sans queue (ronde) seule à sa place, sur une portée à deux voix : elle n'est à l'unisson que si
+                # l'autre voix n'a ni silence écrit ni note à elle au même endroit (« Seigneur, c'est vers toi » : ronde
+                # de la basse sous le soupir du ténor, donnée aux deux voix, le ténor décalé de 4 temps ; ronde du ténor
+                # à côté de la noire de la basse : la basse recopiait toute la ligne du ténor)
+                h0 = g[0]
+                near = [r for r in staff["rests"] if abs(r["x"] - h0["x"]) < 1.5 * sp and rest_target(r)]
+                partner = [m for m in staff["notes"] if m is not h0 and abs(m["x"] - h0["x"]) < 1.5 * sp
+                           and m["up"] != m["down"]]
+                if near:
+                    if rest_target(near[0]) == names[0]:
+                        hi = None
+                    else:
+                        lo = None
+                elif partner:
+                    p0 = min(partner, key=lambda m: abs(m["x"] - h0["x"]))
+                    if p0["down"] and h0["midi"] >= p0["midi"]:
+                        lo = None
+                    elif p0["up"] and h0["midi"] <= p0["midi"]:
+                        hi = None
         else:
             hi, lo = ups or None, downs or None
             if len(g) == 1:
                 h0 = g[0]
                 other = [m for m in staff["notes"] if m is not h0 and abs(m["x"] - h0["x"]) < 3 * sp
-                         and (m["down"] if h0["up"] else m["up"])]
+                         and ((m["down"] if h0["up"] else m["up"])
+                              or (STEMLESS and not m["up"] and not m["down"] and abs(m["x"] - h0["x"]) < 1.5 * sp))]
                 mine, theirs = (names[0], names[1]) if h0["up"] else (names[1], names[0])
                 holding = HOLD and clock[theirs] > clock[mine]
                 if not other and not holding and not any(abs(r["x"] - h0["x"]) < 1.5 * sp for r in staff["rests"]):
