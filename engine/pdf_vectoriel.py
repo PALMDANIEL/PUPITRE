@@ -809,12 +809,14 @@ def split_voices(staff, names, cuts=()):
     items = [(g[0]["x"], 0, g) for g in onsets] + [(r["x"], 1, r) for r in staff["rests"]]
     items.sort(key=lambda t: (t[0], t[1]))
     clock = {name: Fraction(0) for name in names}
+    held_whole = {name: False for name in names}  # dernière note de la voix : une ronde (tête sans queue) ?
     rests = {name: [] for name in names}
     bar_i = 0
     for x, kind, it in items:
         while bar_i < len(cuts) and x >= cuts[bar_i]:
             bar_i += 1
             clock = {name: Fraction(0) for name in names}
+            held_whole = {name: False for name in names}
         if kind == 1:
             target = rest_target(it)
             busy = target is None and any(abs(g[0]["x"] - it["x"]) < 0.8 * sp for g in onsets)
@@ -829,6 +831,16 @@ def split_voices(staff, names, cuts=()):
         if not two_stems or (len(g) >= 2 and (not ups or not downs)) or (not ups and not downs):
             srt = sorted(g, key=lambda n: -n["midi"])
             hi, lo = [srt[0]], [srt[-1]]
+            if STEMLESS and not two_stems and len(g) == 1 and (ups or downs):
+                # voix qui tient une ronde pendant que l'autre chante (« Dans la joie » m. 6 : ronde de l'alto sous les
+                # noires de la soprano, voix à queues communes ailleurs) : la note va à la voix qui ne tient rien
+                for held, free in ((names[1], names[0]), (names[0], names[1])):
+                    if held_whole[held] and clock[held] > clock[free]:
+                        if free == names[0]:
+                            lo = None
+                        else:
+                            hi = None
+                        break
             if STEMLESS and two_stems and len(g) == 1 and not ups and not downs:
                 # tête sans queue (ronde) seule à sa place, sur une portée à deux voix : elle n'est à l'unisson que si
                 # l'autre voix n'a ni silence écrit ni note à elle au même endroit (« Seigneur, c'est vers toi » : ronde
@@ -865,6 +877,7 @@ def split_voices(staff, names, cuts=()):
                 d = min(n.get("dur_down", n["dur"]) if name == names[1] else n["dur"] for n in grp)
                 out[name].append((g[0]["x"], d, grp))
                 clock[name] += d
+                held_whole[name] = all(not n["up"] and not n["down"] for n in grp)
     for name in names:  # silence écrit là où la voix a déjà une note : l'autre voix
         sounding = [e[0] for e in out[name]]
         out[name] += [(r["x"], r["dur"], None) for r in rests[name] if not any(abs(x - r["x"]) < 0.8 * sp for x in sounding)]
