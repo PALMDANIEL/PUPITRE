@@ -363,6 +363,9 @@ def single_staff_measures(top_row, n, systems):
     lecture (à une mesure près). Sinon : aucune (inconnu, l'alto n'est pas rendu muet)."""
     if not systems:
         return set()
+    tail = getattr(systems, "tail", None)
+    if tail is not None and 0 < tail < n:
+        return set(range(tail, n))  # début des couplets noté par omr.py (refrain relu par homr)
     starts = [k for k in range(n) if any(sl.isNew for sl in top_row[k].getElementsByClass(layout.SystemLayout))]
     if not starts or starts[0] != 0:
         starts = [0] + starts
@@ -1549,6 +1552,12 @@ EXACT_TAG = "<!-- pupitre:exacte -->"  # écrit dans la partition : la marque vo
 
 
 SYSTEMS_TAG = re.compile(rb"pupitre:systemes ([0-9,/]+)")
+TAIL_TAG = re.compile(rb"pupitre:couplets ([0-9]+)")
+
+
+class Systems(list):
+    """Disposition des systèmes (portées, mesures vues), avec le début des couplets d'une page de psaume (tail)."""
+    tail = None
 
 
 def page_systems(src):
@@ -1567,7 +1576,10 @@ def page_systems(src):
     m = SYSTEMS_TAG.search(head)
     if not m:
         return None
-    out = []
+    out = Systems()
+    t = TAIL_TAG.search(head)
+    if t:
+        out.tail = int(t.group(1))
     for cell in m.group(1).decode().split(","):
         if cell:
             a, _s, b = cell.partition("/")

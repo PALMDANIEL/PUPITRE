@@ -584,6 +584,121 @@ def _extra_variants(side_dir: pathlib.Path, voix: pathlib.Path, key, time_sig, m
         return 0
 
 
+TAIL = os.environ.get("PUPITRE_COUPLETS_GARDES", "1") != "0"  # psaume : couplets d'Audiveris gardés sous le refrain de homr
+
+
+def image_systems(pages_dir: pathlib.Path):
+    """Portées et mesures (barres vues sur l'image) de chaque système, page après page : [(portées, mesures)]."""
+    import cv2
+    import imgio
+    import pupitres
+    cells = []
+    for pf in sorted(pathlib.Path(pages_dir).glob("page-*.png")):
+        bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
+        staves = [(*s, "vue") for s in pupitres.find_staves(bw)]
+        for g in pupitres.system_indexes(bw, staves, dashed=pupitres._dashed()):
+            group = [staves[i] for i in g]
+            try:
+                bars = len(pupitres.bar_lines(bw, group))
+            except Exception:  # noqa: BLE001
+                bars = 0
+            cells.append((len(group), bars))
+    return cells
+
+
+def tail_cut(pages_dir: pathlib.Path, reading):
+    """
+    Page en disposition de psaume (systèmes du chœur, puis systèmes d'une seule portée : les couplets du soliste) :
+    indice de la 1re mesure des couplets dans une lecture d'Audiveris, d'après ses débuts de système (autant que de
+    systèmes sur l'image), une seule partie chantant dans les couplets. Sinon None. homr ne relit que les systèmes du
+    chœur (voix séparées, lecture voix par voix) : sans ce repère, une lecture de homr prise à la place de celle
+    d'Audiveris perdait les couplets (psaumes des chorales, pages mêlées des recueils : soprano 45 à 73 %).
+    """
+    if not TAIL or reading is None or not pathlib.Path(reading).exists():
+        return None
+    try:
+        from music21 import converter, layout as m21layout, stream
+        sizes = [st for st, _b in image_systems(pages_dir)]
+        if not sizes or max(sizes) < 2 or sizes[-1] != 1:
+            return None
+        head = len(sizes)
+        while head and sizes[head - 1] == 1:
+            head -= 1
+        if any(n == 1 for n in sizes[:head]):
+            return None
+        sc = converter.parse(str(reading))
+        rows = [list(p.getElementsByClass(stream.Measure)) for p in sc.parts]
+        if not rows:
+            return None
+        n = min(len(r) for r in rows)
+        starts = [k for k in range(n) if any(sl.isNew for sl in rows[0][k].getElementsByClass(m21layout.SystemLayout))]
+        if not starts or starts[0] != 0:
+            starts = [0] + starts
+        if len(starts) != len(sizes) or not 0 < starts[head] < n:
+            return None
+        cut = starts[head]
+        if any(sum(1 for r in rows if r[k].recurse().notes) > 1 for k in range(cut, n)):
+            return None
+        return cut
+    except Exception as e:  # noqa: BLE001
+        print(f"Couplets d'Audiveris non repérés ({type(e).__name__})", file=sys.stderr)
+        return None
+
+
+def with_tail(head, reading, cut: int, out: pathlib.Path):
+    """
+    Partition faite des mesures de head (refrain lu par homr) puis des couplets de la lecture d'Audiveris (mesures à
+    partir de cut, chacune dans la partie où Audiveris l'a mise : render.solo_systems et couplets.py les replacent) ;
+    clé, armure et mesure en vigueur rétablies au début des couplets. Rend le nombre de mesures du refrain (où
+    commencent les couplets), ou None (parties différentes : rien n'est écrit).
+    """
+    import copy
+    from music21 import clef as m21clef, converter, key as m21key, meter, stream
+    try:
+        h = converter.parse(str(head))
+        a = converter.parse(str(reading))
+        hp, ap = list(h.parts), list(a.parts)
+        if len(hp) != len(ap):
+            print(f"Couplets d'Audiveris non repris : {len(ap)} parties contre {len(hp)}", file=sys.stderr)
+            return None
+        sizes = {len(list(p.getElementsByClass(stream.Measure))) for p in hp}
+        if len(sizes) != 1:
+            return None
+        start = sizes.pop()
+        for p_h, p_a in zip(hp, ap):
+            rows = list(p_a.getElementsByClass(stream.Measure))
+            have = list(p_h.getElementsByClass(stream.Measure))
+            number = have[-1].number if have and have[-1].number else len(have)
+            for k, m in enumerate(rows[cut:]):
+                mm = copy.deepcopy(m)
+                if k == 0:
+                    for cls in (m21clef.Clef, m21key.KeySignature, meter.TimeSignature):
+                        if not any(x.offset == 0 for x in mm.getElementsByClass(cls)):
+                            ctx = m.getContextByClass(cls)
+                            if ctx is not None:
+                                mm.insert(0, copy.deepcopy(ctx))
+                number += 1
+                mm.number = number
+                p_h.append(mm)
+        tmp = out.with_name(out.stem + "-tmp.musicxml")
+        h.write("musicxml", fp=str(tmp), makeNotation=False)
+        tmp.replace(out)
+        print(f"Couplets d'Audiveris gardés sous le refrain de homr : {len(rows) - cut} mesures", file=sys.stderr)
+        return start
+    except Exception as e:  # noqa: BLE001
+        print(f"Couplets d'Audiveris non repris ({type(e).__name__}: {e})", file=sys.stderr)
+        return None
+
+
+def note_tail(work: pathlib.Path, start):
+    """Début des couplets dans la partition finale (mark_systems l'écrit dans la partition pour render.py)."""
+    f = work / "debut-couplets"
+    if start is None:
+        f.unlink(missing_ok=True)
+    else:
+        f.write_text(str(start), encoding="utf-8")
+
+
 def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, target: pathlib.Path, third=None):
     """
     Deux portées à deux voix : la page est séparée en voix du haut et voix du bas (voix_separees.py), homr lit chaque
@@ -594,6 +709,7 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
     import voix_separees
     sub = work / "separees"
     shutil.rmtree(sub, ignore_errors=True)
+    cut = tail_cut(pages_dir, target)  # psaume : 1re mesure des couplets d'Audiveris (homr ne lit que le refrain)
     try:
         wear0 = float((work / "pre" / "usure").read_text(encoding="utf-8")) if (work / "pre" / "usure").exists() else 1.0
     except (OSError, ValueError):
@@ -686,9 +802,16 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                     sys.stderr.write(r.stderr[-600:])
                     if r.returncode or not voted.exists():
                         voted = None
+            src = voted or combined
+            if cut is not None:
+                joined = sub / "avec-couplets.musicxml"
+                start = with_tail(src, target, cut, joined)
+                if start is not None:
+                    src = joined
+                    note_tail(work, start)
             if target != final:
                 target.unlink(missing_ok=True)
-            shutil.copy(voted or combined, final)
+            shutil.copy(src, final)
             return final, True
         out = arbitrate(work, target, combined, "grand", sub / "haut" / "voix", third, split=worn or sure,
                         judge=not worn or os.environ.get("PUPITRE_JUGE_USEES") == "1")
@@ -717,9 +840,16 @@ def split_read(pages_dir: pathlib.Path, work: pathlib.Path, raw: pathlib.Path, t
                 print(f"{'Petites portées' if (sub / 'image').exists() else 'Copie usée' if worn else 'Photo'} : mesures d'Audiveris {sorted(got)} contre {seen} sur l'image, "
                       "lecture de homr sur les voix séparées gardée", file=sys.stderr)
                 final = work / "partition.musicxml"
+                src = combined
+                if cut is not None:
+                    joined = sub / "avec-couplets.musicxml"
+                    start = with_tail(combined, out, cut, joined)
+                    if start is not None:
+                        src = joined
+                        note_tail(work, start)
                 if out != final:
                     out.unlink(missing_ok=True)
-                shutil.copy(combined, final)
+                shutil.copy(src, final)
                 return final, True
         # secours seulement (lectures trop différentes) : l'ancienne double lecture peut encore combler des mesures
         return out, full
@@ -1099,7 +1229,7 @@ def main(src, work, layout=None, stage1=False):
         third.unlink(missing_ok=True)
     if BUDGET is None or time.monotonic() - _T0 + 60 < BUDGET:
         target = reread_verses(pages_dir, work, target)
-    mark_systems(pages_dir, target)
+    mark_systems(pages_dir, target, final_tail(work, pages_dir, target))
     target = recognize(work, target)
     shutil.rmtree(pre, ignore_errors=True)
     print(f"partition:{target.name}", flush=True)
@@ -1108,7 +1238,21 @@ def main(src, work, layout=None, stage1=False):
 EXACT_MARK = "partition.exacte"  # partition exacte (PDF gravé lu directement, chant reconnu) : rendue sans retouches
 
 
-def mark_systems(pages_dir: pathlib.Path, partition):
+def final_tail(work: pathlib.Path, pages_dir: pathlib.Path, target):
+    """Début des couplets dans la partition finale : noté par with_tail (refrain de homr), sinon repéré d'après les
+    débuts de système d'Audiveris (lecture gardée). None : page qui n'est pas un psaume, ou repère incertain."""
+    f = work / "debut-couplets"
+    try:
+        if f.exists():
+            return int(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    finally:
+        f.unlink(missing_ok=True)
+    return tail_cut(pages_dir, target)
+
+
+def mark_systems(pages_dir: pathlib.Path, partition, tail=None):
     """
     Disposition des systèmes vue sur l'image (portées et mesures de chaque système, page après page), écrite dans la
     partition (<!-- pupitre:systemes 2/4,2/5,1/3 --> : elle voyage avec elle, comme la marque de partition exacte).
@@ -1118,26 +1262,16 @@ def mark_systems(pages_dir: pathlib.Path, partition):
     if partition is None or not pathlib.Path(partition).exists():
         return
     try:
-        import cv2
-        import imgio
-        import pupitres
-        cells = []  # « portées/mesures » de chaque système (mesures : barres vues sur l'image)
-        for pf in sorted(pathlib.Path(pages_dir).glob("page-*.png")):
-            bw = imgio.imread(str(pf), cv2.IMREAD_GRAYSCALE)
-            staves = [(*s, "vue") for s in pupitres.find_staves(bw)]
-            for g in pupitres.system_indexes(bw, staves, dashed=pupitres._dashed()):
-                group = [staves[i] for i in g]
-                try:
-                    bars = len(pupitres.bar_lines(bw, group))
-                except Exception:  # noqa: BLE001
-                    bars = 0
-                cells.append(f"{len(group)}/{bars}")
+        cells = [f"{st}/{bars}" for st, bars in image_systems(pages_dir)]  # mesures : barres vues sur l'image
     except Exception as e:  # noqa: BLE001 : sans disposition, la lecture reste
         print(f"Disposition des systèmes non lue ({type(e).__name__})", file=sys.stderr)
         return
     if not cells:
         return
     tag = f"<!-- pupitre:systemes {','.join(cells)} -->"
+    if tail is not None:
+        # début des couplets dans la partition (refrain de homr : sans débuts de système, render ne le retrouvait pas)
+        tag += f"\n<!-- pupitre:couplets {int(tail)} -->"
 
     def tagged(text):
         if "pupitre:systemes" in text[:4096]:
