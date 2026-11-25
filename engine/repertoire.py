@@ -296,6 +296,11 @@ def _same(f, g):
     return f is g or (bool(f["voices"]) and bool(g["voices"]) and similarity(f["voices"], g["voices"]) >= SAME_PIECE)
 
 
+# chants comparés en entier après la présélection par motifs de quatre notes : 8 suffisaient avec 40 chants ; parmi
+# 585 (répertoire commun + 545 lectures des recueils en leurres), deux copies usées (Psaumes 24 et 70) perdaient le leur
+PRESELECT = int(os.environ.get("PUPITRE_REPERTOIRE_PRESELECTION", "40"))
+
+
 def search(read_path, folder, exclude=None):
     """Chant du répertoire reconnu dans la lecture, ou None : {nom, chemin, ressemblance, ecart}.
     folder : un dossier ou une liste de dossiers (répertoire commun d'AIT, répertoire propre à la chorale…)."""
@@ -315,7 +320,7 @@ def search(read_path, folder, exclude=None):
         jac = len(top & g) / max(1, len(top | g))
         scored.append((jac, x, f))
     scored.sort(key=lambda t: -t[0])
-    ranked = sorted(((similarity(read, f["voices"]), x, f) for _j, x, f in scored[:8]), key=lambda t: -t[0])
+    ranked = sorted(((similarity(read, f["voices"]), x, f) for _j, x, f in scored[:PRESELECT]), key=lambda t: -t[0])
     if not ranked:
         return None, read, []
     best = ranked[0][0]
