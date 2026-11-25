@@ -23,6 +23,20 @@ _OCR = None
 COTE = re.compile(r"(?:^|\s)([A-Z]{1,3})\s?(\d{2,3})(?:\s?[-–]\s?\d{1,3}){0,3}\s*$")
 # Nom d'accord seul sur sa ligne (« sib », « Mim », « LA7 », « FA#7 dim. ») : jamais un titre
 CHORD = re.compile(r"^(do|r[ée]|mi|fa|sol|la|si|[A-G])\s*(b|#|♯|♭)?\s*(m|min|maj|dim|aug|sus)?\.?\s*\d*\s*(maj|dim)?\.?$", re.I)
+_CHORD_TOKEN = re.compile(r"^(do|r[ée]|mi|fa|sol|la|si)(b|#|♯|♭)?(m|min|maj|dim|aug|sus)?\d*[%.]?$", re.I)
+
+
+def chord_line(text):
+    """Ligne de noms d'accords (« Sib FaDo% D07 », « 1. REm7 ») : chaque mot est un accord, un numéro ou un signe."""
+    words = [w for w in re.split(r"[\s,;]+", text.strip()) if w]
+    if not words:
+        return False
+    def chordish(w):
+        w = w.replace("0", "o")  # « D07 » : Do7 lu avec un zéro
+        return bool(_CHORD_TOKEN.match(w)) or bool(re.fullmatch(r"\d+\.?|[-–—/%.]", w)) or \
+            all(_CHORD_TOKEN.match(x) for x in re.findall(r"(?:do|r[ée]|mi|fa|sol|la|si)[^A-Z]*", w, re.I) if x) and \
+            bool(re.findall(r"(?:do|r[ée]|mi|fa|sol|la|si)", w, re.I)) and "".join(re.findall(r"(?:do|r[ée]|mi|fa|sol|la|si)[b#♯♭]?(?:m|min|maj|dim)?\d*%?", w, re.I)).lower() == w.lower()
+    return all(chordish(w) for w in words)
 
 
 def ocr(gray, cache=None):
@@ -81,7 +95,7 @@ def titles_on(lines, systems, sp, height, width):
         cy = (ln["y0"] + ln["y1"]) / 2
         text = ln["text"].lower()
         if ln["h"] < TITLE_RATIO * usual or cy > 0.95 * height or (ln["x1"] - ln["x0"]) > 0.75 * width \
-                or len(re.findall(r"\w-\s*\w", text)) >= 2 or CHORD.match(ln["text"].strip()) \
+                or len(re.findall(r"\w-\s*\w", text)) >= 2 or CHORD.match(ln["text"].strip()) or chord_line(ln["text"]) \
                 or any(w in unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode() for w in CREDITS):
             continue
         if any(top - 0.5 * sp <= cy <= bottom + 0.5 * sp for top, bottom in systems):
